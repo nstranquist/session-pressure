@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="780" viewBox="0 0 1180 780">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1c1c1e"/>
+      <stop offset="100%" stop-color="#121214"/>
+    </linearGradient>
+    <filter id="soft" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="1180" height="780" fill="url(#bg)"/>
+  <!-- titlebar -->
+  <rect width="1180" height="52" fill="#2a2a2c"/>
+  <circle cx="22" cy="26" r="6" fill="#ff5f57"/>
+  <circle cx="42" cy="26" r="6" fill="#febc2e"/>
+  <circle cx="62" cy="26" r="6" fill="#28c840"/>
+  <text x="590" y="32" text-anchor="middle" fill="#e5e5ea" font-family="SF Pro Text, Helvetica, Arial" font-size="13">NDev Pressure</text>
+  <text x="980" y="32" fill="#8e8e93" font-family="SF Pro Text, Helvetica, Arial" font-size="11">Refresh   Live sample</text>
+
+  <!-- sidebar -->
+  <rect x="0" y="52" width="220" height="728" fill="#242426"/>
+  <text x="24" y="88" fill="#f2f2f7" font-family="SF Pro Text, Helvetica, Arial" font-size="14" font-weight="600">NDev Pressure</text>
+  <rect x="20" y="98" width="36" height="16" rx="8" fill="rgba(34,197,94,0.18)" stroke="#22c55e" stroke-width="1"/>
+  <text x="28" y="110" fill="#22c55e" font-family="SF Mono, Menlo, monospace" font-size="9" font-weight="700">OK</text>
+  <text x="64" y="110" fill="#8e8e93" font-family="SF Pro Text, Helvetica, Arial" font-size="10">Full protection</text>
+
+  <!-- nav items -->
+  <g font-family="SF Pro Text, Helvetica, Arial" font-size="13">
+    <rect x="10" y="130" width="200" height="30" rx="6" fill="#3a3a3c"/>
+    <text x="28" y="150" fill="#f2f2f7">Overview</text>
+    <text x="28" y="184" fill="#aeaeb2">Agent Trees</text>
+    <text x="28" y="218" fill="#aeaeb2">Work Queue</text>
+    <text x="28" y="252" fill="#aeaeb2">Policy</text>
+    <text x="28" y="286" fill="#aeaeb2">Monitor</text>
+    <text x="28" y="320" fill="#aeaeb2">Idle Cleanup</text>
+    <text x="28" y="354" fill="#aeaeb2">Telemetry</text>
+  </g>
+  <circle cx="28" cy="730" r="4" fill="#22c55e"/>
+  <text x="40" y="734" fill="#8e8e93" font-family="SF Pro Text, Helvetica, Arial" font-size="11">Live</text>
+  <text x="24" y="756" fill="#636366" font-family="SF Mono, Menlo, monospace" font-size="10">free 49% · cpu 41% · 17 trees</text>
+
+  <!-- main content -->
+  <g transform="translate(236,68)">
+    <!-- header card -->
+    <rect width="920" height="170" rx="16" fill="#2c2c2e" stroke="rgba(34,197,94,0.25)" filter="url(#soft)"/>
+    <!-- ring -->
+    <circle cx="90" cy="85" r="58" fill="none" stroke="#3a3a3c" stroke-width="12"/>
+    <circle cx="90" cy="85" r="58" fill="none" stroke="#22c55e" stroke-width="12" stroke-linecap="round"
+            stroke-dasharray="186 365" transform="rotate(-90 90 85)"/>
+    <text x="90" y="80" text-anchor="middle" fill="#22c55e" font-family="SF Pro Text, Helvetica, Arial" font-size="15" font-weight="600">Normal</text>
+    <text x="90" y="98" text-anchor="middle" fill="#8e8e93" font-family="SF Mono, Menlo, monospace" font-size="11">used 51%</text>
+    <text x="90" y="114" text-anchor="middle" fill="#8e8e93" font-family="SF Mono, Menlo, monospace" font-size="11">free 49%</text>
+
+    <text x="180" y="48" fill="#f2f2f7" font-family="SF Pro Display, Helvetica, Arial" font-size="28" font-weight="600">Host Pressure</text>
+    <rect x="380" y="30" width="64" height="22" rx="11" fill="rgba(34,197,94,0.16)" stroke="#22c55e"/>
+    <text x="412" y="45" text-anchor="middle" fill="#22c55e" font-family="SF Pro Text, Helvetica, Arial" font-size="10" font-weight="700">NORMAL</text>
+    <text x="180" y="78" fill="#aeaeb2" font-family="SF Pro Text, Helvetica, Arial" font-size="16">Full protection</text>
+    <!-- chips -->
+    <rect x="180" y="98" width="88" height="24" rx="12" fill="#3a3a3c"/>
+    <circle cx="194" cy="110" r="3.5" fill="#22c55e"/>
+    <text x="204" y="114" fill="#f2f2f7" font-family="SF Pro Text, Helvetica, Arial" font-size="11">Monitor</text>
+    <rect x="278" y="98" width="102" height="24" rx="12" fill="#3a3a3c"/>
+    <circle cx="292" cy="110" r="3.5" fill="#22c55e"/>
+    <text x="302" y="114" fill="#f2f2f7" font-family="SF Pro Text, Helvetica, Arial" font-size="11">Daily driver</text>
+    <rect x="390" y="98" width="70" height="24" rx="12" fill="#3a3a3c"/>
+    <circle cx="404" cy="110" r="3.5" fill="#22c55e"/>
+    <text x="414" y="114" fill="#f2f2f7" font-family="SF Pro Text, Helvetica, Arial" font-size="11">full</text>
+    <text x="180" y="146" fill="#636366" font-family="SF Pro Text, Helvetica, Arial" font-size="11">Updated just now · resident</text>
+
+    <!-- metric cards -->
+    <g font-family="SF Pro Text, Helvetica, Arial">
+      <rect y="186" width="220" height="100" rx="12" fill="#2c2c2e"/>
+      <text x="16" y="210" fill="#8e8e93" font-size="10" font-weight="600">FREE MEMORY</text>
+      <text x="16" y="242" fill="#22c55e" font-family="SF Mono, Menlo, monospace" font-size="26" font-weight="600">49%</text>
+      <text x="16" y="266" fill="#8e8e93" font-size="11">of 16 GiB</text>
+
+      <rect x="234" y="186" width="220" height="100" rx="12" fill="#2c2c2e"/>
+      <text x="250" y="210" fill="#8e8e93" font-size="10" font-weight="600">HOST CPU</text>
+      <text x="250" y="242" fill="#22c55e" font-family="SF Mono, Menlo, monospace" font-size="26" font-weight="600">41%</text>
+      <text x="250" y="266" fill="#8e8e93" font-size="11">10 logical cores</text>
+
+      <rect x="468" y="186" width="220" height="100" rx="12" fill="#2c2c2e"/>
+      <text x="484" y="210" fill="#8e8e93" font-size="10" font-weight="600">SWAP USED</text>
+      <text x="484" y="242" fill="#eab308" font-family="SF Mono, Menlo, monospace" font-size="26" font-weight="600">9.7 GiB</text>
+      <text x="484" y="266" fill="#8e8e93" font-size="11">corroborating signal</text>
+
+      <rect x="702" y="186" width="218" height="100" rx="12" fill="#2c2c2e"/>
+      <text x="718" y="210" fill="#8e8e93" font-size="10" font-weight="600">AGENT RSS SUM</text>
+      <text x="718" y="242" fill="#22c55e" font-family="SF Mono, Menlo, monospace" font-size="26" font-weight="600">4.0 GiB</text>
+      <text x="718" y="266" fill="#8e8e93" font-size="11">17 trees · 786 procs</text>
+    </g>
+
+    <!-- reasons + admission -->
+    <rect y="304" width="448" height="140" rx="14" fill="#2c2c2e"/>
+    <text x="16" y="330" fill="#f2f2f7" font-family="SF Pro Text, Helvetica, Arial" font-size="14" font-weight="600">Pressure reasons</text>
+    <text x="16" y="360" fill="#aeaeb2" font-family="SF Pro Text, Helvetica, Arial" font-size="13">No active breaches.</text>
+
+    <rect x="464" y="304" width="456" height="140" rx="14" fill="#2c2c2e"/>
+    <text x="480" y="330" fill="#f2f2f7" font-family="SF Pro Text, Helvetica, Arial" font-size="14" font-weight="600">Admission</text>
+    <text x="480" y="368" fill="#22c55e" font-family="SF Pro Text, Helvetica, Arial" font-size="18" font-weight="600">✓  Launches admitted</text>
+    <text x="480" y="394" fill="#8e8e93" font-family="SF Mono, Menlo, monospace" font-size="11">live-host-probe</text>
+
+    <!-- trees card -->
+    <rect y="460" width="920" height="230" rx="14" fill="#2c2c2e"/>
+    <text x="16" y="488" fill="#f2f2f7" font-family="SF Pro Text, Helvetica, Arial" font-size="14" font-weight="600">Top agent trees</text>
+    <text x="820" y="488" fill="#8e8e93" font-family="SF Mono, Menlo, monospace" font-size="11">8 shown</text>
+    <g font-family="SF Mono, Menlo, monospace" font-size="11" fill="#aeaeb2">
+      <circle cx="28" cy="520" r="4" fill="#59b8f2"/>
+      <text x="42" y="524" fill="#f2f2f7" font-family="SF Pro Text, Helvetica, Arial" font-size="12" font-weight="600">codex</text>
+      <text x="100" y="524">pid 10230 · 13 procs · q 121</text>
+      <text x="820" y="524" fill="#f2f2f7" font-weight="600">732 MiB</text>
+
+      <circle cx="28" cy="552" r="4" fill="#59b8f2"/>
+      <text x="42" y="556" fill="#f2f2f7" font-family="SF Pro Text, Helvetica, Arial" font-size="12" font-weight="600">codex</text>
+      <text x="100" y="556">pid 41376 · 30 procs · q 121</text>
+      <text x="820" y="556" fill="#f2f2f7" font-weight="600">429 MiB</text>
+
+      <circle cx="28" cy="584" r="4" fill="#59b8f2"/>
+      <text x="42" y="588" fill="#f2f2f7" font-family="SF Pro Text, Helvetica, Arial" font-size="12" font-weight="600">codex</text>
+      <text x="100" y="588">pid 71664 · 15 procs · q 121</text>
+      <text x="820" y="588" fill="#f2f2f7" font-weight="600">382 MiB</text>
+
+      <circle cx="28" cy="616" r="4" fill="#59b8f2"/>
+      <text x="42" y="620" fill="#f2f2f7" font-family="SF Pro Text, Helvetica, Arial" font-size="12" font-weight="600">codex</text>
+      <text x="100" y="620">pid 49375 · 8 procs · q 121</text>
+      <text x="820" y="620" fill="#f2f2f7" font-weight="600">368 MiB</text>
+    </g>
+    <text x="16" y="660" fill="#0a84ff" font-family="SF Pro Text, Helvetica, Arial" font-size="12">Open full tree inventory →</text>
+  </g>
+</svg>

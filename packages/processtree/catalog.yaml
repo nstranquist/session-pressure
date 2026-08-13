@@ -1,0 +1,29 @@
+schema_version: 2
+id: context.processtree
+name: Process Tree
+kind: shared
+lifecycle: active
+catalog_id: package.processtree
+owner_path: packages/processtree
+summary: Repository-wide Go subprocess primitive providing process-group cancellation and bounded inherited-pipe cleanup to real consumers across the portfolio.
+source_roots: [packages/processtree]
+public_contracts:
+  - id: command-context
+    paths: [packages/processtree/processtree.go]
+dependencies: []
+facets:
+  - id: go-package
+    kind: package
+    path: packages/processtree
+    entrypoint: packages/processtree/go.mod
+    catalog_id: package.processtree
+    runtime_contract: none
+relationships: []
+evidence:
+  - kind: test
+    path: packages/processtree/processtree_test.go
+  - kind: test
+    path: nicos-dev/internal/processpolicy/raw_command_audit_test.go
+  - kind: docs
+    path: packages/processtree/RUNBOOK.md
+tags: [shared-cell, go, subprocess, reliability, public-contract]

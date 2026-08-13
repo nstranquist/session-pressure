@@ -1,0 +1,140 @@
+schema_version: 2
+id: context.ndev-internal-foundation
+name: ndev Internal Foundation
+kind: shared
+lifecycle: active
+catalog_id: path.nicos-dev-internal
+owner_path: nicos-dev/internal/atomicfile
+summary: Typed Go foundation packages reused across ndev commands and internal services, including persistence, locking, process execution, host integration, secrets, registries, and operation contracts.
+source_roots:
+  - nicos-dev/internal/atomicfile
+  - nicos-dev/internal/filelock
+  - nicos-dev/internal/help
+  - nicos-dev/internal/integrations
+  - nicos-dev/internal/jsonl
+  - nicos-dev/internal/jsonutil
+  - nicos-dev/internal/kbpath
+  - nicos-dev/internal/lockfile
+  - nicos-dev/internal/mac
+  - nicos-dev/internal/operationcontract
+  - nicos-dev/internal/registry
+  - nicos-dev/internal/runprovenance
+  - nicos-dev/internal/secrets
+  - nicos-dev/internal/sessionpressure
+  - nicos-dev/pkg/processtree
+fallback_source_roots:
+  - nicos-dev/internal
+  - nicos-dev/pkg
+public_contracts:
+  - id: atomic-file
+    paths: [nicos-dev/internal/atomicfile]
+  - id: file-lock
+    paths: [nicos-dev/internal/filelock]
+  - id: integrations
+    paths: [nicos-dev/internal/integrations]
+  - id: kb-path
+    paths: [nicos-dev/internal/kbpath]
+  - id: mac-host
+    paths: [nicos-dev/internal/mac]
+  - id: process-tree
+    paths: [nicos-dev/pkg/processtree]
+  - id: run-provenance
+    paths: [nicos-dev/internal/runprovenance]
+  - id: secrets
+    paths: [nicos-dev/internal/secrets]
+dependencies:
+  - target: context.processtree
+    access: contract-only
+    contracts: [command-context]
+facets:
+  - id: atomic-file
+    kind: package
+    path: nicos-dev/internal/atomicfile
+    entrypoint: nicos-dev/internal/atomicfile/atomicfile.go
+    runtime_contract: none
+  - id: file-lock
+    kind: package
+    path: nicos-dev/internal/filelock
+    entrypoint: nicos-dev/internal/filelock/filelock.go
+    runtime_contract: none
+  - id: help
+    kind: package
+    path: nicos-dev/internal/help
+    entrypoint: nicos-dev/internal/help/cmd_help.go
+    runtime_contract: none
+  - id: integrations
+    kind: package
+    path: nicos-dev/internal/integrations
+    entrypoint: nicos-dev/internal/integrations/config.go
+    runtime_contract: none
+  - id: json-lines
+    kind: package
+    path: nicos-dev/internal/jsonl
+    entrypoint: nicos-dev/internal/jsonl/append.go
+    runtime_contract: none
+  - id: json
+    kind: package
+    path: nicos-dev/internal/jsonutil
+    entrypoint: nicos-dev/internal/jsonutil/jsonutil.go
+    runtime_contract: none
+  - id: kb-path
+    kind: package
+    path: nicos-dev/internal/kbpath
+    entrypoint: nicos-dev/internal/kbpath/kbpath.go
+    runtime_contract: none
+  - id: lock-file
+    kind: package
+    path: nicos-dev/internal/lockfile
+    entrypoint: nicos-dev/internal/lockfile/lockfile.go
+    runtime_contract: none
+  - id: mac-host
+    kind: package
+    path: nicos-dev/internal/mac
+    entrypoint: nicos-dev/internal/mac/mac.go
+    runtime_contract: none
+  - id: operation-contract
+    kind: package
+    path: nicos-dev/internal/operationcontract
+    entrypoint: nicos-dev/internal/operationcontract/types.go
+    runtime_contract: none
+  - id: process-tree
+    kind: package
+    path: nicos-dev/pkg/processtree
+    entrypoint: nicos-dev/pkg/processtree/processtree.go
+    runtime_contract: none
+  - id: registry
+    kind: package
+    path: nicos-dev/internal/registry
+    entrypoint: nicos-dev/internal/registry/registry.go
+    runtime_contract: none
+  - id: run-provenance
+    kind: package
+    path: nicos-dev/internal/runprovenance
+    entrypoint: nicos-dev/internal/runprovenance/provenance.go
+    runtime_contract: none
+  - id: secrets
+    kind: package
+    path: nicos-dev/internal/secrets
+    entrypoint: nicos-dev/internal/secrets/secrets.go
+    runtime_contract: none
+relationships:
+  - kind: bridges_to
+    target: package.operation-contracts
+evidence:
+  - kind: test
+    path: nicos-dev/internal/atomicfile/atomicfile_test.go
+  - kind: test
+    path: nicos-dev/internal/filelock/filelock_test.go
+  - kind: test
+    path: nicos-dev/internal/integrations/config_test.go
+  - kind: test
+    path: nicos-dev/internal/kbpath/kbpath_test.go
+  - kind: test
+    path: nicos-dev/internal/mac/mac_test.go
+  - kind: test
+    path: nicos-dev/pkg/processtree/processtree_test.go
+  - kind: test
+    path: nicos-dev/internal/secrets/secrets_test.go
+  - kind: docs
+    path: nicos-dev/internal/atomicfile/RUNBOOK.md
+tags: [shared-cell, ndev, go, foundation, public-contract]
