@@ -1,0 +1,9 @@
+id: product.session-pressure
+name: SessionPressure
+kind: product
+description: Open-core host admission and work coordinator for concurrent coding agents.
+checks:
+  - make publish-ready
+distribution: oss
+proprietary: false
+license: Apache-2.0

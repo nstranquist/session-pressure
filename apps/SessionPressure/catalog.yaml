@@ -1,0 +1,25 @@
+schema_version: 2
+id: context.ndev-pressure
+name: ndev Pressure
+kind: product
+lifecycle: active
+catalog_id: product.ndev-pressure
+owner_path: apps/desktop/ndev-pressure
+summary: "Native macOS desktop + menu bar shell over `ndev session pressure`: host memory/CPU/swap and agent-tree pressure plus adaptive internal-SSD write observation, bounded likely-writer attribution, and operator-only path tracing."
+source_roots:
+  - apps/desktop/ndev-pressure
+public_contracts: []
+dependencies: []
+facets:
+  - id: desktop
+    kind: desktop-app
+    path: apps/desktop/ndev-pressure
+    entrypoint: apps/desktop/ndev-pressure/README.md
+    runtime_contract: none
+relationships:
+  - kind: tracks
+    target: product.ndev-pressure
+evidence:
+  - kind: docs
+    path: apps/desktop/ndev-pressure/README.md
+tags: [ownership, product-cell, spine-enrolled, macos, observability, storage]
