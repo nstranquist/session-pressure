@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/mod/modfile"
 	"github.com/nstranquist/session-pressure/internal/filelock"
+	"golang.org/x/mod/modfile"
 )
 
 const (

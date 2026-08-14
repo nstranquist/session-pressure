@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nstranquist/session-pressure/internal/sessionpressure"
-	control "github.com/nstranquist/session-pressure/internal/sessionpressurecontrol"
+	"github.com/nstranquist/session-pressure/sessionpressure"
+	control "github.com/nstranquist/session-pressure/sessionpressurecontrol"
 )
 
 func main() {
@@ -129,7 +129,7 @@ func status(socket string, jsonOutput bool) int {
 }
 
 func printHelp() {
-	fmt.Print(`Usage: ndev-pressure-api <serve|status> [flags]
+	fmt.Print(`Usage: session-pressure-api <serve|status> [flags]
 
 Explicit foreground control plane for local SessionPressure.
 

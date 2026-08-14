@@ -130,7 +130,7 @@ func promoteArtifact(source, dir string, now time.Time) (InstalledArtifact, erro
 		return InstalledArtifact{}, fmt.Errorf("hash guard binary: %w", err)
 	}
 	artifactDir := filepath.Join(dir, "artifacts", "sha256-"+digest)
-	artifactPath := filepath.Join(artifactDir, "ndev-session-pressure")
+	artifactPath := filepath.Join(artifactDir, residentHelperName)
 	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
 		return InstalledArtifact{}, err
 	}
@@ -197,11 +197,25 @@ func LoadInstalledArtifact(dir string) (InstalledArtifact, bool, error) {
 		return InstalledArtifact{}, true, fmt.Errorf("decode installed artifact: %w", err)
 	}
 	decodedDigest, decodeErr := hex.DecodeString(artifact.SHA256)
-	expectedPath := filepath.Join(dir, "artifacts", "sha256-"+artifact.SHA256, "ndev-session-pressure")
-	if artifact.SchemaVersion < artifactManifestMinimumSchemaVersion || artifact.SchemaVersion > artifactManifestSchemaVersion || decodeErr != nil || len(decodedDigest) != sha256.Size || !filepath.IsAbs(artifact.Path) || filepath.Clean(artifact.Path) != filepath.Clean(expectedPath) {
+	if artifact.SchemaVersion < artifactManifestMinimumSchemaVersion || artifact.SchemaVersion > artifactManifestSchemaVersion || decodeErr != nil || len(decodedDigest) != sha256.Size || !validInstalledArtifactPath(dir, artifact.SHA256, artifact.Path) {
 		return InstalledArtifact{}, true, fmt.Errorf("invalid installed artifact manifest")
 	}
 	return artifact, true, nil
+}
+
+// validInstalledArtifactPath accepts the public helper name and the factory
+// compatibility name (ndev-session-pressure) already on installed machines.
+func validInstalledArtifactPath(dir, digest, path string) bool {
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	cleaned := filepath.Clean(path)
+	name := filepath.Base(cleaned)
+	if !isResidentHelperName(name) {
+		return false
+	}
+	expected := filepath.Join(dir, "artifacts", "sha256-"+digest, name)
+	return cleaned == filepath.Clean(expected)
 }
 
 func populateArtifactProvenance(artifact *InstalledArtifact) {
@@ -342,11 +356,11 @@ func inspectArtifactDirectory(root string, child os.DirEntry, activeDigest strin
 		return entry
 	}
 	children, err := os.ReadDir(entry.Path)
-	if err != nil || len(children) != 1 || children[0].Name() != "ndev-session-pressure" || children[0].Type()&os.ModeSymlink != 0 {
+	if err != nil || len(children) != 1 || !isResidentHelperName(children[0].Name()) || children[0].Type()&os.ModeSymlink != 0 {
 		entry.SkipReason = "artifact directory has unexpected contents"
 		return entry
 	}
-	binaryPath := filepath.Join(entry.Path, "ndev-session-pressure")
+	binaryPath := filepath.Join(entry.Path, children[0].Name())
 	info, err := os.Lstat(binaryPath)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != artifactFileMode {
 		entry.SkipReason = "artifact binary is missing, non-regular, or has the wrong mode"
@@ -370,7 +384,11 @@ func removeVerifiedArtifactDirectory(dir string, entry ArtifactPruneEntry) error
 		return err
 	}
 	expectedDirectory := filepath.Join(root, "sha256-"+entry.SHA256)
-	expectedBinary := filepath.Join(expectedDirectory, "ndev-session-pressure")
+	name := filepath.Base(entry.Path)
+	if !isResidentHelperName(name) {
+		return errors.New("refuse unsafe artifact prune target")
+	}
+	expectedBinary := filepath.Join(expectedDirectory, name)
 	if filepath.Clean(entry.Path) != expectedBinary || entry.Active || !entry.Prune {
 		return errors.New("refuse unsafe artifact prune target")
 	}

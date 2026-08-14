@@ -1,5 +1,5 @@
-// ndev-session-pressure is the deliberately tiny resident half of
-// `ndev session pressure`. The full ndev binary owns policy and lifecycle UX;
+// session-pressure-helper is the deliberately tiny resident half of
+// SessionPressure. The product CLI owns policy and lifecycle UX;
 // this helper imports only the sampler/monitor packages so idle RSS stays low.
 package main
 
@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/nstranquist/session-pressure/internal/notifyinbox"
-	"github.com/nstranquist/session-pressure/internal/sessionpressure"
+	"github.com/nstranquist/session-pressure/sessionpressure"
 )
 
 type cleanupBridgePolicy struct {
@@ -180,7 +180,7 @@ func main() {
 			os.Exit(runWorkBatchCommand(os.Args[2:]))
 		case sessionpressure.WorkChildMode:
 			if err := sessionpressure.RunGatedWorkChild(os.Args[2:]); err != nil {
-				fmt.Fprintln(os.Stderr, "ndev session pressure: gated child:", err)
+				fmt.Fprintln(os.Stderr, "session-pressure: gated child:", err)
 				os.Exit(125)
 			}
 			return
@@ -199,26 +199,26 @@ func main() {
 func runWorkBatchCommand(args []string) int {
 	options, err := sessionpressure.ParseWorkBatchArgs(args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ndev session pressure:", err)
+		fmt.Fprintln(os.Stderr, "session-pressure:", err)
 		return 2
 	}
 	manifest, err := sessionpressure.ReadWorkBatchManifest(options.File, os.Stdin)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ndev session pressure:", err)
+		fmt.Fprintln(os.Stderr, "session-pressure:", err)
 		return 2
 	}
 	dir, err := sessionpressure.DataDir()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ndev session pressure:", err)
+		fmt.Fprintln(os.Stderr, "session-pressure:", err)
 		return 1
 	}
 	policy, persisted, err := sessionpressure.LoadPolicy(sessionpressure.PolicyPath(dir), 0)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ndev session pressure:", err)
+		fmt.Fprintln(os.Stderr, "session-pressure:", err)
 		return 1
 	}
 	if !persisted {
-		fmt.Fprintln(os.Stderr, "ndev session pressure: policy is not initialized; run ndev session pressure policy init")
+		fmt.Fprintln(os.Stderr, "session-pressure: policy is not initialized; run session-pressure policy init")
 		return 1
 	}
 	options.RetentionDays = policy.RetentionDays
@@ -232,7 +232,7 @@ func runWorkBatchCommand(args []string) int {
 		sessionpressure.WorkRunStreams{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr},
 	)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ndev session pressure:", err)
+		fmt.Fprintln(os.Stderr, "session-pressure:", err)
 	}
 	return code
 }
@@ -240,21 +240,21 @@ func runWorkBatchCommand(args []string) int {
 func runWorkCommand(args []string) int {
 	options, err := sessionpressure.ParseWorkRunArgs(args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ndev session pressure:", err)
+		fmt.Fprintln(os.Stderr, "session-pressure:", err)
 		return 2
 	}
 	dir, err := sessionpressure.DataDir()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ndev session pressure:", err)
+		fmt.Fprintln(os.Stderr, "session-pressure:", err)
 		return 1
 	}
 	policy, persisted, err := sessionpressure.LoadPolicy(sessionpressure.PolicyPath(dir), 0)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ndev session pressure:", err)
+		fmt.Fprintln(os.Stderr, "session-pressure:", err)
 		return 1
 	}
 	if !persisted {
-		fmt.Fprintln(os.Stderr, "ndev session pressure: policy is not initialized; run ndev session pressure policy init")
+		fmt.Fprintln(os.Stderr, "session-pressure: policy is not initialized; run session-pressure policy init")
 		return 1
 	}
 	options.RetentionDays = policy.RetentionDays
@@ -268,7 +268,7 @@ func runWorkCommand(args []string) int {
 		sessionpressure.WorkRunStreams{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr},
 	)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ndev session pressure:", err)
+		fmt.Fprintln(os.Stderr, "session-pressure:", err)
 	}
 	return code
 }
@@ -295,7 +295,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	if !persisted {
-		return fmt.Errorf("policy is not initialized; run ndev session pressure policy init")
+		return fmt.Errorf("policy is not initialized; run session-pressure policy init")
 	}
 	sampler.WithWorkCoordinator(sessionpressure.NewWorkCoordinator(dir, policy.WorkLimits))
 	lifecycle, recoveryHint, err := sessionpressure.StartLifecycle(dir, os.Getpid(), time.Now)
@@ -307,18 +307,18 @@ func run(ctx context.Context) error {
 			// Recovery evidence remains durable in recovery-hint.json. Notification
 			// delivery is best-effort and must not prevent the pressure authority
 			// from protecting a host during login or a crash-loop restart.
-			fmt.Fprintln(os.Stderr, "ndev-session-pressure: queue recovery notification:", err)
+			fmt.Fprintln(os.Stderr, "session-pressure-helper: queue recovery notification:", err)
 		}
 	}
 	defer func() {
 		if err := lifecycle.MarkClean(); err != nil {
-			fmt.Fprintln(os.Stderr, "ndev-session-pressure: mark clean shutdown:", err)
+			fmt.Fprintln(os.Stderr, "session-pressure-helper: mark clean shutdown:", err)
 		}
 	}()
 	store := sessionpressure.NewTelemetryStore(dir)
 	startedAt := time.Now().UTC()
 	if err := store.AppendEvent(sessionpressure.TelemetryEvent{Timestamp: startedAt, Event: "resident_started"}); err != nil {
-		fmt.Fprintln(os.Stderr, "ndev-session-pressure: persist resident start:", err)
+		fmt.Fprintln(os.Stderr, "session-pressure-helper: persist resident start:", err)
 	}
 	starts24h := 0
 	if events, err := store.ReadEvents(10_000, startedAt.Add(-24*time.Hour)); err == nil {
@@ -330,7 +330,7 @@ func run(ctx context.Context) error {
 	}
 	defer func() {
 		if err := store.AppendEvent(sessionpressure.TelemetryEvent{Timestamp: time.Now().UTC(), Event: "resident_stopped"}); err != nil {
-			fmt.Fprintln(os.Stderr, "ndev-session-pressure: persist resident stop:", err)
+			fmt.Fprintln(os.Stderr, "session-pressure-helper: persist resident stop:", err)
 		}
 	}()
 	monitor := sessionpressure.NewMonitor(sampler, store, policy)
@@ -349,7 +349,7 @@ func notifyRecoveryHint(hint sessionpressure.RecoveryHint) error {
 		Title:          "Session recovery may be available",
 		Body:           "The previous pressure monitor did not shut down cleanly. Open the recovery hint to inspect resumable sessions.",
 		Severity:       "warning",
-		Source:         "ndev-session-pressure",
+		Source:         "session-pressure-helper",
 		Seconds:        "12",
 		ExecuteCommand: hint.RecoveryCommand,
 	}, time.Now)
@@ -364,13 +364,13 @@ func notifyDiskWriteAlert(alert sessionpressure.DiskWriteAlert) error {
 		Title:          "Unusual disk writes detected",
 		Body:           body,
 		Severity:       "warning",
-		Source:         "ndev-session-pressure",
+		Source:         "session-pressure-helper",
 		Seconds:        "12",
 		ExecuteCommand: "/usr/bin/open ndev-pressure://disk-writes",
 	}, time.Now)
 }
 
 func fatal(err error) {
-	fmt.Fprintln(os.Stderr, "ndev-session-pressure:", err)
+	fmt.Fprintln(os.Stderr, "session-pressure-helper:", err)
 	os.Exit(1)
 }

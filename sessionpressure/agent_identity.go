@@ -515,10 +515,10 @@ func (catalog *AgentIdentityCatalog) KnownAgents() []string {
 
 // InstallPresence describes on-disk install roots for miss detection.
 type AgentInstallPresence struct {
-	Agent  string `json:"agent"`
-	Path   string `json:"path"`
-	Kind   string `json:"kind"` // exact | prefix
-	Present bool  `json:"present"`
+	Agent   string `json:"agent"`
+	Path    string `json:"path"`
+	Kind    string `json:"kind"` // exact | prefix
+	Present bool   `json:"present"`
 }
 
 // InstallPresences reports which trusted install roots exist under home.

@@ -119,8 +119,16 @@ func NewLaunchdManager(binary, dataDir string) (*LaunchdManager, error) {
 	return manager, nil
 }
 
+// residentHelperName is the public extract LaunchAgent binary.
+// ndev-session-pressure remains accepted when that is already the executable.
+const residentHelperName = "session-pressure-helper"
+
+func isResidentHelperName(name string) bool {
+	return name == residentHelperName || name == "ndev-session-pressure"
+}
+
 func sessionPressureBinaryForExecutable(executable string) string {
-	if filepath.Base(executable) == "ndev-session-pressure" {
+	if isResidentHelperName(filepath.Base(executable)) {
 		return executable
 	}
 	dir := filepath.Dir(executable)
@@ -131,7 +139,7 @@ func sessionPressureBinaryForExecutable(executable string) string {
 		// one directory above, not copied into every CLI revision directory.
 		dir = filepath.Dir(dir)
 	}
-	return filepath.Join(dir, "ndev-session-pressure")
+	return filepath.Join(dir, residentHelperName)
 }
 
 func (manager *LaunchdManager) PlistPath() string {
