@@ -335,7 +335,7 @@ func canonicalMakeBuildGoCommands(target string, environment []string) ([][]stri
 		tags = "sqlite_fts5"
 	}
 	ndev := []string{goName, "build", "-tags", tags, "./cmd/ndev-go"}
-	resident := []string{goName, "build", "./internal/sessionpressure/daemon"}
+	resident := []string{goName, "build", "github.com/nstranquist/session-pressure/sessionpressure/daemon"}
 	toolguard := []string{goName, "build", "./cmd/toolguard"}
 	publisher := []string{goName, "build", "./cmd/ndev-binary-publish"}
 	switch target {

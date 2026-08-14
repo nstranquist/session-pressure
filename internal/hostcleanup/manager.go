@@ -9,11 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nstranquist/session-pressure/third_party/pageskein/browser"
 	"github.com/nstranquist/session-pressure/internal/devsession"
 	"github.com/nstranquist/session-pressure/internal/filelock"
 	"github.com/nstranquist/session-pressure/internal/orb"
-	"github.com/nstranquist/session-pressure/internal/sessionpressure"
+	"github.com/nstranquist/session-pressure/sessionpressure"
+	"github.com/nstranquist/session-pressure/sessionpressurecleanup"
+	"github.com/nstranquist/session-pressure/third_party/pageskein/browser"
 )
 
 type Manager struct {
@@ -43,8 +44,124 @@ func NewManager(dir string) *Manager {
 		inspectProcess: sessionpressure.InspectClaimedProcessTree,
 		reapProcess:    sessionpressure.ReapClaimedProcessTree,
 	}
+	applyInstalledProviders(manager)
 	manager.memoryLevel = manager.evaluateMemoryLevel
 	return manager
+}
+
+func applyInstalledProviders(manager *Manager) {
+	hooks := sessionpressurecleanup.Current()
+	if hooks.ListBrowser != nil {
+		manager.listBrowser = func() ([]browser.Session, error) {
+			rows, err := hooks.ListBrowser()
+			if err != nil {
+				return nil, err
+			}
+			out := make([]browser.Session, 0, len(rows))
+			for _, row := range rows {
+				out = append(out, browser.Session{
+					Name:            row.Name,
+					PID:             row.PID,
+					StartedAt:       row.StartedAt,
+					LastActivityAt:  row.LastActivityAt,
+					IdleTimeout:     row.IdleTimeout,
+					LifecyclePolicy: row.Lifecycle,
+					PurgeOnExpiry:   row.PurgeOnExpiry,
+				})
+			}
+			return out, nil
+		}
+	}
+	if hooks.ExpireBrowser != nil {
+		manager.expireBrowser = func(name string, pid int, timeout time.Duration, purge bool, now time.Time) (browser.IdleExpiryResult, error) {
+			got, err := hooks.ExpireBrowser(name, pid, timeout, purge, now)
+			if err != nil {
+				return browser.IdleExpiryResult{}, err
+			}
+			return browser.IdleExpiryResult{Closed: got.Closed, Reason: got.Reason}, nil
+		}
+	}
+	if hooks.ListDev != nil {
+		manager.listDev = func() ([]devsession.ScopeEntry, error) {
+			rows, err := hooks.ListDev()
+			if err != nil {
+				return nil, err
+			}
+			out := make([]devsession.ScopeEntry, 0, len(rows))
+			for _, row := range rows {
+				out = append(out, devsession.ScopeEntry{
+					Scope:           row.Scope,
+					Alive:           row.Alive,
+					Attached:        row.Attached,
+					AttachmentKnown: row.AttachmentKnown,
+					Provenance: devsession.Provenance{
+						Workspace:   row.Workspace,
+						App:         row.App,
+						StartedAt:   row.StartedAt,
+						LogPath:     row.LogPath,
+						TmuxSession: row.TmuxSession,
+					},
+				})
+			}
+			return out, nil
+		}
+	}
+	if hooks.TeardownDev != nil {
+		manager.teardownDev = func(workspace, app string, expected devsession.IdleTeardownExpectation) (bool, string, error) {
+			return hooks.TeardownDev(workspace, app, expected.StartedAt, expected.TmuxSession, expected.MinimumIdle, expected.Now)
+		}
+	}
+	if hooks.PlanDocker != nil {
+		manager.planOrb = func(_ orb.Snapshot, policy orb.Policy, maxActions int) []orb.TrimAction {
+			actions, err := hooks.PlanDocker(context.Background(), policy.MinIdleMinutes, maxActions)
+			if err != nil {
+				return nil
+			}
+			out := make([]orb.TrimAction, 0, len(actions))
+			for _, action := range actions {
+				out = append(out, orb.TrimAction{
+					WorkspaceID:    action.WorkspaceID,
+					Workspace:      action.Workspace,
+					Action:         action.Action,
+					Reason:         action.Reason,
+					ReclaimedRAMMB: action.ReclaimedRAMMB,
+					IdleMinutes:    action.IdleMinutes,
+					Error:          action.Error,
+				})
+			}
+			return out
+		}
+	}
+	if hooks.ApplyDocker != nil {
+		manager.applyOrb = func(actions []orb.TrimAction) []orb.TrimAction {
+			out := make([]orb.TrimAction, 0, len(actions))
+			for _, action := range actions {
+				applied, err := hooks.ApplyDocker(context.Background(), sessionpressurecleanup.DockerAction{
+					WorkspaceID:    action.WorkspaceID,
+					Workspace:      action.Workspace,
+					Action:         action.Action,
+					Reason:         action.Reason,
+					ReclaimedRAMMB: action.ReclaimedRAMMB,
+					IdleMinutes:    action.IdleMinutes,
+					Error:          action.Error,
+				})
+				if err != nil {
+					out = append(out, orb.TrimAction{WorkspaceID: action.WorkspaceID, Workspace: action.Workspace, Action: "error", Error: err.Error()})
+					continue
+				}
+				out = append(out, orb.TrimAction{
+					WorkspaceID:    applied.WorkspaceID,
+					Workspace:      applied.Workspace,
+					Action:         applied.Action,
+					Reason:         applied.Reason,
+					ReclaimedRAMMB: applied.ReclaimedRAMMB,
+					IdleMinutes:    applied.IdleMinutes,
+					Error:          applied.Error,
+				})
+			}
+			return out
+		}
+	}
 }
 
 func (manager *Manager) MaybeRelieve(ctx context.Context, snapshot sessionpressure.Snapshot) (sessionpressure.ResourceCleanupResult, error) {

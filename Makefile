@@ -7,10 +7,10 @@ fmt:
 	$(GO) fmt ./...
 
 vet:
-	$(GO) vet ./sessionpressure ./sessionpressurecmd ./cmd/session-pressure ./cmd/session-pressure-api ./cmd/session-pressure-helper
+	$(GO) vet ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./cmd/session-pressure ./cmd/session-pressure-api ./cmd/session-pressure-helper
 
 test:
-	$(GO) test ./sessionpressure ./sessionpressurecmd ./cmd/session-pressure ./internal/filelock ./internal/jsonl ./internal/notifyinbox ./internal/operationcontract ./packages/processtree -count=1 -timeout 10m
+	$(GO) test ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./internal/hostcleanup ./cmd/session-pressure ./internal/filelock ./internal/jsonl ./internal/notifyinbox ./internal/operationcontract ./packages/processtree -count=1 -timeout 10m
 
 build:
 	mkdir -p $(PREFIX)

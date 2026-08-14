@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nstranquist/session-pressure/third_party/pageskein/browser"
 	"github.com/nstranquist/session-pressure/internal/devsession"
 	"github.com/nstranquist/session-pressure/internal/orb"
-	"github.com/nstranquist/session-pressure/internal/sessionpressure"
+	"github.com/nstranquist/session-pressure/sessionpressure"
+	"github.com/nstranquist/session-pressure/third_party/pageskein/browser"
 )
 
 func TestClaimStoreActiveHeartbeatStaleAndRelease(t *testing.T) {
@@ -337,7 +337,7 @@ func TestManagerActiveClaimProtectsStaleDevSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry := devsession.ScopeEntry{Scope: "ad-hoc", Alive: true, AttachmentKnown: true, Provenance: devsession.Provenance{
-		Version: 1, Workspace: "ad-hoc", App: "api", TmuxSession: "ndev-api",
+		Workspace: "ad-hoc", App: "api", TmuxSession: "ndev-api",
 		StartedAt: old.Format(time.RFC3339), LogPath: logPath,
 	}}
 	policy := DefaultPolicy()
@@ -601,7 +601,7 @@ func testManager(dir string, now time.Time) *Manager {
 	return &Manager{
 		Dir: dir, Now: func() time.Time { return now },
 		listBrowser:   func() ([]browser.Session, error) { return nil, nil },
-		expireBrowser: browser.ExpireIdleSession,
+		expireBrowser: stubExpireBrowser,
 		listDev:       func() ([]devsession.ScopeEntry, error) { return nil, nil },
 		teardownDev: func(string, string, devsession.IdleTeardownExpectation) (bool, string, error) {
 			return true, "", nil
