@@ -79,10 +79,10 @@ func TestOverlayMergesInstallRootFailClosed(t *testing.T) {
 	overlay := &AgentIdentityOverlay{
 		SchemaVersion: agentIdentitySchemaVersion,
 		Rules: []AgentIdentityRule{{
-			Agent:               "grok",
-			InstallPathExact:    []string{".local/opt/custom-grok/bin/grok"},
-			ExactBasenames:      []string{"custom-grok"},
-			PathProbePrefixes:   []string{"custom-grok-"},
+			Agent:                        "grok",
+			InstallPathExact:             []string{".local/opt/custom-grok/bin/grok"},
+			ExactBasenames:               []string{"custom-grok"},
+			PathProbePrefixes:            []string{"custom-grok-"},
 			PathProbePrefixRequiresDigit: true,
 		}},
 	}

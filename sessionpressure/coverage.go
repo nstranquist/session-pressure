@@ -96,9 +96,9 @@ func AssessCoverageDetailed(in CoverageAssessment) CoverageReport {
 	})
 
 	claude := assessToolguard(repoRoot, ".claude/settings.json", ".claude/hooks/toolguard.sh")
-	claude.ID, claude.Label, claude.Scope = "claude_toolguard", "Claude repo toolguard", "nicos-tools Bash tools"
+	claude.ID, claude.Label, claude.Scope = "claude_toolguard", "Claude repo toolguard", "optional factory adapter"
 	codex := assessToolguard(repoRoot, ".codex/hooks.json", ".codex/hooks/toolguard.sh")
-	codex.ID, codex.Label, codex.Scope = "codex_toolguard", "Codex repo toolguard", "nicos-tools shell tools"
+	codex.ID, codex.Label, codex.Scope = "codex_toolguard", "Codex repo toolguard", "optional factory adapter"
 	home := strings.TrimSpace(in.Home)
 	if home == "" {
 		home, _ = os.UserHomeDir()
@@ -177,7 +177,9 @@ func assessAgentShims(home string) CoverageSurface {
 }
 
 func assessToolguard(repoRoot, settingsRelative, hookRelative string) CoverageSurface {
-	surface := CoverageSurface{State: CoverageAttention, Detail: "repo toolguard wiring is missing or not executable"}
+	// Toolguard stays in nicos-tools. Missing wiring is observed, not an
+	// extract attention item that tells operators to build the factory binary.
+	surface := CoverageSurface{State: CoverageObserved, Detail: "Toolguard stays in nicos-tools; the open extract does not require it"}
 	if strings.TrimSpace(repoRoot) == "" {
 		return surface
 	}

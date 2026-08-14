@@ -1927,17 +1927,22 @@ func TestSessionPressureBinaryForPublishedControlExecutable(t *testing.T) {
 		want       string
 	}{
 		{
-			name:       "content addressed ndev publication",
-			executable: filepath.Join(binDir, "ndev-publish.artifacts", "sha256-deadbeef"),
-			want:       filepath.Join(binDir, "ndev-session-pressure"),
+			name:       "content addressed publication",
+			executable: filepath.Join(binDir, "session-pressure-publish.artifacts", "sha256-deadbeef"),
+			want:       filepath.Join(binDir, residentHelperName),
 		},
 		{
 			name:       "ordinary sibling binary",
-			executable: filepath.Join(binDir, "ndev"),
-			want:       filepath.Join(binDir, "ndev-session-pressure"),
+			executable: filepath.Join(binDir, "session-pressure"),
+			want:       filepath.Join(binDir, residentHelperName),
 		},
 		{
 			name:       "resident artifact is already the helper",
+			executable: filepath.Join(binDir, "artifacts", "sha256-deadbeef", residentHelperName),
+			want:       filepath.Join(binDir, "artifacts", "sha256-deadbeef", residentHelperName),
+		},
+		{
+			name:       "legacy helper name is still accepted",
 			executable: filepath.Join(binDir, "artifacts", "sha256-deadbeef", "ndev-session-pressure"),
 			want:       filepath.Join(binDir, "artifacts", "sha256-deadbeef", "ndev-session-pressure"),
 		},

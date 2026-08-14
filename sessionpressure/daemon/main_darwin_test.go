@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nstranquist/session-pressure/internal/sessionpressure"
+	"github.com/nstranquist/session-pressure/sessionpressure"
 )
 
 func TestRunRequiresInitializedPolicyBeforeStartingLifecycle(t *testing.T) {
@@ -44,7 +44,7 @@ func TestNotifyRecoveryHintQueuesSafeActionableToast(t *testing.T) {
 	if err := json.Unmarshal(body, &toast); err != nil {
 		t.Fatalf("toast JSON: %v body=%s", err, body)
 	}
-	if toast.Source != "ndev-session-pressure" || toast.ExecuteCommand != hint.RecoveryCommand {
+	if toast.Source != "session-pressure-helper" || toast.ExecuteCommand != hint.RecoveryCommand {
 		t.Fatalf("toast=%+v", toast)
 	}
 	if strings.Contains(string(body), "prompt") {

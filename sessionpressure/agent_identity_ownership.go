@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	pidOwnershipCacheTTL   = 15 * time.Second
-	pidOwnershipMaxPIDs    = 48
+	pidOwnershipCacheTTL    = 15 * time.Second
+	pidOwnershipMaxPIDs     = 48
 	pidOwnershipLSOFTimeout = 2 * time.Second
 )
 

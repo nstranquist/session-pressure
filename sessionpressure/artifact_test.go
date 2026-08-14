@@ -251,13 +251,59 @@ func TestLaunchdStatusRejectsArtifactSymlink(t *testing.T) {
 	}
 }
 
+func TestLoadInstalledArtifactAcceptsLegacyHelperName(t *testing.T) {
+	dir := t.TempDir()
+	digest := strings.Repeat("b", 64)
+	artifact := InstalledArtifact{
+		SchemaVersion: artifactManifestSchemaVersion,
+		SHA256:        digest,
+		Path:          filepath.Join(dir, "artifacts", "sha256-"+digest, "ndev-session-pressure"),
+		InstalledAt:   time.Now().UTC(),
+	}
+	body, err := json.Marshal(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWrite(ArtifactManifestPath(dir), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, found, err := LoadInstalledArtifact(dir)
+	if err != nil || !found {
+		t.Fatalf("legacy helper manifest found=%v err=%v", found, err)
+	}
+	if filepath.Base(loaded.Path) != "ndev-session-pressure" {
+		t.Fatalf("loaded path=%s", loaded.Path)
+	}
+}
+
+func TestLoadInstalledArtifactRejectsUnknownHelperName(t *testing.T) {
+	dir := t.TempDir()
+	digest := strings.Repeat("c", 64)
+	artifact := InstalledArtifact{
+		SchemaVersion: artifactManifestSchemaVersion,
+		SHA256:        digest,
+		Path:          filepath.Join(dir, "artifacts", "sha256-"+digest, "not-a-helper"),
+		InstalledAt:   time.Now().UTC(),
+	}
+	body, err := json.Marshal(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWrite(ArtifactManifestPath(dir), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := LoadInstalledArtifact(dir); !found || err == nil {
+		t.Fatalf("unknown helper name found=%v err=%v", found, err)
+	}
+}
+
 func TestLoadInstalledArtifactAcceptsSchemaOneManifest(t *testing.T) {
 	dir := t.TempDir()
 	digest := strings.Repeat("a", 64)
 	artifact := InstalledArtifact{
 		SchemaVersion: 1,
 		SHA256:        digest,
-		Path:          filepath.Join(dir, "artifacts", "sha256-"+digest, "ndev-session-pressure"),
+		Path:          filepath.Join(dir, "artifacts", "sha256-"+digest, residentHelperName),
 		InstalledAt:   time.Now().UTC(),
 	}
 	body, err := json.Marshal(artifact)

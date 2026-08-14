@@ -259,10 +259,10 @@ func DetectAgentIdentityMisses(catalog *AgentIdentityCatalog, home string, trees
 // AssessAgentIdentityCoverage adds a coverage surface for the identity plane.
 func AssessAgentIdentityCoverage(catalog *AgentIdentityCatalog, home string, trees []AgentTree, processes []Process) CoverageSurface {
 	surface := CoverageSurface{
-		ID:    "agent_identity",
-		Label: "Agent process identity",
-		Scope: "coding-agent trees",
-		State: CoverageObserved,
+		ID:     "agent_identity",
+		Label:  "Agent process identity",
+		Scope:  "coding-agent trees",
+		State:  CoverageObserved,
 		Detail: "shipped identity catalog classifies codex/claude/grok/kimi via exact names, install roots, and path probes",
 	}
 	if catalog == nil {

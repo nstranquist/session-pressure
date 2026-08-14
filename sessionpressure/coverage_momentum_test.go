@@ -228,6 +228,21 @@ func TestCoverageReportsEnforcementAndExplicitBoundaries(t *testing.T) {
 	}
 }
 
+func TestExtractCoverageDoesNotRequireFactoryToolguard(t *testing.T) {
+	report := AssessCoverage(t.TempDir(), DefaultPolicy(16*1024), GuardHealth{MonitorHealthy: true})
+	for _, surface := range report.Surfaces {
+		if surface.ID != "claude_toolguard" && surface.ID != "codex_toolguard" {
+			continue
+		}
+		if surface.State != CoverageObserved {
+			t.Fatalf("%s should stay observed without factory wiring: %+v", surface.ID, surface)
+		}
+		if strings.Contains(strings.ToLower(surface.Detail), "missing") || strings.Contains(surface.Detail, "nicos-dev/bin/toolguard") {
+			t.Fatalf("extract coverage must not tell operators to build factory Toolguard: %+v", surface)
+		}
+	}
+}
+
 func TestOperatorReadinessIncludesRecoveryTruth(t *testing.T) {
 	health := GuardHealth{DailyDriverReady: true}.WithOperatorState(true, nil)
 	if health.OperatorReady || len(health.OperatorReasons) != 1 || !strings.Contains(health.OperatorReasons[0], "pending review") {

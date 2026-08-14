@@ -7,7 +7,7 @@ import (
 )
 
 // PressureDoctor is the compact agent/operator health envelope for
-// `ndev session pressure doctor`. It composes resident evidence only by default
+// `session-pressure doctor`. It composes resident evidence only by default
 // (no mandatory live sample or long self-test wait).
 type PressureDoctor struct {
 	SchemaVersion      int           `json:"schema_version"`
@@ -142,23 +142,23 @@ func BuildPressureDoctor(in PressureDoctorInput) PressureDoctor {
 		doc.Warnings = append(doc.Warnings, reason)
 	}
 	if !in.Persisted {
-		doc.Fixes = append(doc.Fixes, "ndev session pressure policy init")
+		doc.Fixes = append(doc.Fixes, "session-pressure policy init")
 	}
 	if !health.MonitorHealthy {
-		doc.Fixes = append(doc.Fixes, "ndev session pressure monitor install")
-		doc.Fixes = append(doc.Fixes, "make -C nicos-dev build-ndev-session-pressure")
+		doc.Fixes = append(doc.Fixes, "session-pressure monitor install")
+		doc.Fixes = append(doc.Fixes, "make build")
 	}
 	if in.HasRecovery {
-		doc.Fixes = append(doc.Fixes, "ndev session pressure recovery clear  # after reviewing unclean shutdown")
+		doc.Fixes = append(doc.Fixes, "session-pressure recovery clear  # after reviewing unclean shutdown")
 	}
 	if catalog := ActiveAgentIdentityCatalog(); catalog != nil && catalog.OverlayError != "" {
 		doc.Warnings = append(doc.Warnings, "agent identity overlay failed closed: "+catalog.OverlayError)
-		doc.Fixes = append(doc.Fixes, "fix ~/.nicos-dev/session-pressure/agent-identity.json or remove it; ndev session pressure identity show")
+		doc.Fixes = append(doc.Fixes, "fix ~/.nicos-dev/session-pressure/agent-identity.json or remove it; session-pressure identity show")
 	}
 	for _, surface := range in.Coverage.Surfaces {
 		if surface.ID == "agent_identity" && surface.State == CoverageAttention {
 			doc.Warnings = append(doc.Warnings, "agent identity: "+surface.Detail)
-			doc.Fixes = append(doc.Fixes, "ndev --json session pressure identity show --live")
+			doc.Fixes = append(doc.Fixes, "session-pressure --json identity show --live")
 			break
 		}
 	}

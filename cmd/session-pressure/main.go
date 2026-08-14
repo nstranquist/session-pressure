@@ -5,7 +5,7 @@ package main
 import (
 	"os"
 
-	"github.com/nstranquist/session-pressure/internal/sessionpressurecmd"
+	"github.com/nstranquist/session-pressure/sessionpressurecmd"
 )
 
 func main() {
