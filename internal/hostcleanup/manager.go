@@ -27,8 +27,8 @@ type Manager struct {
 	teardownDev    func(string, string, devsession.IdleTeardownExpectation) (bool, string, error)
 	collectOrb     func(context.Context) (orb.Snapshot, error)
 	loadOrbPolicy  func() (orb.Policy, string, error)
-	planOrb        func(orb.Snapshot, orb.Policy, int) []orb.TrimAction
-	applyOrb       func([]orb.TrimAction) []orb.TrimAction
+	planOrb        func(context.Context, orb.Snapshot, orb.Policy, int) ([]orb.TrimAction, error)
+	applyOrb       func(context.Context, []orb.TrimAction) ([]orb.TrimAction, error)
 	inspectProcess func(context.Context, sessionpressure.ClaimedProcessExpectation) (sessionpressure.ClaimedProcessResult, error)
 	reapProcess    func(context.Context, sessionpressure.ClaimedProcessExpectation) (sessionpressure.ClaimedProcessResult, error)
 	memoryLevel    func(sessionpressure.Snapshot) (sessionpressure.Level, error)
@@ -40,7 +40,12 @@ func NewManager(dir string) *Manager {
 		listBrowser: func() ([]browser.Session, error) { return nil, nil }, expireBrowser: stubExpireBrowser,
 		listDev: func() ([]devsession.ScopeEntry, error) { return nil, nil }, teardownDev: stubTeardownDev,
 		collectOrb: func(context.Context) (orb.Snapshot, error) { return orb.Snapshot{}, nil }, loadOrbPolicy: func() (orb.Policy, string, error) { return orb.Policy{}, "oss", nil },
-		planOrb: func(orb.Snapshot, orb.Policy, int) []orb.TrimAction { return nil }, applyOrb: func(actions []orb.TrimAction) []orb.TrimAction { return actions },
+		planOrb: func(context.Context, orb.Snapshot, orb.Policy, int) ([]orb.TrimAction, error) {
+			return nil, nil
+		},
+		applyOrb: func(_ context.Context, actions []orb.TrimAction) ([]orb.TrimAction, error) {
+			return actions, nil
+		},
 		inspectProcess: sessionpressure.InspectClaimedProcessTree,
 		reapProcess:    sessionpressure.ReapClaimedProcessTree,
 	}
@@ -112,55 +117,57 @@ func applyInstalledProviders(manager *Manager) {
 		}
 	}
 	if hooks.PlanDocker != nil {
-		manager.planOrb = func(_ orb.Snapshot, policy orb.Policy, maxActions int) []orb.TrimAction {
-			actions, err := hooks.PlanDocker(context.Background(), policy.MinIdleMinutes, maxActions)
+		manager.planOrb = func(ctx context.Context, _ orb.Snapshot, policy orb.Policy, maxActions int) ([]orb.TrimAction, error) {
+			actions, err := hooks.PlanDocker(ctx, policy.MinIdleMinutes, maxActions)
 			if err != nil {
-				return nil
+				return nil, err
 			}
 			out := make([]orb.TrimAction, 0, len(actions))
 			for _, action := range actions {
-				out = append(out, orb.TrimAction{
-					WorkspaceID:    action.WorkspaceID,
-					Workspace:      action.Workspace,
-					Action:         action.Action,
-					Reason:         action.Reason,
-					ReclaimedRAMMB: action.ReclaimedRAMMB,
-					IdleMinutes:    action.IdleMinutes,
-					Error:          action.Error,
-				})
+				out = append(out, trimFromDockerAction(action))
 			}
-			return out
+			return out, nil
 		}
 	}
 	if hooks.ApplyDocker != nil {
-		manager.applyOrb = func(actions []orb.TrimAction) []orb.TrimAction {
+		manager.applyOrb = func(ctx context.Context, actions []orb.TrimAction) ([]orb.TrimAction, error) {
 			out := make([]orb.TrimAction, 0, len(actions))
 			for _, action := range actions {
-				applied, err := hooks.ApplyDocker(context.Background(), sessionpressurecleanup.DockerAction{
-					WorkspaceID:    action.WorkspaceID,
-					Workspace:      action.Workspace,
-					Action:         action.Action,
-					Reason:         action.Reason,
-					ReclaimedRAMMB: action.ReclaimedRAMMB,
-					IdleMinutes:    action.IdleMinutes,
-					Error:          action.Error,
-				})
+				applied, err := hooks.ApplyDocker(ctx, dockerActionFromTrim(action))
 				if err != nil {
-					out = append(out, orb.TrimAction{WorkspaceID: action.WorkspaceID, Workspace: action.Workspace, Action: "error", Error: err.Error()})
+					out = append(out, orb.TrimAction{WorkspaceID: action.WorkspaceID, Workspace: action.Workspace, Action: "error", Error: err.Error(), LastUsedAt: action.LastUsedAt})
 					continue
 				}
-				out = append(out, orb.TrimAction{
-					WorkspaceID:    applied.WorkspaceID,
-					Workspace:      applied.Workspace,
-					Action:         applied.Action,
-					Reason:         applied.Reason,
-					ReclaimedRAMMB: applied.ReclaimedRAMMB,
-					IdleMinutes:    applied.IdleMinutes,
-					Error:          applied.Error,
-				})
+				out = append(out, trimFromDockerAction(applied))
 			}
-			return out
+			return out, nil
 		}
+	}
+}
+
+func trimFromDockerAction(action sessionpressurecleanup.DockerAction) orb.TrimAction {
+	return orb.TrimAction{
+		WorkspaceID:    action.WorkspaceID,
+		Workspace:      action.Workspace,
+		Action:         action.Action,
+		Reason:         action.Reason,
+		ReclaimedRAMMB: action.ReclaimedRAMMB,
+		IdleMinutes:    action.IdleMinutes,
+		LastUsedAt:     action.LastUsedAt,
+		Error:          action.Error,
+	}
+}
+
+func dockerActionFromTrim(action orb.TrimAction) sessionpressurecleanup.DockerAction {
+	return sessionpressurecleanup.DockerAction{
+		WorkspaceID:    action.WorkspaceID,
+		Workspace:      action.Workspace,
+		Action:         action.Action,
+		Reason:         action.Reason,
+		ReclaimedRAMMB: action.ReclaimedRAMMB,
+		IdleMinutes:    action.IdleMinutes,
+		LastUsedAt:     action.LastUsedAt,
+		Error:          action.Error,
 	}
 }
 

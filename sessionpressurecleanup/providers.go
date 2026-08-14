@@ -51,6 +51,7 @@ type DockerAction struct {
 	Reason         string
 	ReclaimedRAMMB int64
 	IdleMinutes    int
+	LastUsedAt     string
 	Error          string
 }
 
