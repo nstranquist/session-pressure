@@ -608,8 +608,12 @@ func testManager(dir string, now time.Time) *Manager {
 		},
 		collectOrb:     func(context.Context) (orb.Snapshot, error) { return orb.Snapshot{}, nil },
 		loadOrbPolicy:  func() (orb.Policy, string, error) { return orb.DefaultPolicy(), "default", nil },
-		planOrb:        func(orb.Snapshot, orb.Policy, int) []orb.TrimAction { return nil },
-		applyOrb:       func(actions []orb.TrimAction) []orb.TrimAction { return actions },
+		planOrb: func(context.Context, orb.Snapshot, orb.Policy, int) ([]orb.TrimAction, error) {
+			return nil, nil
+		},
+		applyOrb: func(_ context.Context, actions []orb.TrimAction) ([]orb.TrimAction, error) {
+			return actions, nil
+		},
 		inspectProcess: sessionpressure.InspectClaimedProcessTree,
 		reapProcess:    sessionpressure.ReapClaimedProcessTree,
 		memoryLevel:    func(sessionpressure.Snapshot) (sessionpressure.Level, error) { return sessionpressure.LevelRed, nil },
@@ -637,13 +641,13 @@ func TestApplyDockerReplansAllCandidatesBeforeExactMatch(t *testing.T) {
 	manager := testManager(t.TempDir(), now)
 	manager.collectOrb = func(context.Context) (orb.Snapshot, error) { return orb.Snapshot{}, nil }
 	gotLimit := 0
-	manager.planOrb = func(_ orb.Snapshot, _ orb.Policy, intLimit int) []orb.TrimAction {
+	manager.planOrb = func(_ context.Context, _ orb.Snapshot, _ orb.Policy, intLimit int) ([]orb.TrimAction, error) {
 		gotLimit = intLimit
-		return []orb.TrimAction{{WorkspaceID: "nicos-api", Workspace: "feat/api", Action: "would_stop"}}
+		return []orb.TrimAction{{WorkspaceID: "nicos-api", Workspace: "feat/api", Action: "would_stop"}}, nil
 	}
-	manager.applyOrb = func(actions []orb.TrimAction) []orb.TrimAction {
+	manager.applyOrb = func(_ context.Context, actions []orb.TrimAction) ([]orb.TrimAction, error) {
 		actions[0].Action = "stopped"
-		return actions
+		return actions, nil
 	}
 	candidate := Candidate{
 		ResourceKind: ResourceDockerWorkspace, ResourceID: "feat/api", Eligible: true,

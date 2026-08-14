@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/nstranquist/session-pressure/third_party/pageskein/browser"
 	"github.com/nstranquist/session-pressure/internal/devsession"
 	"github.com/nstranquist/session-pressure/internal/orb"
-	"github.com/nstranquist/session-pressure/internal/sessionpressure"
+	"github.com/nstranquist/session-pressure/sessionpressure"
+	"github.com/nstranquist/session-pressure/third_party/pageskein/browser"
 )
 
 type browserCandidate struct {
@@ -200,7 +200,10 @@ func (manager *Manager) dockerCandidates(ctx context.Context, policy Policy) ([]
 		return nil, err
 	}
 	orbPolicy.MinIdleMinutes = max(orbPolicy.MinIdleMinutes, policy.DockerMinIdleSeconds/60)
-	actions := manager.planOrb(snapshot, orbPolicy, policy.MaxActionsPerPass)
+	actions, err := manager.planOrb(ctx, snapshot, orbPolicy, policy.MaxActionsPerPass)
+	if err != nil {
+		return nil, err
+	}
 	result := make([]Candidate, 0, len(actions))
 	for _, action := range actions {
 		id := action.Workspace
@@ -239,7 +242,10 @@ func (manager *Manager) applyDocker(ctx context.Context, candidate Candidate, po
 	// A negative limit asks the pure planner for every still-safe candidate so
 	// the originally selected workspace can be matched by exact identity even
 	// if another workspace's ranking changed between plan and apply.
-	plan := manager.planOrb(snapshot, orbPolicy, -1)
+	plan, err := manager.planOrb(ctx, snapshot, orbPolicy, -1)
+	if err != nil {
+		return "revalidation_rejected", boundedError(err)
+	}
 	var selected *orb.TrimAction
 	for index := range plan {
 		action := &plan[index]
@@ -251,7 +257,10 @@ func (manager *Manager) applyDocker(ctx context.Context, candidate Candidate, po
 	if selected == nil {
 		return "revalidation_rejected", "docker workspace is no longer reclaimable"
 	}
-	applied := manager.applyOrb([]orb.TrimAction{*selected})
+	applied, err := manager.applyOrb(ctx, []orb.TrimAction{*selected})
+	if err != nil {
+		return "error", boundedError(err)
+	}
 	if len(applied) != 1 {
 		return "error", "docker provider returned no result"
 	}
