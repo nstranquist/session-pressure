@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/nstranquist/session-pressure/security/advisories/new
+    about: Use private vulnerability reporting. Do not attach live state.
