@@ -53,6 +53,32 @@ struct MenuBarContent: View {
                     .padding(.bottom, 8)
             }
 
+            if let suggestion = store.policySuggestion {
+                Button {
+                    store.copyToPasteboard(suggestion.agentPaste)
+                } label: {
+                    Label("Copy \(suggestion.headline) brief", systemImage: "doc.on.doc")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+                .help(PressureHelp.copyForAgent)
+
+                Button {
+                    store.selectedSection = .overview
+                    openWindow(id: "main")
+                    NSApp.activate(ignoringOtherApps: true)
+                } label: {
+                    Label("Review \(suggestion.headline)", systemImage: "lightbulb")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+                .help(PressureHelp.policySuggestion)
+            }
+
             Divider()
 
             Button {
@@ -90,6 +116,19 @@ struct MenuBarContent: View {
             .help(PressureHelp.liveSample)
 
             Divider()
+
+            Button {
+                store.openStorage(tab: .disk)
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
+            } label: {
+                Label("Open Storage", systemImage: "externaldrive.badge.checkmark")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .help(PressureHelp.storageBeginSafeReclaim)
 
             Button {
                 store.selectedSection = .policy
@@ -130,6 +169,7 @@ struct MenuBarContent: View {
             if let work = store.board.work {
                 row("Work", "\(work.used)/\(work.capacity) · q \(work.queueDepth)")
             }
+            row("Storage", "\(snap.storage.level.shortLabel) · \(PressureFormat.bytes(snap.storage.availableBytes))")
             row("Mode", store.board.policy?.modeLabel ?? "—")
             if let admission = store.board.admission {
                 row("Admission", admission.allowed ? "allowed" : "blocked")

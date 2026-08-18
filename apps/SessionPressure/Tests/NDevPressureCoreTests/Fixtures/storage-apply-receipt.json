@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "action": "storage.apply",
+  "apply": true,
+  "auto_safe": true,
+  "skipped_providers": [
+    {
+      "provider_id": "browser-dead-profiles",
+      "reason": "pageskein reclaim is not available in the open extract"
+    }
+  ],
+  "receipts": [
+    {
+      "provider_id": "pnpm-store",
+      "mode": "intent",
+      "outcome": "intent_persisted",
+      "reclaimed_bytes": 0
+    },
+    {
+      "provider_id": "pnpm-store",
+      "mode": "result",
+      "outcome": "completed",
+      "reclaimed_bytes": 1073741824
+    }
+  ]
+}

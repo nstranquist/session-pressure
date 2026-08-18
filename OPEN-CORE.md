@@ -32,5 +32,6 @@ or notarized paid layer stay proprietary.
 admit and coordinate local agent work is open. Factory launch hooks, Toolguard,
 and nicos-only reclaim stay closed.
 
-This draft lives next to the extract KEP until Phase 2 copies it into
-`~/tools/session-pressure/OPEN-CORE.md`.
+Product names in this tree: `session-pressure` (CLI), `session-pressure-helper`
+(LaunchAgent), `session-pressure-api` (local control plane). The nicos-tools
+wrapper remains `ndev session pressure` and execs `ndev-pressure`.

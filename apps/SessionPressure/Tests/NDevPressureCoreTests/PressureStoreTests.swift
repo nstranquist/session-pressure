@@ -44,6 +44,34 @@ struct PressureStoreTests {
         store.stop()
     }
 
+    @Test("storage is a top-level pane; idle trees live inside it")
+    func storagePaneOwnsIdleTab() {
+        let store = PressureStore()
+        #expect(PressureStore.Section.allCases.map(\.rawValue) == [
+            "Overview", "Agent Trees", "Disk Writes", "Storage",
+            "Work Queue", "Policy", "Monitor", "Telemetry",
+        ])
+        store.openStorage(tab: .idle)
+        #expect(store.selectedSection == .storage)
+        #expect(store.storageTab == .idle)
+        store.openStorage(tab: .disk)
+        #expect(store.selectedSection == .storage)
+        #expect(store.storageTab == .disk)
+        #expect(PressureStore.Section.storage.shortcutLabel == "⌘4")
+        #expect(PressureStore.Section.work.shortcutLabel == "⌘5")
+        #expect(store.canBeginAutoSafeReclaim)
+        store.storageProviders = [
+            StorageProviderReport(
+                id: "browser-dead-profiles",
+                classification: "auto_safe",
+                mutationSupported: false,
+                blockedReason: "pageskein reclaim is not available in the open extract"
+            )
+        ]
+        #expect(store.canBeginAutoSafeReclaim == false)
+        store.stop()
+    }
+
     @Test("disk trace deep links require an in-app confirmation")
     func diskTraceDeepLinkRequiresConfirmation() throws {
         let store = PressureStore()

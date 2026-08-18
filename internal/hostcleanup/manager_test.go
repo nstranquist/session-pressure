@@ -606,8 +606,8 @@ func testManager(dir string, now time.Time) *Manager {
 		teardownDev: func(string, string, devsession.IdleTeardownExpectation) (bool, string, error) {
 			return true, "", nil
 		},
-		collectOrb:     func(context.Context) (orb.Snapshot, error) { return orb.Snapshot{}, nil },
-		loadOrbPolicy:  func() (orb.Policy, string, error) { return orb.DefaultPolicy(), "default", nil },
+		collectOrb:    func(context.Context) (orb.Snapshot, error) { return orb.Snapshot{}, nil },
+		loadOrbPolicy: func() (orb.Policy, string, error) { return orb.DefaultPolicy(), "default", nil },
 		planOrb: func(context.Context, orb.Snapshot, orb.Policy, int) ([]orb.TrimAction, error) {
 			return nil, nil
 		},

@@ -23,8 +23,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nstranquist/session-pressure/sessionpressure"
 	"github.com/nstranquist/session-pressure/pkg/sessionpressurecontrol"
+	"github.com/nstranquist/session-pressure/sessionpressure"
 )
 
 const (

@@ -57,9 +57,19 @@ struct ContentView: View {
 
             List(selection: $store.selectedSection) {
                 ForEach(PressureStore.Section.allCases) { section in
-                    Label(section.rawValue, systemImage: section.systemImage)
-                        .tag(section)
-                        .help(PressureHelp.section(section.rawValue))
+                    Label {
+                        HStack {
+                            Text(section.rawValue)
+                            Spacer()
+                            Text(section.shortcutLabel)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.tertiary)
+                        }
+                    } icon: {
+                        Image(systemName: section.systemImage)
+                    }
+                    .tag(section)
+                    .help(PressureHelp.section(section.rawValue) + " \(section.shortcutLabel). Remap in System Settings → Keyboard → App Shortcuts using this menu title.")
                 }
             }
             .listStyle(.sidebar)
@@ -103,10 +113,10 @@ struct ContentView: View {
         case .overview: OverviewView()
         case .trees: TreesView()
         case .diskWrites: DiskWritesView()
+        case .storage: StorageView()
         case .work: WorkView()
         case .policy: PolicyView()
         case .monitor: MonitorView()
-        case .idle: IdleView()
         case .telemetry: TelemetryView()
         }
     }

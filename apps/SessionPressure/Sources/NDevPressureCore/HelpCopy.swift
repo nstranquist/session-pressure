@@ -43,6 +43,20 @@ public enum PressureHelp {
         "Wall-clock and CPU time for the last sample. Guard budgets cap sample wall p95 (~2s) and sample CPU p95 (~50ms)."
     public static let storage =
         "Available bytes on the writable APFS data volume from one constant-cost filesystem probe. Storage pressure is separate from memory pressure: it can gate disk-growing work but cannot terminate agent trees or delete personal data."
+    public static let storageBeginSafeReclaim =
+        "Preview, then confirm, the typed session-pressure storage apply --auto-safe path. The app streams that command's own output as a receipt. It never starts Grok, Codex, a PTY, or arbitrary argv. --auto-safe requires storage policy enable."
+    public static let storageAutoSafe =
+        "Closed auto_safe class: browser-dead-profiles and pnpm-store. Factory-only or blocked rows stay visible and non-actionable, including pageskein reclaim in the open extract."
+    public static let storageOperator =
+        "Named operator providers. Each Apply control previews then confirms --provider ID. go-build-cache is never part of --auto-safe. Operator --force skips only that provider's reclaim cooldown."
+    public static let storageReportOnly =
+        "Inventory only. downloads, library-caches, go-module-cache, and mobile-sync cannot be applied from this app."
+    public static let storageReceipt =
+        "Append-only log of the typed storage apply command and its JSON/text output. This is not an agent terminal and does not capture unrelated process argv."
+    public static let storagePolicyEnable =
+        "storage policy enable turns on disk-growth admission enforcement so --auto-safe apply is allowed. Observe keeps storage enabled but turns enforcement off. Named provider apply remains available either way."
+    public static let keyboardRemap =
+        "Pane keys are Pressure menu items (⌘1–⌘8, plus ⌘R / ⌘⇧R). Remap in System Settings → Keyboard → Keyboard Shortcuts → App Shortcuts. Add NDev Pressure and use the exact menu title (Storage, Work Queue, Live Sample). Idle trees has no global key; it is a tab inside Storage."
     public static let diskWrites =
         "Exact cumulative block writes for internal solid-state devices, sampled by the existing resident. This diagnostic state never changes host-pressure admission, cleanup, or process-relief authority."
     public static let diskWriterAttribution =
@@ -79,6 +93,10 @@ public enum PressureHelp {
         "Observe only: monitor and write telemetry, but never block launches or shed trees."
     public static let policyInit =
         "Write the tuned observe-only default policy under ~/.nicos-dev/session-pressure/policy.json."
+    public static let policySuggestion =
+        "Work-style card: a calibration hint, or a return to balanced when the live style is not the daily-driver default. It never applies itself. Copy for agent pastes a closed-count brief; Apply runs the typed profile command after a confirmation. multi-agent-soft is observe-only with earlier soft-launch warnings. Balanced turns launch blocking back on; auto-shed is an explicit confirm option."
+    public static let copyForAgent =
+        "Copy a closed-count brief to the clipboard so you can paste it into an agent. No argv, paths, or prompts are included."
     public static let monitorInstall =
         "Install the low-priority user LaunchAgent (com.nicos.session-pressure) using a digest-verified helper artifact."
     public static let monitorUninstall =
@@ -119,9 +137,11 @@ public enum PressureHelp {
         case "Monitor":
             return "LaunchAgent lifecycle and resident helper health / sample cost."
         case "Idle Cleanup":
-            return "Old low-CPU trees eligible for operator-confirmed graceful stop."
+            return "Old low-CPU trees eligible for operator-confirmed graceful stop. Lives under Storage → Idle trees."
         case "Telemetry":
             return "Recent pressure transitions, heartbeats, and audited relief actions."
+        case "Storage":
+            return "Disk reclaim and idle trees. ⌘4. Disk tab is typed storage apply; Idle trees is operator-confirmed SIGTERM. The Overview storage card opens this pane."
         default:
             return name
         }

@@ -19,10 +19,10 @@ Native macOS desktop app for visualizing and controlling **`ndev session pressur
 | **Overview** | Used-memory ring (fill = 100 − free; color is policy level), free mem / host CPU / memory momentum, privacy-safe whole-host consumers, admission, prevention coverage, guard budgets, top trees, work capacity |
 | **Agent Trees** | Sortable/filterable inventory with RSS, age, CPU, session IDs |
 | **Disk Writes** | Internal-SSD device rate and 15m/24h totals, adaptive anomaly confidence, likely process writers, bounded hourly history, policy controls, and operator-confirmed path tracing |
+| **Storage** | Typed disk reclaim (Begin safe reclaim) and idle-tree SIGTERM as tabs. Overview storage card and ⌘4 open this pane. |
 | **Work Queue** | Shared capacity bar, active leases, waiter queue (2.5s busy / 10s idle visible focus poll), class weights, unconfirmed **Run now** / **Run all** queue promotion, and a lifecycle detail drawer that retains completed work as read-only history |
-| **Policy** | Full protection / admission-only / observe-only, thresholds, budgets |
+| **Policy** | Full protection / admission-only / observe-only, thresholds, budgets, storage policy, and Keyboard (⌘1–⌘8; remap via System Settings App Shortcuts) |
 | **Monitor** | LaunchAgent install/status/uninstall, resident health, sample cost, copy-only unclean-start recovery evidence |
-| **Idle Cleanup** | Exact PID+session graceful SIGTERM (operator-confirmed, revalidated by CLI) |
 | **Telemetry** | Bounded state transitions, heartbeats, audited relief actions |
 
 Process CPU is measured from native cumulative CPU-time deltas using stable
@@ -109,4 +109,4 @@ Adaptive UI poll: ~20s normal, faster under warning/red/critical, backing off to
 - KEP: `docs/active/07-13-1448-session-host-pressure-guard/session-host-pressure-guard-kep.md`
 - SSD watchdog KEP: `docs/active/07-22-1704-session-pressure-ssd-write-watchdog/session-pressure-ssd-write-watchdog-kep.md`
 - Core package: `nicos-dev/internal/sessionpressure`
-- CLI: `ndev session pressure --help`
+- CLI: `session-pressure --help`

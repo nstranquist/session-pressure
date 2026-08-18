@@ -75,7 +75,7 @@ func TestCompactPressureWorkStatsRetainsAggregatesAndDropsHydration(t *testing.T
 
 func TestPressureWorkStatsDefaultsToBoundedContractProjection(t *testing.T) {
 	rc, stdout, stderr := captureMainOutput(t, func() int {
-		return cmdSessionPressureWorkStats(&Flags{JSON: true}, t.TempDir(), nil)
+		return cmdSessionPressureWorkStats(&Flags{JSON: true}, t.TempDir(), sessionpressure.Policy{}, nil)
 	})
 	if rc != 0 || stderr != "" {
 		t.Fatalf("rc=%d stderr=%q\n%s", rc, stderr, stdout)
@@ -94,7 +94,7 @@ func TestPressureWorkStatsDefaultsToBoundedContractProjection(t *testing.T) {
 
 func TestPressureWorkReportDefaultsToBoundedContractProjection(t *testing.T) {
 	rc, stdout, stderr := captureMainOutput(t, func() int {
-		return cmdSessionPressureWorkReport(&Flags{JSON: true}, t.TempDir(), nil)
+		return cmdSessionPressureWorkReport(&Flags{JSON: true}, t.TempDir(), sessionpressure.Policy{}, nil)
 	})
 	if rc != 0 || stderr != "" {
 		t.Fatalf("rc=%d stderr=%q\n%s", rc, stderr, stdout)

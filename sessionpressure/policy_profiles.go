@@ -91,6 +91,7 @@ func ListPolicyProfiles() []PolicyProfile {
 		{Name: PolicyProfileThroughput, Description: "Protected throughput mode; full weighted capacity and green express work"},
 		{Name: PolicyProfileInteractive, Description: "Protected interactive mode; warning pressure derates only new work to preserve responsiveness"},
 		{Name: PolicyProfileObserve, Description: "Monitor and record telemetry; no admission blocks or automatic shedding"},
+		{Name: PolicyProfileMultiAgentSoft, Description: "Observe-only with earlier soft-launch warnings for parallel agents; does not block launches or auto-shed"},
 	}
 }
 
@@ -152,9 +153,10 @@ func ApplyPolicyProfile(base Policy, name string, opts ApplyProfileOptions) (Pol
 		// Calmer cadence under multi-agent observe load (reduce harness self-tax).
 		applyObserveEconomyCadence(&policy)
 	case PolicyProfileMultiAgentSoft:
-		// Compatibility alias for the former advisory multi-agent profile. It
-		// remains observe-only and does not enable warning derating.
-		policy.Profile = PolicyProfileObserve
+		// Named observe-only style with earlier soft-launch warnings. Persist
+		// the requested name so operators and the desktop can tell it from
+		// plain observe (which keeps the default 120s / full-capacity knobs).
+		policy.Profile = PolicyProfileMultiAgentSoft
 		policy.EnforceAdmission = false
 		policy.AutoShedCritical = false
 		policy.WorkLimits.WarningCapacityEnabled = false
@@ -177,4 +179,17 @@ func ApplyPolicyProfile(base Policy, name string, opts ApplyProfileOptions) (Pol
 		return Policy{}, err
 	}
 	return policy, nil
+}
+
+// MatchesMultiAgentSoft reports whether policy already has the multi-agent-soft
+// effects. Legacy applies stored the name as observe while using the earlier
+// soft-launch knobs; those still count as applied.
+func MatchesMultiAgentSoft(policy Policy) bool {
+	if strings.EqualFold(strings.TrimSpace(policy.Profile), PolicyProfileMultiAgentSoft) {
+		return true
+	}
+	return !policy.EnforceAdmission &&
+		!policy.AutoShedCritical &&
+		policy.LaunchAdmission.Mode == LaunchAdmissionModeSoft &&
+		policy.LaunchAdmission.OldestWaitBlockSeconds == multiAgentSoftOldestWaitSeconds
 }

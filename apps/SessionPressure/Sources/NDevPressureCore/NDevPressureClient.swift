@@ -13,20 +13,20 @@ public enum NDevPressureClientError: Error, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .binaryNotFound:
-            return "ndev not found. Install nicos-dev or set NDEV_BIN / NDEV_PATH."
+            return "session-pressure not found. Build the product CLI or set SESSION_PRESSURE_BIN / NDEV_PRESSURE_BIN."
         case .launchFailed(let detail):
-            return "Failed to launch ndev: \(detail)"
+            return "Failed to launch session-pressure: \(detail)"
         case .nonZeroExit(let code, let stderr, _):
             let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            return detail.isEmpty ? "ndev exited \(code)" : detail
+            return detail.isEmpty ? "session-pressure exited \(code)" : detail
         case .malformedJSON(let message):
-            return "Could not decode ndev JSON: \(message)"
+            return "Could not decode session-pressure JSON: \(message)"
         case .emptyResponse:
-            return "ndev returned empty output"
+            return "session-pressure returned empty output"
         case .timedOut(let seconds):
-            return "ndev did not finish within \(String(format: "%.0f", seconds)) seconds"
+            return "session-pressure did not finish within \(String(format: "%.0f", seconds)) seconds"
         case .responseTooLarge(let limit):
-            return "ndev response exceeded the \(limit)-byte UI contract"
+            return "session-pressure response exceeded the \(limit)-byte UI contract"
         }
     }
 }
@@ -88,32 +88,41 @@ public struct NDevPressureClient: Sendable {
         self.commandTimeoutSeconds = max(1, commandTimeoutSeconds)
     }
 
+    public static func binaryCandidates(
+        home: String,
+        environment: [String: String]
+    ) -> [String] {
+        let candidates: [String?] = [
+            environment["SESSION_PRESSURE_BIN"],
+            environment["NDEV_PRESSURE_BIN"],
+            "\(home)/.local/bin/session-pressure",
+            "\(home)/tools/session-pressure/bin/session-pressure",
+            "/opt/homebrew/bin/session-pressure",
+            "/usr/local/bin/session-pressure",
+            "\(home)/.local/bin/ndev-pressure",
+            "/opt/homebrew/bin/ndev-pressure",
+            "/usr/local/bin/ndev-pressure",
+            environment["NDEV_BIN"],
+            environment["NDEV_PATH"],
+            "\(home)/.local/bin/ndev",
+            "/opt/homebrew/bin/ndev",
+            "/usr/local/bin/ndev",
+        ]
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for candidate in candidates.compactMap({ $0 }).filter({ !$0.isEmpty }) {
+            if seen.insert(candidate).inserted {
+                ordered.append(candidate)
+            }
+        }
+        return ordered
+    }
+
     public static func resolveBinary(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidates: [String?] = [
-            environment["NDEV_PRESSURE_BIN"],
-            environment["SESSION_PRESSURE_BIN"],
-            "\(home)/.local/bin/ndev-pressure",
-            "\(home)/.local/bin/session-pressure",
-            environment["NICOS_DEV_PATH"].map { "\($0)/bin/ndev-pressure" },
-            environment["NICOS_TOOLS_PATH"].map { "\($0)/nicos-dev/bin/ndev-pressure" },
-            "\(home)/dev/nicos-tools/nicos-dev/bin/ndev-pressure",
-            "/opt/homebrew/bin/ndev-pressure",
-            "/usr/local/bin/ndev-pressure",
-            // Compatibility fallback while ndev still wraps the product CLI.
-            environment["NDEV_BIN"],
-            environment["NDEV_PATH"],
-            environment["NICOS_DEV_PATH"].map { "\($0)/bin/ndev" },
-            environment["NICOS_TOOLS_PATH"].map { "\($0)/nicos-dev/bin/ndev" },
-            "\(home)/.local/bin/ndev",
-            "\(home)/dev/nicos-tools/nicos-dev/bin/ndev",
-            "\(home)/dev/nicos-tools/nicos-dev/bin/ndev-go",
-            "/opt/homebrew/bin/ndev",
-            "/usr/local/bin/ndev",
-        ]
-        for candidate in candidates.compactMap({ $0 }).filter({ !$0.isEmpty }) {
+        for candidate in binaryCandidates(home: home, environment: environment) {
             if FileManager.default.isExecutableFile(atPath: candidate) {
                 return candidate
             }
@@ -129,7 +138,7 @@ public struct NDevPressureClient: Sendable {
             "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\(ambient["HOME"] ?? "")/.local/bin",
             "TMPDIR": ambient["TMPDIR"] ?? FileManager.default.temporaryDirectory.path,
         ]
-        for name in ["USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "NDEV_PRESSURE_BIN", "NDEV_BIN", "NDEV_PATH", "NICOS_DEV_PATH", "NICOS_TOOLS_PATH", "NDEV_SESSION_PRESSURE_HOME", "NDEV_PRESSURE_API_URL", "NDEV_PRESSURE_API_TOKEN", "NDEV_PRESSURE_API_TOKEN_FILE", "NDEV_PRESSURE_API_TIMEOUT_SECONDS"] {
+        for name in ["USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "NDEV_PRESSURE_BIN", "SESSION_PRESSURE_BIN", "NDEV_BIN", "NDEV_PATH", "NICOS_DEV_PATH", "NICOS_TOOLS_PATH", "NDEV_SESSION_PRESSURE_HOME", "SESSION_PRESSURE_HOME", "NDEV_PRESSURE_API_URL", "NDEV_PRESSURE_API_TOKEN", "NDEV_PRESSURE_API_TOKEN_FILE", "NDEV_PRESSURE_API_TIMEOUT_SECONDS"] {
             if let value = ambient[name], !value.isEmpty {
                 result[name] = value
             }
@@ -572,6 +581,70 @@ public struct NDevPressureClient: Sendable {
         )
     }
 
+    public func storageProviders() async throws -> StorageProvidersEnvelope {
+        if let api: StorageProvidersEnvelope = try await apiProjection(
+            StorageProvidersEnvelope.self,
+            route: "/v1/pressure/storage",
+            query: ["view": "providers"]
+        ) {
+            return api
+        }
+        return try await runJSON(
+            StorageProvidersEnvelope.self,
+            arguments: ["--json", "session", "pressure", "storage", "providers"]
+        )
+    }
+
+    public func storageStatus() async throws -> StorageStatusEnvelope {
+        if let api: StorageStatusEnvelope = try await apiProjection(
+            StorageStatusEnvelope.self,
+            route: "/v1/pressure/storage",
+            query: ["view": "status"]
+        ) {
+            return api
+        }
+        return try await runJSON(
+            StorageStatusEnvelope.self,
+            arguments: ["--json", "session", "pressure", "storage", "status"]
+        )
+    }
+
+    public func storagePolicyEnable() async throws -> StoragePolicyEnvelope {
+        try await runJSON(
+            StoragePolicyEnvelope.self,
+            arguments: ["--json", "session", "pressure", "storage", "policy", "enable"]
+        )
+    }
+
+    public func storagePolicyObserve() async throws -> StoragePolicyEnvelope {
+        try await runJSON(
+            StoragePolicyEnvelope.self,
+            arguments: ["--json", "session", "pressure", "storage", "policy", "observe"]
+        )
+    }
+
+    public func storageApply(
+        autoSafe: Bool,
+        provider: String? = nil,
+        apply: Bool,
+        targetFree: String? = nil,
+        onOutputLine: (@Sendable (String) -> Void)? = nil
+    ) async throws -> StorageApplyEnvelope {
+        let arguments = StorageReclaim.applyArguments(
+            autoSafe: autoSafe,
+            provider: provider,
+            apply: apply,
+            targetFree: targetFree
+        )
+        return try await runJSON(
+            StorageApplyEnvelope.self,
+            arguments: arguments,
+            acceptNonZero: true,
+            timeoutSeconds: apply ? 900 : 180,
+            onOutputLine: onOutputLine
+        )
+    }
+
     // MARK: - Process runner
 
     private func apiProjection<T: Decodable>(
@@ -591,10 +664,17 @@ public struct NDevPressureClient: Sendable {
         _ type: T.Type,
         arguments: [String],
         acceptNonZero: Bool = false,
-        maximumResponseBytes: Int? = nil
+        maximumResponseBytes: Int? = nil,
+        timeoutSeconds: Double? = nil,
+        onOutputLine: (@Sendable (String) -> Void)? = nil
     ) async throws -> T {
         let responseLimit = min(maximumResponseBytes ?? maxOutputBytes, maxOutputBytes)
-        let result = try await run(arguments: arguments, maximumOutputBytes: responseLimit)
+        let result = try await run(
+            arguments: arguments,
+            maximumOutputBytes: responseLimit,
+            timeoutSeconds: timeoutSeconds,
+            onOutputLine: onOutputLine
+        )
         if let maximumResponseBytes, result.stdout.utf8.count > maximumResponseBytes {
             throw NDevPressureClientError.responseTooLarge(limit: maximumResponseBytes)
         }
@@ -622,11 +702,30 @@ public struct NDevPressureClient: Sendable {
         }
     }
 
-    private func run(arguments: [String], maximumOutputBytes: Int? = nil) async throws -> (code: Int32, stdout: String, stderr: String) {
+    /// Desktop argv pairing: `--json session pressure <leaf>`.
+    /// `ndev` requires the prefix. `ndev-pressure` / `session-pressure` accept it.
+    public static func pairedCLIArguments(_ arguments: [String]) -> [String] {
+        var leaf = arguments
+        if leaf.first == "--json" {
+            leaf.removeFirst()
+        }
+        if leaf.count >= 2, leaf[0] == "session", leaf[1] == "pressure" {
+            leaf = Array(leaf.dropFirst(2))
+        }
+        return ["--json", "session", "pressure"] + leaf
+    }
+
+    private func run(
+        arguments: [String],
+        maximumOutputBytes: Int? = nil,
+        timeoutSeconds: Double? = nil,
+        onOutputLine: (@Sendable (String) -> Void)? = nil
+    ) async throws -> (code: Int32, stdout: String, stderr: String) {
         let binaryPath = self.binaryPath
         let environment = self.environment
+        let arguments = Self.pairedCLIArguments(arguments)
         let maxOutputBytes = min(maximumOutputBytes ?? self.maxOutputBytes, self.maxOutputBytes)
-        let commandTimeoutSeconds = self.commandTimeoutSeconds
+        let commandTimeoutSeconds = timeoutSeconds ?? self.commandTimeoutSeconds
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
@@ -635,7 +734,8 @@ public struct NDevPressureClient: Sendable {
                         environment: environment,
                         arguments: arguments,
                         maxBytes: maxOutputBytes,
-                        timeoutSeconds: commandTimeoutSeconds
+                        timeoutSeconds: commandTimeoutSeconds,
+                        onOutputLine: onOutputLine
                     )
                     continuation.resume(returning: value)
                 } catch {
@@ -650,7 +750,8 @@ public struct NDevPressureClient: Sendable {
         environment: [String: String],
         arguments: [String],
         maxBytes: Int,
-        timeoutSeconds: Double
+        timeoutSeconds: Double,
+        onOutputLine: (@Sendable (String) -> Void)? = nil
     ) throws -> (code: Int32, stdout: String, stderr: String) {
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -678,7 +779,10 @@ public struct NDevPressureClient: Sendable {
         try? stdoutPipe.fileHandleForWriting.close()
         try? stderrPipe.fileHandleForWriting.close()
         let drains = DispatchGroup()
-        Self.drain(stdoutPipe.fileHandleForReading, into: stdoutBuffer, group: drains)
+        let lineSplitter = LineSplitter(onLine: onOutputLine)
+        Self.drain(stdoutPipe.fileHandleForReading, into: stdoutBuffer, group: drains, onChunk: { chunk in
+            lineSplitter.ingest(chunk)
+        })
         Self.drain(stderrPipe.fileHandleForReading, into: stderrBuffer, group: drains)
 
         if completed.wait(timeout: .now() + timeoutSeconds) == .timedOut {
@@ -712,7 +816,12 @@ public struct NDevPressureClient: Sendable {
         return (process.terminationStatus, stdout, stderr)
     }
 
-    private static func drain(_ handle: FileHandle, into buffer: BoundedCaptureBuffer, group: DispatchGroup) {
+    private static func drain(
+        _ handle: FileHandle,
+        into buffer: BoundedCaptureBuffer,
+        group: DispatchGroup,
+        onChunk: (@Sendable (Data) -> Void)? = nil
+    ) {
         group.enter()
         DispatchQueue.global(qos: .userInitiated).async {
             defer { group.leave() }
@@ -720,10 +829,42 @@ public struct NDevPressureClient: Sendable {
                 do {
                     guard let chunk = try handle.read(upToCount: 8 * 1024), !chunk.isEmpty else { return }
                     buffer.append(chunk)
+                    onChunk?(chunk)
                 } catch {
                     return
                 }
             }
         }
+    }
+}
+
+/// Splits stdout chunks into lines so the Storage receipt can append as the
+/// typed CLI writes, without embedding a PTY.
+private final class LineSplitter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var leftover = Data()
+    private let onLine: (@Sendable (String) -> Void)?
+
+    init(onLine: (@Sendable (String) -> Void)?) {
+        self.onLine = onLine
+    }
+
+    func ingest(_ chunk: Data) {
+        guard let onLine else { return }
+        lock.lock()
+        leftover.append(chunk)
+        while let range = leftover.firstRange(of: Data([0x0A])) {
+            let lineData = leftover.subdata(in: leftover.startIndex..<range.lowerBound)
+            leftover.removeSubrange(leftover.startIndex..<range.upperBound)
+            lock.unlock()
+            if let line = String(data: lineData, encoding: .utf8) {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    onLine(trimmed)
+                }
+            }
+            lock.lock()
+        }
+        lock.unlock()
     }
 }

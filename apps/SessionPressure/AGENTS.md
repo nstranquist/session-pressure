@@ -18,6 +18,8 @@ only — do not reimplement sampling, policy, or relief in Swift.
 - Persist a second telemetry database
 - Display work-lease command arguments (privacy contract)
 - Bypass `ndev` for policy/monitor mutations
+- Spawn Grok, Codex, SwiftTerm, a PTY, or `ndev session exec` from Storage / Begin safe reclaim
+- Run live `storage plan` or `storage apply --apply` against the operator volume from tests
 
 ## Verify
 
@@ -42,5 +44,6 @@ then scrub host paths and session ids before committing.
 
 ## Catalog
 
-- Seed: `product.ndev-pressure` in `nicos-dev/config/catalog-seeds.yaml`
-- Backstage: `catalog-info.yaml` component `ndev-pressure`
+- Extract product: `product.session-pressure` (`~/tools/session-pressure`)
+- Compatibility wrapper still listed as `product.ndev-pressure` in nicos-tools
+- Do not implement the same UI a second time under `nicos-tools/apps/desktop/ndev-pressure`

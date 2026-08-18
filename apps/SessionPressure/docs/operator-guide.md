@@ -3,15 +3,15 @@
 ## Install & launch
 
 ```bash
-cd apps/desktop/ndev-pressure
+cd apps/SessionPressure
 make run          # build release, install to /Applications, open
 # or
-open -a "NDev Pressure"
+open -a "SessionPressure"
 ```
 
-Requires `ndev` on `PATH`, or set `NDEV_PRESSURE_BIN` / `NDEV_BIN` / `NDEV_PATH`.
-`ndev-pressure` is the staged extraction bridge; when present it forwards to
-the same ndev authority and preserves the JSON contract.
+Requires the SessionPressure product CLI (`session-pressure`) on `PATH`, or set
+`SESSION_PRESSURE_BIN` / `NDEV_PRESSURE_BIN`. The desktop prefers that binary
+and can fall back to `ndev`, which execs the nicos-tools product CLI.
 
 ## Daily use
 
@@ -27,19 +27,21 @@ the same ndev authority and preserves the JSON contract.
    `~/.nicos-dev/session-pressure/agent-identity.json` (see
    `docs/active/07-31-1610-session-pressure-product-boundary/FOLLOWUPS-agent-identity-2026-08-04.md`).
 4. **Disk Writes** — inspect internal-SSD rate and 15m/24h totals, adaptive confidence, likely process writers, and hourly history. The selected, active pane refreshes one live report every 15 seconds and stops when hidden/inactive. Alerts are opt-in. **Trace paths** requires a fresh live PID, explicit confirmation, and helper authorization; paths remain in memory only.
-5. **Work Queue** — see who holds capacity and who is waiting (builds/tests). While this pane is visible and active, work status refreshes about every 2.5s with live work and backs off to 10s when empty; inactive/minimized windows stop spawning focus reads. Use **Run now** on a waiter to promote that exact live operation for the next admission, or **Run all** to pin the whole queue as one ordered promotion sequence. Neither is modal-confirmed — both only reorder the queue and are undone by promoting something else. Click any lease or waiter row for a detail drawer: identity, lifecycle events, and where process output lives (launching agent/terminal — not stored here). When live ownership ends, the drawer becomes read-only lifecycle history.
-6. **Policy** — choose Balanced, Throughput, Interactive, or Observe (confirmations required), then use the legacy protection buttons when you need the explicit admission/auto-shed flags.
-7. **Monitor** — LaunchAgent install/status/uninstall, helper budget health, and copy-only recovery evidence after an unclean start.
-8. **Idle Cleanup** — list old quiet trees; **SIGTERM** only with exact session ID (CLI revalidates).
+5. **Storage** (⌘4) — two tabs. **Disk reclaim** is typed `storage apply` (preview, then confirm `--apply`). The Overview **Storage available** card opens this tab. **Idle trees** is the former Idle Cleanup pane: operator-confirmed SIGTERM of old quiet trees (RAM, not disk). Blocked and factory-only disk providers stay visible and non-actionable. Enable storage policy before `--auto-safe` can mutate. The app never starts Grok, Codex, a PTY, or arbitrary argv.
+6. **Work Queue** — see who holds capacity and who is waiting (builds/tests). While this pane is visible and active, work status refreshes about every 2.5s with live work and backs off to 10s when empty; inactive/minimized windows stop spawning focus reads. Use **Run now** on a waiter to promote that exact live operation for the next admission, or **Run all** to pin the whole queue as one ordered promotion sequence. Neither is modal-confirmed — both only reorder the queue and are undone by promoting something else. Click any lease or waiter row for a detail drawer: identity, lifecycle events, and where process output lives (launching agent/terminal — not stored here). When live ownership ends, the drawer becomes read-only lifecycle history.
+7. **Policy** — choose Balanced, Throughput, Interactive, or Observe (confirmations required), then use the legacy protection buttons when you need the explicit admission/auto-shed flags. Storage policy enable/observe and the **Keyboard** card (⌘1–⌘8 plus remap via System Settings App Shortcuts) are also here.
+8. **Monitor** — LaunchAgent install/status/uninstall, helper budget health, and copy-only recovery evidence after an unclean start.
 9. **Telemetry** — recent transitions and audited relief actions.
 
 ## Keyboard
 
 | Shortcut | Action |
 |----------|--------|
-| ⌘1 … ⌘8 | Switch panes |
+| ⌘1 … ⌘8 | Switch panes (⌘4 is Storage; Idle trees is a tab inside it) |
 | ⌘R | Refresh (resident path) |
 | ⌘⇧R | Live sample |
+
+Shortcuts are Pressure menu items. They are listed on Policy → Keyboard and on the sidebar. There is no in-app keybinding editor. Remap in **System Settings → Keyboard → Keyboard Shortcuts → App Shortcuts**: application **NDev Pressure**, menu title must match the Pressure menu exactly (`Storage`, `Work Queue`, `Live Sample`, …).
 
 ## Tooltips
 
@@ -136,10 +138,10 @@ Hover almost any control for context (SwiftUI `.help` tooltips). Copy lives in
 
 | Symptom | Check |
 |---------|--------|
-| "ndev not found" | Install nicos-dev; set `NDEV_BIN` |
+| "session-pressure not found" | `make build`; set `SESSION_PRESSURE_BIN` |
 | Empty trees / consumers | Inventory may be cached; inspect its age/source chip, use **Live sample**, or wait for the 180s resident refresh |
-| Coverage says observed | The surface is visible but intentionally not globally intercepted; route heavy work through `ndev session pressure work run` |
-| Codex appears stuck during file I/O | The project Bash hook does not match Read/Write/Edit. Check `ndev --json session pressure work status` for a queued shell operation. Check `ndev --json session pressure check` for host pressure. |
+| Coverage says observed | The surface is visible but intentionally not globally intercepted; route heavy work through `session-pressure work run` |
+| Codex appears stuck during file I/O | The project Bash hook does not match Read/Write/Edit. Check `session-pressure --json work status` for a queued shell operation. Check `session-pressure --json check` for host pressure. |
 | Operator not ready | Review health reasons and any unclean-shutdown recovery hint; daily-driver protection alone does not clear operator work |
 | Admission blocked | Host at red+ with enforcement; free capacity or wait |
 | Work waits for minutes | This usually means weighted capacity or a protected drain. It is not a silent denial. Follow the runner stderr progress. Inspect the waiter's `blocker`, `bypass_count`, and `protection_reason`. |

@@ -117,7 +117,7 @@ func TestStorageProviderClassificationPreservesPersonalStateAndRequiresExplicitG
 			t.Fatalf("provider %s = %+v", id, report)
 		}
 	}
-	for _, id := range []string{"go-build-cache", "yarn-cache", "npm-cache", "brew-cache", "swiftpm-cache", "playwright-cache", "gradle-caches"} {
+	for _, id := range []string{"go-build-cache", "yarn-cache", "npm-cache", "brew-cache", "swiftpm-cache", "playwright-cache", "gradle-caches", "nicos-telemetry-archive", "nicos-voice-models", "nicos-wine-proof", "nicos-pw-archive"} {
 		report, ok := storageProviderByID(reports, id)
 		if !ok || report.Classification != storageProviderOperator || !report.MutationSupported {
 			t.Fatalf("provider %s = %+v", id, report)
@@ -527,6 +527,87 @@ func TestStorageApplyUsesCurrentGoBuildHotnessEvidence(t *testing.T) {
 	}
 }
 
+func TestStorageAutoSafeApplyIDsExcludeOperatorProviders(t *testing.T) {
+	for _, id := range storageAutoSafeApplyIDs {
+		if id == "go-build-cache" || id == "user-trash" || id == "library-caches" {
+			t.Fatalf("auto_safe apply set includes non-auto_safe %q: %v", id, storageAutoSafeApplyIDs)
+		}
+	}
+	if reason, skip := storageAutoSafeSkipReason(storageProviderReport{
+		ID:                "browser-dead-profiles",
+		Classification:    storageProviderAutoSafe,
+		MutationSupported: false,
+		BlockedReason:     "pageskein reclaim is not available in the open extract",
+	}); !skip || !strings.Contains(reason, "pageskein") {
+		t.Fatalf("factory-blocked auto_safe must be skipped: skip=%v reason=%q", skip, reason)
+	} else {
+		t.Logf("factory-blocked provider kept out of auto_safe apply: %s", reason)
+	}
+	if _, skip := storageAutoSafeSkipReason(storageProviderReport{
+		ID:                "go-build-cache",
+		Classification:    storageProviderOperator,
+		MutationSupported: true,
+	}); !skip {
+		t.Fatal("operator provider must stay out of auto_safe apply")
+	}
+	if reason, skip := storageAutoSafeSkipReason(storageProviderReport{
+		ID:                "pnpm-store",
+		Classification:    storageProviderAutoSafe,
+		MutationSupported: true,
+		ActiveOwner:       true,
+		BlockedReason:     "a pnpm process is active",
+	}); !skip || !strings.Contains(reason, "pnpm") {
+		t.Fatalf("active pnpm must be skipped: skip=%v reason=%q", skip, reason)
+	}
+}
+
+func TestStorageAutoSafeApplySkipsFactoryBlockedAndDoesNotTouchOperatorCaches(t *testing.T) {
+	withStorageProviderFakes(t)
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(sessionpressure.DataDirEnv, dir)
+	t.Setenv(sessionpressure.StorageVolumePathEnv, t.TempDir())
+	policy := sessionpressure.DefaultPolicy(16 << 10)
+	policy.Storage.EnforceAdmission = true
+	if err := sessionpressure.SavePolicy(sessionpressure.PolicyPath(dir), policy); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "Library", "pnpm", "store"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	storageBrowserGC = browser.GC
+	storagePNPMActive = func() (bool, error) { return false, nil }
+	storageDirectoryBytes = func(string) (int64, bool, error) { return 4096, true, nil }
+	pruneCalls := 0
+	storageRunPNPMPrune = func(context.Context) error { pruneCalls++; return nil }
+	goCleanCalls := 0
+	storageRunGoBuildCacheClean = func(context.Context, string) error { goCleanCalls++; return nil }
+	storageHostAdmission = func(context.Context) sessionpressure.Admission {
+		return sessionpressure.Admission{Allowed: true, Level: sessionpressure.LevelNormal}
+	}
+
+	exit, stdout, stderr := captureMainOutput(t, func() int {
+		return cmdSessionPressureStorage(&Flags{JSON: true}, []string{"apply", "--auto-safe", "--target-free", "900GiB", "--apply"})
+	})
+	out := stdout + stderr
+	if exit != 0 {
+		t.Fatalf("exit=%d output=%s", exit, out)
+	}
+	if pruneCalls != 1 {
+		t.Fatalf("pnpm prune calls=%d output=%s", pruneCalls, out)
+	}
+	if goCleanCalls != 0 {
+		t.Fatalf("go-build-cache was applied during auto_safe: calls=%d", goCleanCalls)
+	}
+	if !strings.Contains(out, "pageskein reclaim is not available in the open extract") {
+		t.Fatalf("expected factory-blocked skip in output: %s", out)
+	}
+	if strings.Contains(out, `"provider_id": "go-build-cache"`) {
+		t.Fatalf("operator provider leaked into auto_safe apply: %s", out)
+	}
+}
+
 func TestStorageAutoSafeApplyRequiresEnabledPolicy(t *testing.T) {
 	withStorageProviderFakes(t)
 	dir := t.TempDir()
@@ -614,6 +695,114 @@ func TestStorageProviderCooldownOnlyMatchesCompletedResultForProvider(t *testing
 	}
 	if storageProviderInsideCooldown(receipts, "pnpm-store") {
 		t.Fatal("intent or failed result incorrectly activated pnpm cooldown")
+	}
+}
+
+func seedCompletedStorageReceipt(t *testing.T, dir, providerID string) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := sessionpressure.NewStorageReceiptStore(dir).Append(sessionpressure.StorageReceipt{
+		AttemptID:      "00000000000000000000000000000001",
+		ProviderID:     providerID,
+		Mode:           "result",
+		StartedAt:      now.Add(-time.Minute),
+		FinishedAt:     now.Add(-30 * time.Second),
+		Outcome:        "completed",
+		ReclaimedBytes: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStorageApplyNamedProviderCooldownBlocksWithoutForce(t *testing.T) {
+	withStorageProviderFakes(t)
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv(sessionpressure.DataDirEnv, dir)
+	t.Setenv(sessionpressure.StorageVolumePathEnv, t.TempDir())
+	t.Setenv("HOME", home)
+	if err := sessionpressure.SavePolicy(sessionpressure.PolicyPath(dir), sessionpressure.DefaultPolicy(16<<10)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".Trash"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seedCompletedStorageReceipt(t, dir, "user-trash")
+	emptyCalls := 0
+	storageEmptyTrash = func(context.Context, string) error { emptyCalls++; return nil }
+	exit, stdout, stderr := captureMainOutput(t, func() int {
+		return cmdSessionPressureStorage(&Flags{JSON: true}, []string{"apply", "--provider", "user-trash", "--target-free", "900GiB", "--apply"})
+	})
+	out := stdout + stderr
+	if exit == 0 || emptyCalls != 0 || !strings.Contains(out, "reclaim cooldown") {
+		t.Fatalf("exit=%d emptyCalls=%d output=%s", exit, emptyCalls, out)
+	}
+}
+
+func TestStorageApplyNamedProviderForceBypassesCooldown(t *testing.T) {
+	withStorageProviderFakes(t)
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv(sessionpressure.DataDirEnv, dir)
+	t.Setenv(sessionpressure.StorageVolumePathEnv, t.TempDir())
+	t.Setenv("HOME", home)
+	if err := sessionpressure.SavePolicy(sessionpressure.PolicyPath(dir), sessionpressure.DefaultPolicy(16<<10)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".Trash"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seedCompletedStorageReceipt(t, dir, "user-trash")
+	emptyCalls := 0
+	storageEmptyTrash = func(context.Context, string) error { emptyCalls++; return nil }
+	var exit int
+	out := captureStdout(t, func() {
+		exit = cmdSessionPressureStorage(&Flags{JSON: true}, []string{"apply", "--provider", "user-trash", "--target-free", "900GiB", "--force", "--apply"})
+	})
+	if exit != 0 || emptyCalls != 1 {
+		t.Fatalf("exit=%d emptyCalls=%d output=%s", exit, emptyCalls, out)
+	}
+	var payload struct {
+		OK               bool `json:"ok"`
+		Force            bool `json:"force"`
+		CooldownBypassed bool `json:"cooldown_bypassed"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil || !payload.OK || !payload.Force || !payload.CooldownBypassed {
+		t.Fatalf("payload=%+v err=%v output=%s", payload, err, out)
+	}
+}
+
+func TestStorageApplyRejectsForceWithAutoSafe(t *testing.T) {
+	withStorageProviderFakes(t)
+	dir := t.TempDir()
+	t.Setenv(sessionpressure.DataDirEnv, dir)
+	t.Setenv(sessionpressure.StorageVolumePathEnv, t.TempDir())
+	if err := sessionpressure.SavePolicy(sessionpressure.PolicyPath(dir), sessionpressure.DefaultPolicy(16<<10)); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr := captureMainOutput(t, func() int {
+		return cmdSessionPressureStorage(&Flags{JSON: true}, []string{"apply", "--auto-safe", "--force", "--apply"})
+	})
+	out := stdout + stderr
+	if exit != 2 || !strings.Contains(out, "--force is only valid with --provider") {
+		t.Fatalf("exit=%d output=%s", exit, out)
+	}
+}
+
+func TestStorageApplyForceStillRejectsReportOnly(t *testing.T) {
+	withStorageProviderFakes(t)
+	dir := t.TempDir()
+	t.Setenv(sessionpressure.DataDirEnv, dir)
+	t.Setenv(sessionpressure.StorageVolumePathEnv, t.TempDir())
+	if err := sessionpressure.SavePolicy(sessionpressure.PolicyPath(dir), sessionpressure.DefaultPolicy(16<<10)); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr := captureMainOutput(t, func() int {
+		return cmdSessionPressureStorage(&Flags{JSON: true}, []string{"apply", "--provider", "mobile-sync", "--force", "--apply"})
+	})
+	out := stdout + stderr
+	if exit == 0 || !strings.Contains(out, "not mutable") {
+		t.Fatalf("exit=%d output=%s", exit, out)
 	}
 }
 

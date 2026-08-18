@@ -1368,6 +1368,7 @@ public struct WorkCalibration: Codable, Sendable, Hashable {
     public var expressBuildShare: Double?
     public var thresholdRetuneHint: String?
     public var interruptProjection: InterruptProjection?
+    public var reviewSignals: WorkReviewSignals?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -1379,6 +1380,7 @@ public struct WorkCalibration: Codable, Sendable, Hashable {
         case expressBuildShare = "express_build_share"
         case thresholdRetuneHint = "threshold_retune_hint"
         case interruptProjection = "interrupt_projection"
+        case reviewSignals = "review_signals"
     }
 
     public init(
@@ -1390,7 +1392,8 @@ public struct WorkCalibration: Codable, Sendable, Hashable {
         expressTestShare: Double? = nil,
         expressBuildShare: Double? = nil,
         thresholdRetuneHint: String? = nil,
-        interruptProjection: InterruptProjection? = nil
+        interruptProjection: InterruptProjection? = nil,
+        reviewSignals: WorkReviewSignals? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.operationCount = operationCount
@@ -1401,6 +1404,7 @@ public struct WorkCalibration: Codable, Sendable, Hashable {
         self.expressBuildShare = expressBuildShare
         self.thresholdRetuneHint = thresholdRetuneHint
         self.interruptProjection = interruptProjection
+        self.reviewSignals = reviewSignals
     }
 
     public init(from decoder: Decoder) throws {
@@ -1414,6 +1418,7 @@ public struct WorkCalibration: Codable, Sendable, Hashable {
         expressBuildShare = try c.decodeIfPresent(Double.self, forKey: .expressBuildShare)
         thresholdRetuneHint = try c.decodeIfPresent(String.self, forKey: .thresholdRetuneHint)
         interruptProjection = try c.decodeIfPresent(InterruptProjection.self, forKey: .interruptProjection)
+        reviewSignals = try c.decodeIfPresent(WorkReviewSignals.self, forKey: .reviewSignals)
     }
 
     /// Count for chip display; treats missing as 0.

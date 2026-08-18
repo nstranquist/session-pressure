@@ -3,6 +3,8 @@ import NDevPressureCore
 
 struct OverviewView: View {
     @EnvironmentObject private var store: PressureStore
+    @State private var confirmApplySuggestion = false
+    @State private var suggestionExpanded = false
 
     private var snap: PressureSnapshot { store.board.snapshot }
     private var health: StatusHealth? { store.board.health }
@@ -15,7 +17,9 @@ struct OverviewView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+                storageCTA
                 doctorStrip
+                suggestionCard
                 metricsGrid
                 reasonsAndAdmission
                 chipsRow
@@ -27,6 +31,29 @@ struct OverviewView: View {
             .padding(20)
         }
         .background(PressureTheme.bg)
+        .confirmationDialog(
+            store.policySuggestion?.confirmTitle ?? "Apply work style?",
+            isPresented: $confirmApplySuggestion,
+            titleVisibility: .visible
+        ) {
+            if let suggestion = store.policySuggestion {
+                if suggestion.kind == .restoreDefault {
+                    Button("Apply balanced") {
+                        Task { await store.applyPolicyProfile(suggestion.profile, withAutoShed: false) }
+                    }
+                    Button("Apply balanced + auto-shed") {
+                        Task { await store.applyPolicyProfile(suggestion.profile, withAutoShed: true) }
+                    }
+                } else {
+                    Button(suggestion.weakensProtection ? "Apply and turn off protection" : "Apply \(suggestion.title)", role: suggestion.weakensProtection ? .destructive : nil) {
+                        Task { await store.applyPolicyProfile(suggestion.profile, withAutoShed: suggestion.withAutoShed) }
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(store.policySuggestion?.confirmMessage ?? "")
+        }
     }
 
     private var header: some View {
@@ -77,6 +104,38 @@ struct OverviewView: View {
     }
 
     @ViewBuilder
+    private var storageCTA: some View {
+        let storage = snap.storage
+        if storage.available && storage.level >= .warning {
+            HStack(spacing: 12) {
+                LevelBadge(level: storage.level)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Storage \(storage.level.displayName.lowercased()) · \(PressureFormat.bytes(storage.availableBytes)) free")
+                        .font(.headline)
+                    Text("Use Storage → Begin safe reclaim. Typed apply only — no agent terminal.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Open Storage") {
+                    store.openStorage(tab: .disk)
+                }
+                .buttonStyle(.borderedProminent)
+                .help(PressureHelp.storageBeginSafeReclaim)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .onTapGesture { store.openStorage(tab: .disk) }
+            .background(PressureTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(PressureTheme.levelColor(storage.level).opacity(0.35), lineWidth: 1)
+            )
+        }
+    }
+
+    @ViewBuilder
     private var doctorStrip: some View {
         if let doctor = store.board.doctor {
             VStack(alignment: .leading, spacing: 10) {
@@ -106,12 +165,9 @@ struct OverviewView: View {
                         .foregroundStyle(.secondary)
                 }
                 if !doctor.fixes.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 8) {
                         ForEach(doctor.fixes.prefix(3), id: \.self) { fix in
-                            Text("fix: \(fix)")
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.orange)
-                                .textSelection(.enabled)
+                            CopyableOperatorText(text: "fix: \(fix)", agentPaste: fix)
                         }
                     }
                 }
@@ -120,7 +176,7 @@ struct OverviewView: View {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(PressureTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        } else if store.board.wrapperInterruptOperations > 0 || !(store.board.calibration?.suggestedPolicyProfile ?? "").isEmpty {
+        } else if store.board.wrapperInterruptOperations > 0 {
             // Calibration-only strip when doctor envelope is unavailable.
             VStack(alignment: .leading, spacing: 8) {
                 Text("Work forensics")
@@ -136,17 +192,23 @@ struct OverviewView: View {
     @ViewBuilder
     private var interruptAndSuggestionRow: some View {
         let interrupts = store.board.wrapperInterruptOperations
-        HStack(spacing: 10) {
-            if interrupts > 0 {
+        if interrupts > 0 {
+            HStack(spacing: 10) {
                 StatusChip(label: "wrapper interrupts \(interrupts)", ok: false)
+                Spacer(minLength: 0)
             }
-            if let profile = store.board.calibration?.suggestedPolicyProfile, !profile.isEmpty {
-                Text("suggest \(profile)")
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.orange)
-                    .help("Advisory only — dry-run: ndev session pressure policy profile apply \(profile) --dry-run")
+        }
+    }
+
+    @ViewBuilder
+    private var suggestionCard: some View {
+        if let suggestion = store.policySuggestion {
+            WorkStyleSuggestionCard(
+                suggestion: suggestion,
+                expanded: $suggestionExpanded
+            ) {
+                confirmApplySuggestion = true
             }
-            Spacer(minLength: 0)
         }
     }
 
@@ -181,7 +243,8 @@ struct OverviewView: View {
                 subtitle: snap.storage.available ? "\(PressureFormat.percent(snap.storage.freePercent)) · \(snap.storage.volumePath)" : (snap.storage.error ?? "probe unavailable"),
                 accent: PressureTheme.levelColor(snap.storage.level),
                 progress: snap.storage.totalBytes > 0 ? min(1, 1 - Double(snap.storage.availableBytes) / Double(snap.storage.totalBytes)) : nil,
-                help: PressureHelp.storage
+                help: PressureHelp.storage + " Click to open Storage (⌘4).",
+                action: { store.openStorage(tab: .disk) }
             )
             MetricCard(
                 title: "Swap used",

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nstranquist/session-pressure/internal/sessionpressure"
+	"github.com/nstranquist/session-pressure/sessionpressure"
 )
 
 const SchemaVersion = 1

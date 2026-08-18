@@ -16,8 +16,8 @@ import (
 
 	"github.com/nstranquist/session-pressure/internal/atomicfile"
 	"github.com/nstranquist/session-pressure/internal/hostcleanup"
-	"github.com/nstranquist/session-pressure/sessionpressure"
 	"github.com/nstranquist/session-pressure/internal/telemetry"
+	"github.com/nstranquist/session-pressure/sessionpressure"
 )
 
 const (

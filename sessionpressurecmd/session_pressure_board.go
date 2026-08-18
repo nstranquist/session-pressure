@@ -253,6 +253,7 @@ func cmdSessionPressureBoard(g *Flags, args []string) int {
 				return
 			}
 			report := sessionpressure.BuildWorkCalibrationReport(events, since, time.Now().UTC())
+			report.SuppressIfAlreadyApplied(runtime.policy)
 			calibration = &report
 			calibrationDiagnostics = diagnostics
 		}()

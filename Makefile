@@ -1,16 +1,19 @@
 GO ?= go
 PREFIX ?= $(CURDIR)/bin
 
-.PHONY: test vet fmt build publish-ready secret-scan
+.PHONY: test vet fmt build desktop-test publish-ready secret-scan
 
 fmt:
 	$(GO) fmt ./...
 
 vet:
-	$(GO) vet ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./cmd/session-pressure ./cmd/session-pressure-api ./cmd/session-pressure-helper
+	$(GO) vet ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./sessionpressurecontrol ./cmd/session-pressure ./cmd/session-pressure-api ./cmd/session-pressure-helper
 
 test:
-	$(GO) test ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./internal/hostcleanup ./cmd/session-pressure ./internal/filelock ./internal/jsonl ./internal/notifyinbox ./internal/operationcontract ./packages/processtree -count=1 -timeout 10m
+	$(GO) test ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./sessionpressurecontrol ./internal/hostcleanup ./cmd/session-pressure ./internal/filelock ./internal/jsonl ./internal/notifyinbox ./internal/operationcontract ./packages/processtree -count=1 -timeout 10m
+
+desktop-test:
+	$(MAKE) -C apps/SessionPressure test
 
 build:
 	mkdir -p $(PREFIX)
@@ -21,5 +24,5 @@ build:
 secret-scan:
 	@if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --source . --no-git --redact; else echo "gitleaks not installed; skipped"; fi
 
-publish-ready: fmt vet test build secret-scan
+publish-ready: fmt vet test desktop-test build secret-scan
 	@echo "publish-ready: ok"

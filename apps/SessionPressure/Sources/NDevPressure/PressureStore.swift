@@ -9,10 +9,10 @@ final class PressureStore: ObservableObject {
         case overview = "Overview"
         case trees = "Agent Trees"
         case diskWrites = "Disk Writes"
+        case storage = "Storage"
         case work = "Work Queue"
         case policy = "Policy"
         case monitor = "Monitor"
-        case idle = "Idle Cleanup"
         case telemetry = "Telemetry"
 
         var id: String { rawValue }
@@ -22,13 +22,37 @@ final class PressureStore: ObservableObject {
             case .overview: "gauge.with.dots.needle.67percent"
             case .trees: "tree"
             case .diskWrites: "internaldrive"
+            case .storage: "externaldrive.badge.checkmark"
             case .work: "rectangle.stack"
             case .policy: "slider.horizontal.3"
             case .monitor: "heart.text.square"
-            case .idle: "moon.zzz"
             case .telemetry: "waveform.path.ecg"
             }
         }
+
+        /// Digit used by Pressure → <title> in the menu bar. macOS App Shortcuts
+        /// remap by that exact menu title, not by this digit.
+        var commandDigit: String {
+            switch self {
+            case .overview: "1"
+            case .trees: "2"
+            case .diskWrites: "3"
+            case .storage: "4"
+            case .work: "5"
+            case .policy: "6"
+            case .monitor: "7"
+            case .telemetry: "8"
+            }
+        }
+
+        var shortcutLabel: String { "⌘\(commandDigit)" }
+    }
+
+    enum StorageTab: String, CaseIterable, Identifiable {
+        case disk = "Disk reclaim"
+        case idle = "Idle trees"
+
+        var id: String { rawValue }
     }
 
     struct HistoricalWork: Hashable {
@@ -151,6 +175,26 @@ final class PressureStore: ObservableObject {
             } else {
                 stopDiskFocusPoll()
             }
+            if selectedSection == .storage, storageTab == .disk {
+                Task { await refreshStorageInventory() }
+            }
+            if selectedSection == .storage, storageTab == .idle {
+                Task { await refresh(live: false, light: false) }
+            }
+            if selectedSection == .policy {
+                Task { await refreshStorageInventory() }
+            }
+        }
+    }
+
+    @Published var storageTab: StorageTab = .disk {
+        didSet {
+            if selectedSection == .storage, storageTab == .disk {
+                Task { await refreshStorageInventory() }
+            }
+            if selectedSection == .storage, storageTab == .idle {
+                Task { await refresh(live: false, light: false) }
+            }
         }
     }
     @Published var isRefreshing = false
@@ -176,6 +220,24 @@ final class PressureStore: ObservableObject {
     @Published var diskTracePaths: [String] = []
     @Published var diskTraceStatus: String?
     @Published var pendingDiskTraceRequest: DiskTraceRequest?
+
+    @Published var storageProviders: [StorageProviderReport] = []
+    @Published var storagePolicy: StoragePolicySnapshot?
+    @Published var storageInventory: StorageSnapshot?
+    @Published var storageReceipt: [StorageReceiptLine] = []
+    @Published var storagePreview: StorageApplyEnvelope?
+    @Published var pendingStorageApply: StorageApplyRequest?
+    @Published var isStorageLoading = false
+    @Published var isStorageApplying = false
+    @Published var storageError: String?
+
+    struct StorageApplyRequest: Identifiable, Hashable {
+        var autoSafe: Bool
+        var provider: String?
+        var preview: StorageApplyEnvelope
+
+        var id: String { autoSafe ? "auto-safe" : (provider ?? "provider") }
+    }
 
     private var client: NDevPressureClient?
     private var pollTask: Task<Void, Never>?
@@ -396,7 +458,7 @@ final class PressureStore: ObservableObject {
                 let richStatus = selectedSection == .overview || selectedSection == .trees || selectedSection == .monitor
                 board = try await client.refreshBoard(
                     live: live,
-                    includeIdle: selectedSection == .idle,
+                    includeIdle: selectedSection == .storage && storageTab == .idle,
                     includeTelemetry: selectedSection == .telemetry,
                     fullStatus: richStatus,
                     includePolicy: board.policy == nil || selectedSection == .policy,
@@ -656,6 +718,22 @@ final class PressureStore: ObservableObject {
         }
     }
 
+    var policySuggestion: PolicySuggestion? {
+        PolicySuggestionFactory.current(from: board.calibration, policy: board.policy)
+    }
+
+    func copyToPasteboard(_ string: String, done: String = "Copied") {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(string, forType: .string)
+        statusMessage = done
+        Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            if statusMessage == done {
+                statusMessage = nil
+            }
+        }
+    }
+
     func observeDiskWrites() async {
         await mutate("Enabling write observation…") { client in
             _ = try await client.diskWritePolicyObserve()
@@ -696,6 +774,143 @@ final class PressureStore: ObservableObject {
         await mutate("Sampling once…") { client in
             _ = try await client.monitorOnce()
         }
+    }
+
+    func refreshStorageInventory() async {
+        guard let client else {
+            storageError = "session-pressure client unavailable"
+            return
+        }
+        isStorageLoading = true
+        defer { isStorageLoading = false }
+        do {
+            async let providersTask = client.storageProviders()
+            async let statusTask = client.storageStatus()
+            let providers = try await providersTask
+            let status = try await statusTask
+            storageProviders = providers.providers
+            storageInventory = status.storage ?? providers.storage ?? board.snapshot.storage
+            storagePolicy = status.storagePolicy ?? providers.storagePolicy ?? storagePolicy
+            storageError = nil
+        } catch {
+            storageError = error.localizedDescription
+        }
+    }
+
+    var storageAutoSafeActionable: [StorageProviderReport] {
+        storageProviders.filter { $0.tier == .autoSafe && $0.isActionable }
+    }
+
+    /// False only after inventory has loaded and every auto_safe row is blocked or factory-only.
+    var canBeginAutoSafeReclaim: Bool {
+        storageProviders.isEmpty || !storageAutoSafeActionable.isEmpty
+    }
+
+    func previewSafeReclaim(autoSafe: Bool, provider: String? = nil) async {
+        guard let client else {
+            storageError = "session-pressure client unavailable"
+            return
+        }
+        isStorageApplying = true
+        defer { isStorageApplying = false }
+        let command = StorageReclaim.applyArguments(autoSafe: autoSafe, provider: provider, apply: false)
+        storageReceipt = [StorageReceiptLine(kind: .command, text: command.joined(separator: " "))]
+        if autoSafe, storagePolicy?.enforceAdmission != true {
+            appendStorageReceipt(StorageReceiptLine(
+                kind: .status,
+                text: "Storage policy enforcement is off. Preview is allowed; confirm will refuse --auto-safe until you enable storage policy."
+            ))
+        }
+        storagePreview = nil
+        pendingStorageApply = nil
+        do {
+            let envelope = try await client.storageApply(
+                autoSafe: autoSafe,
+                provider: provider,
+                apply: false,
+                onOutputLine: { [weak self] line in
+                    Task { @MainActor in
+                        self?.appendStorageReceipt(StorageReceiptLine(kind: .stdout, text: line))
+                    }
+                }
+            )
+            storagePreview = envelope
+            for line in StorageReclaim.receiptLines(from: envelope, command: command) {
+                appendStorageReceipt(line)
+            }
+            pendingStorageApply = StorageApplyRequest(autoSafe: autoSafe, provider: provider, preview: envelope)
+            storageError = nil
+        } catch {
+            storageError = error.localizedDescription
+            appendStorageReceipt(StorageReceiptLine(kind: .error, text: error.localizedDescription))
+        }
+    }
+
+    func openStorage(tab: StorageTab = .disk) {
+        storageTab = tab
+        selectedSection = .storage
+    }
+
+    func confirmStorageApply(_ request: StorageApplyRequest) async {
+        pendingStorageApply = nil
+        if request.autoSafe, let policy = storagePolicy, !policy.enforceAdmission {
+            storageError = "Enable storage policy before --auto-safe apply. Named provider apply remains available."
+            appendStorageReceipt(StorageReceiptLine(kind: .error, text: storageError ?? ""))
+            return
+        }
+        guard let client else {
+            storageError = "session-pressure client unavailable"
+            return
+        }
+        isStorageApplying = true
+        defer { isStorageApplying = false }
+        let command = StorageReclaim.applyArguments(autoSafe: request.autoSafe, provider: request.provider, apply: true)
+        appendStorageReceipt(StorageReceiptLine(kind: .command, text: command.joined(separator: " ")))
+        do {
+            let envelope = try await client.storageApply(
+                autoSafe: request.autoSafe,
+                provider: request.provider,
+                apply: true,
+                onOutputLine: { [weak self] line in
+                    Task { @MainActor in
+                        self?.appendStorageReceipt(StorageReceiptLine(kind: .stdout, text: line))
+                    }
+                }
+            )
+            for line in StorageReclaim.receiptLines(from: envelope, command: command) {
+                appendStorageReceipt(line)
+            }
+            storageError = envelope.ok == false ? (envelope.error ?? "storage apply failed") : nil
+            await refreshStorageInventory()
+            await refresh(live: false, light: false)
+        } catch {
+            storageError = error.localizedDescription
+            appendStorageReceipt(StorageReceiptLine(kind: .error, text: error.localizedDescription))
+        }
+    }
+
+    func enableStoragePolicy() async {
+        await mutate("Enabling storage admission…") { client in
+            let env = try await client.storagePolicyEnable()
+            await MainActor.run { self.storagePolicy = env.storagePolicy ?? self.storagePolicy }
+        }
+        await refreshStorageInventory()
+    }
+
+    func observeStoragePolicy() async {
+        await mutate("Storage policy observe…") { client in
+            let env = try await client.storagePolicyObserve()
+            await MainActor.run { self.storagePolicy = env.storagePolicy ?? self.storagePolicy }
+        }
+        await refreshStorageInventory()
+    }
+
+    private func appendStorageReceipt(_ line: StorageReceiptLine) {
+        if line.kind == .command || line.kind == .status,
+           storageReceipt.contains(where: { $0.kind == line.kind && $0.text == line.text }) {
+            return
+        }
+        storageReceipt.append(line)
     }
 
     func applyIdle(tree: AgentTree) async {

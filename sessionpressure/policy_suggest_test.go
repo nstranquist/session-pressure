@@ -50,3 +50,12 @@ func TestSuggestPolicyProfileNeverMutatesPolicyNamesOutsideAllowlist(t *testing.
 		t.Fatal("must not suggest enforce profile")
 	}
 }
+
+func TestSuggestPolicyProfileSuppressesWhenAlreadyApplied(t *testing.T) {
+	got := SuggestPolicyProfile(SuggestPolicyProfileInput{
+		OperationCount: 100, CancelledOperations: 50, AlreadyApplied: true,
+	})
+	if got.Profile != "" || got.Reason != "" {
+		t.Fatalf("already-applied must not suggest: %+v", got)
+	}
+}

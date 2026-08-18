@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nstranquist/session-pressure/sessionpressure"
 	"github.com/nstranquist/session-pressure/pkg/processtree"
+	"github.com/nstranquist/session-pressure/sessionpressure"
 	"github.com/nstranquist/session-pressure/third_party/pageskein/browser"
 )
 
@@ -24,6 +24,10 @@ const (
 	storageProviderOperator   storageProviderClass = "operator"
 	storageProviderReportOnly storageProviderClass = "report_only"
 )
+
+// storageAutoSafeApplyIDs is the closed auto_safe apply set. Named operator
+// providers, including go-build-cache, cannot enter this list.
+var storageAutoSafeApplyIDs = []string{"browser-dead-profiles", "pnpm-store"}
 
 type storageProviderReport struct {
 	ID                string                           `json:"id"`
@@ -106,8 +110,9 @@ Subcommands:
   status                              Cheap live filesystem-capacity sample
   providers                           Inventory typed reclaim providers
   plan [--target-free SIZE]           Dry-run provider plan (default target from policy)
-  apply [--provider ID|--auto-safe] [--target-free SIZE] [--apply]
+  apply [--provider ID|--auto-safe] [--target-free SIZE] [--force] [--apply]
                                       Dry-run by default; literal --apply mutates
+                                      --force skips reclaim cooldown on named --provider only
   history [--since D] [--limit N]     Read bounded private reclaim receipts
   policy enable|observe               Toggle disk-growth admission independently
 
@@ -428,6 +433,34 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 	reports = append(reports, gradleReport)
 	for _, definition := range []struct {
 		id, summary, path string
+	}{
+		{"nicos-telemetry-archive", "Dated telemetry-before-prune snapshots under ~/.nicos-dev/telemetry/archive", filepath.Join(home, ".nicos-dev", "telemetry", "archive")},
+		{"nicos-voice-models", "Unused nvoiced GGUF models under ~/.nicos-dev/voice/models", filepath.Join(home, ".nicos-dev", "voice", "models")},
+		{"nicos-wine-proof", "Leftover ndev-browser-proof Wine prefix under ~/.nicos-dev/wine", filepath.Join(home, ".nicos-dev", "wine")},
+		{"nicos-pw-archive", "Frozen Perfect World archive tree under ~/.nicos-dev/pw-archive", filepath.Join(home, ".nicos-dev", "pw-archive")},
+	} {
+		size, present, err := int64(0), storagePathExists(definition.path), error(nil)
+		if measure {
+			size, present, err = storageDirectoryBytes(definition.path)
+		}
+		report := storageProviderReport{
+			ID:                definition.id,
+			Classification:    storageProviderOperator,
+			Summary:           definition.summary,
+			Path:              definition.path,
+			Present:           present,
+			EstimatedBytes:    size,
+			EstimateKind:      "inventory",
+			MutationSupported: present,
+		}
+		if err != nil {
+			report.BlockedReason = err.Error()
+			report.MutationSupported = false
+		}
+		reports = append(reports, report)
+	}
+	for _, definition := range []struct {
+		id, summary, path string
 		overlaps          []string
 	}{
 		{"go-module-cache", "Useful Go module download cache preserved by operator preference", filepath.Join(home, "go", "pkg", "mod", "cache"), nil},
@@ -534,6 +567,7 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 	}
 	apply := false
 	autoSafe := false
+	force := false
 	providerID := ""
 	for index := 0; index < len(remaining); index++ {
 		switch remaining[index] {
@@ -541,6 +575,8 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 			apply = true
 		case "--auto-safe":
 			autoSafe = true
+		case "--force":
+			force = true
 		case "--provider":
 			index++
 			if index >= len(remaining) {
@@ -553,6 +589,9 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 	}
 	if autoSafe == (providerID != "") {
 		return sessionPressureError("storage apply requires exactly one of --auto-safe or --provider ID", 2)
+	}
+	if force && autoSafe {
+		return sessionPressureError("--force is only valid with --provider; --auto-safe keeps reclaim cooldown", 2)
 	}
 	// Actual reclaim must not repeat the expensive report-only attribution walk.
 	// The explicit plan/dry-run path owns size inventory; execution needs only
@@ -572,7 +611,7 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 		if err != nil {
 			return sessionPressureError(err.Error(), 1)
 		}
-		return emitPressure(g, map[string]any{"ok": true, "action": "storage.apply", "apply": false, "plan": plan, "selected_provider": providerID, "auto_safe": autoSafe}, fmt.Sprintf("dry-run only: available=%.1fGiB target=%.1fGiB; pass --apply to mutate\n", bytesToGiB(sample.AvailableBytes), bytesToGiB(target)), 0)
+		return emitPressure(g, map[string]any{"ok": true, "action": "storage.apply", "apply": false, "plan": plan, "selected_provider": providerID, "auto_safe": autoSafe, "force": force}, fmt.Sprintf("dry-run only: available=%.1fGiB target=%.1fGiB; pass --apply to mutate\n", bytesToGiB(sample.AvailableBytes), bytesToGiB(target)), 0)
 	}
 	if !runtime.persisted {
 		return sessionPressureError("storage apply requires an initialized pressure policy", 1)
@@ -612,10 +651,11 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 	}()
 	selected := []string{providerID}
 	if autoSafe {
-		selected = []string{"browser-dead-profiles", "pnpm-store"}
+		selected = append([]string(nil), storageAutoSafeApplyIDs...)
 	}
 	receipts := make([]sessionpressure.StorageReceipt, 0, len(selected)*2)
 	skipped := make([]map[string]any, 0, len(selected))
+	cooldownBypassed := false
 	for _, id := range selected {
 		current := sessionpressure.SampleStorageCapacity(sessionpressure.DefaultStorageVolumePath(), time.Now())
 		if current.Available && current.AvailableBytes >= target {
@@ -623,13 +663,23 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 		}
 		provider, found := storageProviderByID(plan.Providers, id)
 		if !found {
+			if autoSafe {
+				skipped = append(skipped, map[string]any{"provider_id": id, "reason": "unknown storage provider"})
+				continue
+			}
 			return sessionPressureError("unknown storage provider "+strconv.Quote(id), 2)
 		}
-		if provider.Classification == storageProviderReportOnly || !provider.MutationSupported {
-			return sessionPressureError(fmt.Sprintf("provider %s is not mutable: %s", id, provider.BlockedReason), 1)
-		}
-		if autoSafe && provider.Classification != storageProviderAutoSafe {
-			return sessionPressureError("provider "+id+" is not auto_safe", 1)
+		if autoSafe {
+			if reason, skip := storageAutoSafeSkipReason(provider); skip {
+				skipped = append(skipped, map[string]any{"provider_id": id, "reason": reason})
+				continue
+			}
+		} else if provider.Classification == storageProviderReportOnly || !provider.MutationSupported {
+			reason := provider.BlockedReason
+			if reason == "" {
+				reason = "classification is " + string(provider.Classification)
+			}
+			return sessionPressureError(fmt.Sprintf("provider %s is not mutable: %s", id, reason), 1)
 		}
 		recent, historyErr := sessionpressure.NewStorageReceiptStore(runtime.dir).Read(time.Now().Add(-time.Duration(runtime.policy.Storage.ReclaimCooldownSeconds)*time.Second), 1000)
 		if historyErr != nil {
@@ -637,11 +687,14 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 		}
 		if storageProviderInsideCooldown(recent, id) {
 			reason := fmt.Sprintf("provider %s is inside its %s reclaim cooldown", id, time.Duration(runtime.policy.Storage.ReclaimCooldownSeconds)*time.Second)
-			if autoSafe {
+			if force && providerID != "" {
+				cooldownBypassed = true
+			} else if autoSafe {
 				skipped = append(skipped, map[string]any{"provider_id": id, "reason": reason})
 				continue
+			} else {
+				return sessionPressureError(reason, 1)
 			}
-			return sessionPressureError(reason, 1)
 		}
 		if id == "go-build-cache" {
 			if err := requireGoBuildCacheHotness(&provider); err != nil {
@@ -656,7 +709,7 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 	}
 	after := sessionpressure.SampleStorageCapacity(sessionpressure.DefaultStorageVolumePath(), time.Now())
 	after = sessionpressure.EvaluateStorage(after, runtime.policy.Storage, sample.Level)
-	payload := map[string]any{"ok": true, "action": "storage.apply", "apply": true, "target_free_bytes": target, "storage": after, "receipts": receipts, "skipped_providers": skipped}
+	payload := map[string]any{"ok": true, "action": "storage.apply", "apply": true, "target_free_bytes": target, "storage": after, "receipts": receipts, "skipped_providers": skipped, "force": force, "cooldown_bypassed": cooldownBypassed}
 	return emitPressure(g, payload, fmt.Sprintf("storage reclaim complete: available=%.1fGiB target=%.1fGiB receipts=%d\n", bytesToGiB(after.AvailableBytes), bytesToGiB(target), len(receipts)), 0)
 }
 
@@ -771,6 +824,8 @@ func executeStorageProvider(ctx context.Context, runtime pressureRuntime, provid
 		} else {
 			runErr = storageRunGoBuildCacheClean(ctx, provider.Path)
 		}
+	case "nicos-telemetry-archive", "nicos-voice-models", "nicos-wine-proof", "nicos-pw-archive":
+		runErr = storageRunGoBuildCacheClean(ctx, provider.Path)
 	case "go-build-cache", "yarn-cache", "npm-cache", "brew-cache", "swiftpm-cache", "playwright-cache":
 		active, activeErr := storageCacheOwnerActive(provider.ID)
 		if activeErr != nil {
@@ -939,6 +994,27 @@ func cmdSessionPressureStoragePolicy(g *Flags, args []string) int {
 	}
 	payload := map[string]any{"ok": true, "action": "storage.policy." + args[0], "storage_policy": runtime.policy.Storage, "path": runtime.path}
 	return emitPressure(g, payload, fmt.Sprintf("storage admission enforcement=%v\n", runtime.policy.Storage.EnforceAdmission), 0)
+}
+
+func storageAutoSafeSkipReason(provider storageProviderReport) (string, bool) {
+	if provider.Classification != storageProviderAutoSafe {
+		return "provider is not auto_safe", true
+	}
+	if provider.ActiveOwner {
+		reason := provider.BlockedReason
+		if reason == "" {
+			reason = "an owner process is active"
+		}
+		return reason, true
+	}
+	if strings.TrimSpace(provider.BlockedReason) != "" || !provider.MutationSupported {
+		reason := provider.BlockedReason
+		if reason == "" {
+			reason = "classification is " + string(provider.Classification)
+		}
+		return reason, true
+	}
+	return "", false
 }
 
 func storageProviderByID(providers []storageProviderReport, id string) (storageProviderReport, bool) {

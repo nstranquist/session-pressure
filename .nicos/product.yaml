@@ -1,9 +1,19 @@
+schema_version: 1
 id: product.session-pressure
 name: SessionPressure
+surface: products
 kind: product
-description: Open-core host admission and work coordinator for concurrent coding agents.
-checks:
-  - make publish-ready
-distribution: oss
-proprietary: false
+status: experimental
+persona: Operator running many concurrent coding agents on one Mac who needs host admission and a work coordinator.
+jtbd: See why the host is red, who owns the load, and what is queued — without tailing JSON from a terminal.
+launch: built
 license: Apache-2.0
+tags:
+  - session-pressure
+  - open-core
+  - host-guard
+  - oss
+checks:
+  - name: publish-ready
+    command: [make, publish-ready]
+description: Open-core host admission and work coordinator for concurrent coding agents.
