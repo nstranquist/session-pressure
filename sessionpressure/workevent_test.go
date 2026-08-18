@@ -685,6 +685,9 @@ func TestSummarizeWorkEventsCountsStorageDeferralOncePerOperation(t *testing.T) 
 
 func TestWorkEvaluationIsDeterministicWithinResourceBudgets(t *testing.T) {
 	policy := DefaultPolicy(16 * 1024)
+	// Scenarios are calibrated to the 10-core shipped defaults, not the live
+	// runner's logical CPU count.
+	policy.WorkLimits = defaultWorkLimits(10)
 	first := EvaluateWorkSystem(policy)
 	second := EvaluateWorkSystem(policy)
 	sharedProjection := ProjectTelemetryBytesPerDay(policy, 0, 0, 0)

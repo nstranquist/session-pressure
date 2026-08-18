@@ -1692,7 +1692,8 @@ func TestLoadPolicyBackfillsCPUAndWorkLimitsForExistingPolicy(t *testing.T) {
 		t.Fatalf("temporary dogfood wall budget was not migrated: persisted=%v policy=%+v err=%v", persisted, loaded, err)
 	}
 	legacy = expected
-	legacy.WorkLimits.BuildWeight = 6
+	legacyBuildWeight := max(1, (legacy.WorkLimits.Capacity*2+2)/3)
+	legacy.WorkLimits.BuildWeight = legacyBuildWeight
 	body, err = json.Marshal(legacy)
 	if err != nil {
 		t.Fatal(err)
@@ -1701,10 +1702,20 @@ func TestLoadPolicyBackfillsCPUAndWorkLimitsForExistingPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, persisted, err = LoadPolicy(path, 16*1024)
-	if err != nil || !persisted || loaded.WorkLimits.BuildWeight != 5 {
+	if err != nil || !persisted || loaded.WorkLimits.BuildWeight != expected.WorkLimits.BuildWeight {
 		t.Fatalf("shipped build weight was not migrated: persisted=%v policy=%+v err=%v", persisted, loaded, err)
 	}
-	legacy.WorkLimits.BuildWeight = 4
+	operatorBuildWeight := 0
+	for candidate := 1; candidate <= expected.WorkLimits.Capacity; candidate++ {
+		if candidate != legacyBuildWeight && candidate != expected.WorkLimits.BuildWeight && candidate > expected.WorkLimits.ExpressBuildWeight {
+			operatorBuildWeight = candidate
+			break
+		}
+	}
+	if operatorBuildWeight == 0 {
+		t.Skip("no distinct operator build weight on this host")
+	}
+	legacy.WorkLimits.BuildWeight = operatorBuildWeight
 	body, err = json.Marshal(legacy)
 	if err != nil {
 		t.Fatal(err)
@@ -1713,7 +1724,7 @@ func TestLoadPolicyBackfillsCPUAndWorkLimitsForExistingPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, persisted, err = LoadPolicy(path, 16*1024)
-	if err != nil || !persisted || loaded.WorkLimits.BuildWeight != 4 {
+	if err != nil || !persisted || loaded.WorkLimits.BuildWeight != operatorBuildWeight {
 		t.Fatalf("operator build weight was overwritten: persisted=%v policy=%+v err=%v", persisted, loaded, err)
 	}
 }
