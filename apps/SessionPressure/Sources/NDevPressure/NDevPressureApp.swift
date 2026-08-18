@@ -34,13 +34,13 @@ struct NDevPressureApp: App {
                     .keyboardShortcut("2", modifiers: [.command])
                 Button("Disk Writes") { store.selectedSection = .diskWrites }
                     .keyboardShortcut("3", modifiers: [.command])
-                Button("Work Queue") { store.selectedSection = .work }
+                Button("Storage") { store.openStorage(tab: .disk) }
                     .keyboardShortcut("4", modifiers: [.command])
-                Button("Policy") { store.selectedSection = .policy }
+                Button("Work Queue") { store.selectedSection = .work }
                     .keyboardShortcut("5", modifiers: [.command])
-                Button("Monitor") { store.selectedSection = .monitor }
+                Button("Policy") { store.selectedSection = .policy }
                     .keyboardShortcut("6", modifiers: [.command])
-                Button("Idle Cleanup") { store.selectedSection = .idle }
+                Button("Monitor") { store.selectedSection = .monitor }
                     .keyboardShortcut("7", modifiers: [.command])
                 Button("Telemetry") { store.selectedSection = .telemetry }
                     .keyboardShortcut("8", modifiers: [.command])

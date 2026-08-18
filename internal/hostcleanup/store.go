@@ -15,7 +15,7 @@ import (
 
 	"github.com/nstranquist/session-pressure/internal/atomicfile"
 	"github.com/nstranquist/session-pressure/internal/filelock"
-	"github.com/nstranquist/session-pressure/internal/sessionpressure"
+	"github.com/nstranquist/session-pressure/sessionpressure"
 )
 
 func PolicyPath(dir string) string  { return filepath.Join(dir, "cleanup-policy.json") }

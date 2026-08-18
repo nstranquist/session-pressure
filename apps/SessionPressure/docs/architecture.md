@@ -2,18 +2,17 @@
 
 ## Role
 
-**NDev Pressure** is a thin native macOS shell over the stable
-`ndev session pressure` JSON control plane. It does **not** reimplement host
+**SessionPressure** is a thin native macOS shell over the stable
+`session-pressure` JSON control plane. It does **not** reimplement host
 sampling, policy evaluation, admission, or relief. Authority stays in:
 
-- `nicos-dev/internal/sessionpressure` (Go core)
-- `ndev session pressure …` (CLI surface)
-- Resident helper `ndev-session-pressure` (LaunchAgent)
+- `internal/sessionpressure` (Go core)
+- `session-pressure …` (CLI surface)
+- Resident helper `session-pressure-helper` (LaunchAgent)
 
-The extraction seam is `nicos-dev/cmd/ndev-pressure`, a deliberately thin
-forwarding binary. The app prefers it through `NDEV_PRESSURE_BIN` and falls
-back to `ndev` while the core/CLI graduate. No second policy store or telemetry
-database is introduced.
+The product CLI is `cmd/session-pressure`. The app prefers it through
+`SESSION_PRESSURE_BIN` / `NDEV_PRESSURE_BIN` and can fall back to `ndev`.
+No second policy store or telemetry database is introduced.
 
 ## Process model
 
@@ -29,8 +28,8 @@ database is introduced.
 │                    │ Process + JSON
 └────────────────────┼────────────────┘
                      ▼
-            ndev-pressure --json session pressure …
-                 (compatibility bridge; falls back to ndev)
+            session-pressure --json session pressure …
+                 (product CLI; ndev wrapper is the fallback)
                      │
      ~/.nicos-dev/session-pressure/
        policy.json · latest.json · work-leases.json
@@ -117,6 +116,14 @@ spawned one `ndev` per contract — 4-5 cold starts per refresh, on a host the a
 exists to keep unloaded. The per-contract fan-out is retained and used only when
 the installed helper rejects `board` as an unknown subcommand; any other failure
 surfaces rather than silently halving fidelity.
+
+The **Storage** pane (⌘4) has two tabs. Disk reclaim reads `storage providers` /
+`storage status` and mutates only through typed `storage apply --auto-safe` or
+`storage apply --provider ID`, plus `storage policy enable|observe`. Preview is
+dry-run (no `--apply`). Confirm adds `--apply`. Output is streamed into an
+append-only receipt. Idle trees is the former Idle Cleanup surface (operator
+SIGTERM). The Overview storage card opens this pane. The app does not spawn an
+agent, PTY, or arbitrary argv.
 
 **The board's sections must run concurrently.** The fan-out it replaced issued
 its five children in parallel, so its wall time was the slowest child, not the

@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nstranquist/session-pressure/sessionpressure"
 	"github.com/nstranquist/session-pressure/pkg/sessionpressurecontrol"
+	"github.com/nstranquist/session-pressure/sessionpressure"
 )
 
 var (
@@ -139,6 +139,19 @@ func newActionRegistry() *actionRegistry {
 			return nil, errors.New("provider must be a bounded identifier")
 		}
 		args := pressureArgs("storage", "apply", "--provider", provider, "--apply")
+		if target := params["target_free"]; target != "" {
+			if !safeSize.MatchString(target) {
+				return nil, errors.New("target_free must be a bounded size")
+			}
+			args = append(args, "--target-free", target)
+		}
+		return args, nil
+	})
+	registry.add("storage.auto_safe.apply", []string{"target_free"}, func(params map[string]string) ([]string, error) {
+		if provider := params["provider"]; provider != "" {
+			return nil, errors.New("storage.auto_safe.apply does not accept a provider")
+		}
+		args := pressureArgs("storage", "apply", "--auto-safe", "--apply")
 		if target := params["target_free"]; target != "" {
 			if !safeSize.MatchString(target) {
 				return nil, errors.New("target_free must be a bounded size")

@@ -3,14 +3,20 @@ import NDevPressureCore
 
 struct IdleView: View {
     @EnvironmentObject private var store: PressureStore
+    var embedded: Bool = false
     @State private var pending: AgentTree?
 
     private var candidates: [AgentTree] { store.board.idleCandidates }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            if !embedded {
+                header
+                Divider()
+            } else {
+                idleToolbar
+                Divider()
+            }
             if candidates.isEmpty {
                 EmptyHint(
                     title: "No idle candidates",
@@ -76,5 +82,22 @@ struct IdleView: View {
             .disabled(store.isRefreshing)
         }
         .padding(14)
+    }
+
+    private var idleToolbar: some View {
+        HStack {
+            Text("\(candidates.count) idle candidate(s)")
+                .font(PressureTheme.monoCaption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button {
+                Task { await store.refresh(live: false, light: false) }
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .disabled(store.isRefreshing)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 }

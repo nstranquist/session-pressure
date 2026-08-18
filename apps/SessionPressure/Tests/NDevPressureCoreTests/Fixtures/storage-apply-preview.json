@@ -1,0 +1,41 @@
+{
+  "ok": true,
+  "action": "storage.apply",
+  "apply": false,
+  "auto_safe": true,
+  "selected_provider": "",
+  "plan": {
+    "target_free_bytes": 26843545600,
+    "shortfall_bytes": 22142676992,
+    "estimated_reclaimable_bytes": 1048576,
+    "providers": [
+      {
+        "id": "browser-dead-profiles",
+        "classification": "auto_safe",
+        "summary": "Dead PageSkein profiles older than the lifecycle floor",
+        "present": true,
+        "estimated_bytes": 0,
+        "mutation_supported": false,
+        "blocked_reason": "pageskein reclaim is not available in the open extract"
+      },
+      {
+        "id": "pnpm-store",
+        "classification": "auto_safe",
+        "summary": "Canonical pnpm content-addressed store prune",
+        "present": true,
+        "estimated_bytes": 2147483648,
+        "mutation_supported": false,
+        "active_owner": true,
+        "blocked_reason": "a pnpm process is active"
+      },
+      {
+        "id": "user-trash",
+        "classification": "operator",
+        "summary": "Empty only the user Trash directory",
+        "present": true,
+        "estimated_bytes": 1048576,
+        "mutation_supported": true
+      }
+    ]
+  }
+}

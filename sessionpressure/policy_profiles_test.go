@@ -67,10 +67,13 @@ func TestApplyPolicyProfileUnknown(t *testing.T) {
 
 func TestListPolicyProfilesNames(t *testing.T) {
 	list := ListPolicyProfiles()
-	if len(list) != 4 {
+	if len(list) != 5 {
 		t.Fatalf("profiles=%v", list)
 	}
-	want := map[string]bool{PolicyProfileBalanced: true, PolicyProfileThroughput: true, PolicyProfileInteractive: true, PolicyProfileObserve: true}
+	want := map[string]bool{
+		PolicyProfileBalanced: true, PolicyProfileThroughput: true, PolicyProfileInteractive: true,
+		PolicyProfileObserve: true, PolicyProfileMultiAgentSoft: true,
+	}
 	for _, p := range list {
 		if !want[p.Name] {
 			t.Fatalf("unexpected %q", p.Name)
@@ -129,7 +132,21 @@ func TestApplyPolicyProfileMultiAgentSoftDiffersFromObserve(t *testing.T) {
 	if multi.LaunchAdmission.OldestWaitBlockSeconds != multiAgentSoftOldestWaitSeconds {
 		t.Fatalf("oldest_wait=%d want %d", multi.LaunchAdmission.OldestWaitBlockSeconds, multiAgentSoftOldestWaitSeconds)
 	}
+	if multi.Profile != PolicyProfileMultiAgentSoft {
+		t.Fatalf("persist name=%q, want %q", multi.Profile, PolicyProfileMultiAgentSoft)
+	}
 	if observe.LaunchAdmission.QueueDepthBlock != 8 || observe.LaunchAdmission.OldestWaitBlockSeconds != defaultOldestLaunchWaitSecond {
 		t.Fatalf("observe defaults drifted: %+v", observe.LaunchAdmission)
+	}
+	if !MatchesMultiAgentSoft(multi) {
+		t.Fatal("applied multi-agent-soft must match")
+	}
+	if MatchesMultiAgentSoft(observe) {
+		t.Fatal("plain observe must not match multi-agent-soft")
+	}
+	legacy := observe
+	legacy.LaunchAdmission = multi.LaunchAdmission
+	if !MatchesMultiAgentSoft(legacy) {
+		t.Fatal("legacy observe + soft knobs must still match")
 	}
 }

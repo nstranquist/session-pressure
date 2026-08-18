@@ -9,6 +9,8 @@ struct PolicyView: View {
     @State private var confirmInit = false
     @State private var pendingProfile = "balanced"
     @State private var confirmProfile = false
+    @State private var confirmStorageEnable = false
+    @State private var confirmStorageObserve = false
 
     private var policy: PressurePolicy? { store.board.policy }
 
@@ -35,7 +37,7 @@ struct PolicyView: View {
 
                         HStack(spacing: 10) {
                             Menu("Work style") {
-                                ForEach(["balanced", "throughput", "interactive", "observe"], id: \.self) { profile in
+                                ForEach(["balanced", "throughput", "interactive", "observe", "multi-agent-soft"], id: \.self) { profile in
                                     Button(profile.replacingOccurrences(of: "-", with: " ").capitalized) {
                                         pendingProfile = profile
                                         confirmProfile = true
@@ -79,6 +81,64 @@ struct PolicyView: View {
                         Button("Init observe-only policy") { confirmInit = true }
                             .buttonStyle(.borderedProminent)
                     }
+                }
+
+                SectionCard(
+                    title: "Storage policy",
+                    systemImage: "externaldrive.badge.checkmark",
+                    help: PressureHelp.storagePolicyEnable
+                ) {
+                    Text(storagePolicyCaption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Enable storage policy") { confirmStorageEnable = true }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(store.busyAction != nil)
+                            .help(PressureHelp.storagePolicyEnable)
+                        Button("Storage observe") { confirmStorageObserve = true }
+                            .buttonStyle(.bordered)
+                            .disabled(store.busyAction != nil)
+                    }
+                }
+
+                SectionCard(
+                    title: "Keyboard",
+                    systemImage: "keyboard",
+                    help: PressureHelp.keyboardRemap
+                ) {
+                    Text("These are Pressure menu items. Remap them in System Settings → Keyboard → Keyboard Shortcuts → App Shortcuts. The menu title must match exactly.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(PressureStore.Section.allCases) { section in
+                            HStack {
+                                Text(section.rawValue)
+                                Spacer()
+                                Text(section.shortcutLabel)
+                                    .font(PressureTheme.monoCaption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        HStack {
+                            Text("Refresh")
+                            Spacer()
+                            Text("⌘R")
+                                .font(PressureTheme.monoCaption)
+                                .foregroundStyle(.secondary)
+                        }
+                        HStack {
+                            Text("Live Sample")
+                            Spacer()
+                            Text("⌘⇧R")
+                                .font(PressureTheme.monoCaption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Button("Open Keyboard Shortcuts…") {
+                        KeyboardSettings.openAppShortcuts()
+                    }
+                    .help(PressureHelp.keyboardRemap)
                 }
 
                 if let t = policy?.thresholds {
@@ -170,17 +230,58 @@ struct PolicyView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .confirmationDialog("Enable storage admission?", isPresented: $confirmStorageEnable, titleVisibility: .visible) {
+            Button("Enable storage policy") {
+                Task { await store.enableStoragePolicy() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(PressureHelp.storagePolicyEnable)
+        }
+        .confirmationDialog("Observe storage only?", isPresented: $confirmStorageObserve, titleVisibility: .visible) {
+            Button("Storage observe") {
+                Task { await store.observeStoragePolicy() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Turns off --auto-safe admission enforcement. Named provider apply remains available.")
+        }
         .confirmationDialog("Apply work style?", isPresented: $confirmProfile, titleVisibility: .visible) {
-            Button("Apply \(pendingProfile.replacingOccurrences(of: "-", with: " ").capitalized)") {
+            Button(
+                pendingProfile == "multi-agent-soft" && (policy?.enforceAdmission == true || policy?.autoShedCritical == true)
+                    ? "Apply and turn off protection"
+                    : "Apply \(pendingProfile.replacingOccurrences(of: "-", with: " ").capitalized)",
+                role: pendingProfile == "multi-agent-soft" && (policy?.enforceAdmission == true || policy?.autoShedCritical == true)
+                    ? .destructive
+                    : nil
+            ) {
                 Task {
                     await store.applyPolicyProfile(pendingProfile)
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(pendingProfile == "interactive"
-                ? "Interactive mode enables warning-capacity derating for new work only. Existing leases drain and safety floors are unchanged."
-                : "Apply this mode's admission and scheduling policy? Existing leases continue running.")
+            Text(profileConfirmMessage)
+        }
+    }
+
+    private var storagePolicyCaption: String {
+        guard let policy = store.storagePolicy else {
+            return "Storage policy not loaded yet. Open this pane to refresh, or use Storage → Disk reclaim."
+        }
+        return policy.enforceAdmission
+            ? "Storage admission enforcement is on. --auto-safe apply is allowed after confirmation."
+            : "Storage admission enforcement is off. Enable it before Begin safe reclaim can mutate."
+    }
+
+    private var profileConfirmMessage: String {
+        switch pendingProfile {
+        case "interactive":
+            return "Interactive mode enables warning-capacity derating for new work only. Existing leases drain and safety floors are unchanged."
+        case "multi-agent-soft":
+            return "Observe-only with earlier soft-launch warnings for parallel agents. This turns off launch blocking and auto-shed. Existing leases keep running."
+        default:
+            return "Apply this mode's admission and scheduling policy? Existing leases continue running."
         }
     }
 

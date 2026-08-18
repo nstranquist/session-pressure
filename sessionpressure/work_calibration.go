@@ -134,6 +134,16 @@ func BuildWorkCalibrationReport(events []WorkEvent, since, generatedAt time.Time
 	return report
 }
 
+// SuppressIfAlreadyApplied clears the advisory suggestion when the live policy
+// already has multi-agent-soft effects. Suggestion remains read-only.
+func (r *WorkCalibrationReport) SuppressIfAlreadyApplied(policy Policy) {
+	if r == nil || !MatchesMultiAgentSoft(policy) {
+		return
+	}
+	r.SuggestedPolicyProfile = ""
+	r.SuggestedPolicyProfileReason = ""
+}
+
 func share(part, total int) float64 {
 	if total <= 0 {
 		return 0

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nstranquist/session-pressure/sessionpressure"
 	"github.com/nstranquist/session-pressure/pkg/processtree"
+	"github.com/nstranquist/session-pressure/sessionpressure"
 )
 
 const (

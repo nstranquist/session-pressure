@@ -89,3 +89,30 @@ func TestBuildWorkCalibrationReportSuggestsMultiAgentSoft(t *testing.T) {
 		t.Fatal("expected closed reason code")
 	}
 }
+
+func TestWorkCalibrationReportSuppressesAlreadyAppliedSuggestion(t *testing.T) {
+	now := time.Date(2026, 7, 20, 18, 0, 0, 0, time.UTC)
+	since := now.Add(-24 * time.Hour)
+	events := make([]WorkEvent, 0, 21)
+	for i := 0; i < 20; i++ {
+		events = append(events, WorkEvent{
+			OperationID: fmt.Sprintf("%032x", i+1),
+			Event:       WorkEventCancelled,
+			Class:       WorkClassTest,
+			Outcome:     "user_abort",
+			Timestamp:   now,
+		})
+	}
+	report := BuildWorkCalibrationReport(events, since, now)
+	if report.SuggestedPolicyProfile == "" {
+		t.Fatal("expected suggestion before suppress")
+	}
+	applied, err := ApplyPolicyProfile(DefaultPolicy(16*1024), PolicyProfileMultiAgentSoft, ApplyProfileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.SuppressIfAlreadyApplied(applied)
+	if report.SuggestedPolicyProfile != "" || report.SuggestedPolicyProfileReason != "" {
+		t.Fatalf("applied policy must hide suggestion: %+v", report)
+	}
+}

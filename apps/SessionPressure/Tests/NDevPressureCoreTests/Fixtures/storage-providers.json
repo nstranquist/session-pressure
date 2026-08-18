@@ -1,0 +1,72 @@
+{
+  "ok": true,
+  "action": "storage.providers",
+  "storage": {
+    "available": true,
+    "volume_path": "/System/Volumes/Data",
+    "source": "statfs",
+    "total_bytes": 994662584320,
+    "free_bytes": 4700868608,
+    "available_bytes": 4700868608,
+    "free_percent": 0.47,
+    "level": "critical",
+    "reasons": ["storage available 4.4 GiB is critical"]
+  },
+  "storage_policy": {
+    "enabled": true,
+    "enforce_admission": false,
+    "target_free_bytes": 26843545600
+  },
+  "providers": [
+    {
+      "id": "browser-dead-profiles",
+      "classification": "auto_safe",
+      "summary": "Dead PageSkein profiles older than the lifecycle floor",
+      "present": true,
+      "estimated_bytes": 0,
+      "estimate_kind": "exact_gc",
+      "mutation_supported": false,
+      "active_owner": false,
+      "blocked_reason": "pageskein reclaim is not available in the open extract"
+    },
+    {
+      "id": "pnpm-store",
+      "classification": "auto_safe",
+      "summary": "Canonical pnpm content-addressed store prune",
+      "path": "/Users/nico/Library/pnpm/store",
+      "present": true,
+      "estimated_bytes": 2147483648,
+      "estimate_kind": "upper_bound",
+      "mutation_supported": false,
+      "active_owner": true,
+      "blocked_reason": "a pnpm process is active"
+    },
+    {
+      "id": "user-trash",
+      "classification": "operator",
+      "summary": "Empty only the user Trash directory",
+      "present": true,
+      "estimated_bytes": 1048576,
+      "mutation_supported": true,
+      "active_owner": false
+    },
+    {
+      "id": "go-build-cache",
+      "classification": "operator",
+      "summary": "Explicit operator reset of the rebuildable Go build cache; excluded from --auto-safe",
+      "present": true,
+      "estimated_bytes": 8589934592,
+      "mutation_supported": false,
+      "active_owner": true,
+      "blocked_reason": "an active Go build owns this cache"
+    },
+    {
+      "id": "go-module-cache",
+      "classification": "report_only",
+      "summary": "Inventory only",
+      "present": true,
+      "estimated_bytes": 0,
+      "mutation_supported": false
+    }
+  ]
+}

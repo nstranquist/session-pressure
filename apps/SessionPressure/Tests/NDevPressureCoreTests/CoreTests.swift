@@ -53,6 +53,12 @@ struct CoreTests {
             "wrapper_interrupt_operations": 3,
             "suggested_policy_profile": "multi-agent-soft",
             "suggested_policy_profile_reason": "high_cancel_rate",
+            "review_signals": {
+              "cancelled_operations": 8,
+              "wrapper_interrupt_operations": 3,
+              "long_wait_operations": 10,
+              "reservation_deferrals": 12
+            },
             "interrupt_projection": {
               "schema_version": 1,
               "wrapper_interrupt_operations": 3,
@@ -65,7 +71,37 @@ struct CoreTests {
         let env = try PressureJSON.decode(WorkReportEnvelope.self, from: Data(withCount.utf8))
         #expect(env.calibration?.interruptCount == 3)
         #expect(env.calibration?.suggestedPolicyProfile == "multi-agent-soft")
+        #expect(env.calibration?.reviewSignals?.longWaitOperations == 10)
         #expect(env.calibration?.interruptProjection?.wrapperInterruptOperations == 3)
+
+        var livePolicy = PressurePolicy(enabled: true, enforceAdmission: true, autoShedCritical: true)
+        livePolicy.profile = "balanced"
+        let suggestion = PolicySuggestionFactory.current(from: env.calibration, policy: livePolicy)
+        #expect(suggestion?.profile == "multi-agent-soft")
+        #expect(suggestion?.currentTitle == "Balanced")
+        #expect(suggestion?.currentFlags.contains("launch blocking on") == true)
+        #expect(suggestion?.currentFlags.contains("auto-shed on") == true)
+        #expect(suggestion?.weakensProtection == true)
+        #expect(suggestion?.agentPaste.contains("Current profile: Balanced") == true)
+        #expect(suggestion?.agentPaste.contains("Copy") == false)
+        #expect(suggestion?.agentPaste.contains("ndev session pressure policy profile apply multi-agent-soft --dry-run") == true)
+        #expect(suggestion?.explanation.contains("10 long waits") == true)
+        #expect(suggestion?.explanation.contains("Current work style") == false)
+
+        var alreadySoft = PressurePolicy(enabled: true, enforceAdmission: false, autoShedCritical: false)
+        alreadySoft.profile = "multi-agent-soft"
+        let restore = PolicySuggestionFactory.current(from: env.calibration, policy: alreadySoft)
+        #expect(restore?.kind == .restoreDefault)
+        #expect(restore?.profile == "balanced")
+        #expect(restore?.currentTitle == "Multi Agent Soft")
+        #expect(restore?.headline == "Default Balanced")
+        #expect(restore?.showsApplyWhenCollapsed == true)
+        #expect(restore?.weakensProtection == false)
+
+        var alreadyBalanced = PressurePolicy(enabled: true, enforceAdmission: true, autoShedCritical: true)
+        alreadyBalanced.profile = "balanced"
+        let noCal = WorkCalibration(schemaVersion: 1, operationCount: 2)
+        #expect(PolicySuggestionFactory.current(from: noCal, policy: alreadyBalanced) == nil)
 
         let absent = """
         {"ok":true,"action":"work.report","calibration":{"schema_version":1,"operation_count":2}}
@@ -664,6 +700,70 @@ struct CoreTests {
         #expect(result.truncated == true)
     }
 
+    @Test("missing-binary copy names session-pressure, not only ndev")
+    func missingBinaryCopyNamesProductCLI() {
+        let message = NDevPressureClientError.binaryNotFound.errorDescription ?? ""
+        #expect(message.contains("session-pressure"))
+        #expect(!message.hasPrefix("ndev not found"))
+    }
+
+    @Test("resolveBinary uses SESSION_PRESSURE_BIN when that path is executable")
+    func resolveBinaryUsesSessionPressureBin() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bin = dir.appendingPathComponent("session-pressure")
+        #expect(FileManager.default.createFile(atPath: bin.path, contents: Data("#!/bin/sh\n".utf8), attributes: [.posixPermissions: 0o755]))
+        #expect(NDevPressureClient.resolveBinary(environment: ["SESSION_PRESSURE_BIN": bin.path]) == bin.path)
+    }
+
+    @Test("extract binary lookup prefers public session-pressure over nicos-tools paths")
+    func extractBinaryLookupPrefersPublicCLI() {
+        let home = "/Users/demo"
+        let ordered = NDevPressureClient.binaryCandidates(
+            home: home,
+            environment: [
+                "SESSION_PRESSURE_BIN": "/opt/session-pressure",
+                "NDEV_PRESSURE_BIN": "/opt/ndev-pressure",
+            ]
+        )
+        let publicCLI = "\(home)/tools/session-pressure/bin/session-pressure"
+        let localPublic = "\(home)/.local/bin/session-pressure"
+        #expect(ordered.first == "/opt/session-pressure")
+        #expect(ordered.contains(localPublic))
+        #expect(ordered.contains(publicCLI))
+        if let publicIndex = ordered.firstIndex(of: publicCLI),
+           let nicosIndex = ordered.firstIndex(where: { $0.contains("nicos-tools") }) {
+            #expect(publicIndex < nicosIndex)
+        } else {
+            #expect(!ordered.contains(where: { $0.contains("nicos-tools") }))
+        }
+        #expect(ordered.firstIndex(of: localPublic)! < ordered.firstIndex(of: "\(home)/.local/bin/ndev")!)
+    }
+
+    @Test("sanitized environment forwards SessionPressure home and bin")
+    func sanitizedEnvironmentForwardsSessionPressureOverrides() {
+        let sanitized = NDevPressureClient.sanitizedEnvironment([
+            "HOME": "/tmp/home",
+            "SESSION_PRESSURE_HOME": "/tmp/sp-home",
+            "SESSION_PRESSURE_BIN": "/tmp/session-pressure",
+            "NDEV_SESSION_PRESSURE_HOME": "/tmp/ndev-sp-home",
+            "SECRET": "nope",
+        ])
+        #expect(sanitized["SESSION_PRESSURE_HOME"] == "/tmp/sp-home")
+        #expect(sanitized["SESSION_PRESSURE_BIN"] == "/tmp/session-pressure")
+        #expect(sanitized["NDEV_SESSION_PRESSURE_HOME"] == "/tmp/ndev-sp-home")
+        #expect(sanitized["SECRET"] == nil)
+    }
+
+    @Test("desktop argv pairing is --json session pressure <leaf> for both binaries")
+    func desktopProductCLIArgvPairing() {
+        #expect(NDevPressureClient.pairedCLIArguments(["--json", "session", "pressure", "doctor"]) == ["--json", "session", "pressure", "doctor"])
+        #expect(NDevPressureClient.pairedCLIArguments(["--json", "doctor"]) == ["--json", "session", "pressure", "doctor"])
+        #expect(NDevPressureClient.pairedCLIArguments(["--json", "session", "pressure", "status", "--live"]) == ["--json", "session", "pressure", "status", "--live"])
+        #expect(NDevPressureClient.pairedCLIArguments(["status", "--full"]) == ["--json", "session", "pressure", "status", "--full"])
+    }
+
     @Test("resolve binary prefers existing path")
     func resolveBinary() {
         // At least one of the standard candidates usually exists in this environment.
@@ -695,6 +795,10 @@ struct CoreTests {
         #expect(PressureHelp.memoryMomentum.contains("never raises pressure"))
         #expect(PressureHelp.hostConsumers.contains("no PID"))
         #expect(PressureHelp.section("Disk Writes").contains("SSD"))
+        #expect(PressureHelp.section("Storage").contains("⌘4"))
+        #expect(PressureHelp.section("Idle Cleanup").contains("Idle trees"))
+        #expect(PressureHelp.storageBeginSafeReclaim.contains("--auto-safe"))
+        #expect(PressureHelp.keyboardRemap.contains("App Shortcuts"))
         #expect(PressureHelp.diskWriterAttribution.contains("all mounted volumes"))
     }
 

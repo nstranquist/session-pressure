@@ -29,8 +29,21 @@ struct MetricCard: View {
     var accent: Color = .secondary
     var progress: Double? = nil // 0...1
     var help: String? = nil
+    var action: (() -> Void)? = nil
 
     var body: some View {
+        Group {
+            if let action {
+                Button(action: action) { card }
+                    .buttonStyle(.plain)
+            } else {
+                card
+            }
+        }
+        .help(help ?? PressureHelp.metricTitle(title))
+    }
+
+    private var card: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title.uppercased())
                 .font(.caption2.weight(.semibold))
@@ -69,7 +82,7 @@ struct MetricCard: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(PressureTheme.hairline, lineWidth: 1)
         )
-        .help(help ?? PressureHelp.metricTitle(title))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -138,6 +151,131 @@ struct StatusChip: View {
         .padding(.vertical, 6)
         .background(Color.primary.opacity(0.05), in: Capsule())
         .help(help ?? "\(label): \(ok ? "ok" : "attention")\(detail.map { " (\($0))" } ?? "")")
+    }
+}
+
+// MARK: - Work-style suggestion
+
+/// Collapsed by default: current vs suggested stay visible; details sit behind the chevron.
+struct WorkStyleSuggestionCard: View {
+    @EnvironmentObject private var store: PressureStore
+    let suggestion: PolicySuggestion
+    @Binding var expanded: Bool
+    var onApply: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() }
+                } label: {
+                    HStack(alignment: .center, spacing: 10) {
+                        Image(systemName: "lightbulb")
+                            .foregroundStyle(.secondary)
+                            .help(PressureHelp.policySuggestion)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Work style")
+                                .font(.headline)
+                            HStack(spacing: 8) {
+                                Text("Current \(suggestion.currentTitle)")
+                                Image(systemName: "arrow.right")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                                Text(suggestion.headline)
+                                    .foregroundStyle(suggestion.kind == .restoreDefault ? PressureTheme.levelColor(.normal) : .orange)
+                            }
+                            .font(.callout)
+                            if !suggestion.currentFlags.isEmpty {
+                                Text(suggestion.currentFlags)
+                                    .font(PressureTheme.monoCaption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(expanded ? 180 : 0))
+                            .accessibilityHidden(true)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(expanded ? "Hide suggestion details" : "Show why this style is suggested")
+                .accessibilityLabel("Work style suggestion")
+                .accessibilityValue("Current \(suggestion.currentTitle), \(suggestion.headline)")
+                .accessibilityHint(expanded ? "Collapse details" : "Expand details")
+
+                if suggestion.showsApplyWhenCollapsed {
+                    Button(suggestion.kind == .restoreDefault ? "Apply Balanced" : "Apply \(suggestion.title)") {
+                        onApply()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(store.busyAction != nil)
+                    .help("Runs \(suggestion.applyCommand) after a confirmation. Never silent.")
+                }
+            }
+
+            if expanded {
+                CopyableOperatorText(
+                    text: [suggestion.explanation, suggestion.tradeoff].joined(separator: "\n\n"),
+                    agentPaste: suggestion.agentPaste,
+                    resolveTitle: suggestion.showsApplyWhenCollapsed ? nil : (suggestion.weakensProtection ? "Apply…" : "Apply \(suggestion.title)"),
+                    resolveHelp: "Runs \(suggestion.applyCommand) after a confirmation. Never silent.",
+                    destructive: suggestion.weakensProtection,
+                    onResolve: suggestion.showsApplyWhenCollapsed ? nil : onApply
+                )
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PressureTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(PressureTheme.hairline, lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - Copyable operator text
+
+/// Selectable operator copy with an explicit clipboard action, and an optional
+/// confirmed resolve button. Used for advisory suggestions and doctor fixes.
+struct CopyableOperatorText: View {
+    @EnvironmentObject private var store: PressureStore
+    let text: String
+    var agentPaste: String? = nil
+    var resolveTitle: String? = nil
+    var resolveHelp: String? = nil
+    var resolveDisabled: Bool = false
+    var destructive: Bool = false
+    var onResolve: (() -> Void)? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(text)
+                .font(.callout)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Button {
+                    store.copyToPasteboard(agentPaste ?? text)
+                } label: {
+                    Label("Copy for agent", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help(PressureHelp.copyForAgent)
+                if let resolveTitle, let onResolve {
+                    Button(resolveTitle, role: destructive ? .destructive : nil, action: onResolve)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(resolveDisabled || store.busyAction != nil)
+                        .help(resolveHelp ?? "")
+                }
+            }
+        }
     }
 }
 

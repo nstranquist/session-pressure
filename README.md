@@ -15,6 +15,8 @@ This is the extracted open-core product. `ndev session pressure` in nicos-tools 
 ## Install (from source)
 
 ```bash
+git clone https://github.com/nstranquist/session-pressure.git
+cd session-pressure
 make build
 ./bin/session-pressure --json doctor
 ```
@@ -28,4 +30,4 @@ See [OPEN-CORE.md](OPEN-CORE.md). Factory launch hooks, Toolguard, and nicos-onl
 
 ## License
 
-Apache-2.0. Public GitHub create/push is a human step and is not done by this tree's extract.
+Apache-2.0.

@@ -159,9 +159,9 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 	case "history":
 		return cmdSessionPressureWorkHistory(g, runtime.dir, args)
 	case "stats":
-		return cmdSessionPressureWorkStats(g, runtime.dir, args)
+		return cmdSessionPressureWorkStats(g, runtime.dir, runtime.policy, args)
 	case "report":
-		return cmdSessionPressureWorkReport(g, runtime.dir, args)
+		return cmdSessionPressureWorkReport(g, runtime.dir, runtime.policy, args)
 	case "evaluate":
 		if len(args) != 0 {
 			return sessionPressureError("work evaluate accepts no arguments", 2)
@@ -385,7 +385,7 @@ func cmdSessionPressureWorkHistory(g *Flags, dir string, args []string) int {
 	return 0
 }
 
-func cmdSessionPressureWorkStats(g *Flags, dir string, args []string) int {
+func cmdSessionPressureWorkStats(g *Flags, dir string, policy sessionpressure.Policy, args []string) int {
 	options, err := parseWorkSummaryArgs(args, "work stats")
 	if err != nil {
 		return sessionPressureError(err.Error(), 2)
@@ -397,6 +397,7 @@ func cmdSessionPressureWorkStats(g *Flags, dir string, args []string) int {
 	stats := sessionpressure.SummarizeWorkEvents(events, options.since, time.Now())
 	// One source of truth: embed calibration ratios on stats when JSON.
 	calibration := sessionpressure.BuildWorkCalibrationReport(events, options.since, time.Now().UTC())
+	calibration.SuppressIfAlreadyApplied(policy)
 	payload := map[string]any{"ok": true, "action": "work.stats", "output_scope": "compact", "work_stats": compactPressureWorkStats(stats)}
 	if options.full {
 		payload["output_scope"] = "full"
@@ -416,7 +417,7 @@ func cmdSessionPressureWorkStats(g *Flags, dir string, args []string) int {
 	return 0
 }
 
-func cmdSessionPressureWorkReport(g *Flags, dir string, args []string) int {
+func cmdSessionPressureWorkReport(g *Flags, dir string, policy sessionpressure.Policy, args []string) int {
 	options, err := parseWorkSummaryArgs(args, "work report")
 	if err != nil {
 		return sessionPressureError(err.Error(), 2)
@@ -426,6 +427,7 @@ func cmdSessionPressureWorkReport(g *Flags, dir string, args []string) int {
 		return sessionPressureError(err.Error(), 1)
 	}
 	calibration := sessionpressure.BuildWorkCalibrationReport(events, options.since, time.Now().UTC())
+	calibration.SuppressIfAlreadyApplied(policy)
 	payload := map[string]any{"ok": true, "action": "work.report", "output_scope": "compact", "calibration": compactPressureWorkCalibration(calibration)}
 	if options.full {
 		payload["output_scope"] = "full"

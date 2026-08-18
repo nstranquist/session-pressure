@@ -22,6 +22,9 @@ type SuggestPolicyProfileInput struct {
 	// QueuePressureSignal is true when soft launch would-block or queue depth
 	// evidence indicates multi-agent soft pressure (caller-derived).
 	QueuePressureSignal bool
+	// AlreadyApplied suppresses the hint when the live policy already matches
+	// multi-agent-soft (including the legacy observe + soft-knob persist).
+	AlreadyApplied bool
 }
 
 // SuggestPolicyProfileResult is advisory only — never mutates policy.
@@ -36,6 +39,9 @@ type SuggestPolicyProfileResult struct {
 // calibration volume and multi-agent signals meet frozen thresholds.
 // MUST NOT apply policy; MUST NOT invent suggestions below volume.
 func SuggestPolicyProfile(in SuggestPolicyProfileInput) SuggestPolicyProfileResult {
+	if in.AlreadyApplied {
+		return SuggestPolicyProfileResult{}
+	}
 	if in.OperationCount < SuggestPolicyProfileMinimumOps {
 		return SuggestPolicyProfileResult{}
 	}
