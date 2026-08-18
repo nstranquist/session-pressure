@@ -191,9 +191,28 @@ func defaultWorkLimits(logicalCPUCount int) WorkLimits {
 	capacity := max(2, logicalCPUCount-2)
 	expressTest := min(defaultExpressTestWeight, capacity)
 	expressBuild := min(defaultExpressBuildWeight, capacity)
+	testWeight := max(1, (capacity+2)/3)
+	buildWeight := max(1, (capacity+2)/2)
+	// Validate() requires express weights to be strictly lighter than the
+	// matching full class. Two-core CI hosts used to land at 1/1 and 2/2.
+	if expressTest >= testWeight {
+		testWeight = expressTest + 1
+	}
+	if expressBuild >= buildWeight {
+		buildWeight = expressBuild + 1
+	}
+	if testWeight > capacity {
+		capacity = testWeight
+	}
+	if buildWeight > capacity {
+		capacity = buildWeight
+	}
 	// Non-exclusive benchmarks leave residual capacity that express work can
 	// still fit. Exclusive clean-host mode is the capacity-sized class.
 	benchmark := max(1, capacity-expressBuild)
+	if benchmark+expressTest > capacity {
+		capacity = benchmark + expressTest
+	}
 	return WorkLimits{
 		SchedulingPolicy:       WorkSchedulingPolicy,
 		Capacity:               capacity,
@@ -202,10 +221,10 @@ func defaultWorkLimits(logicalCPUCount int) WorkLimits {
 		// Focused/package tests usually compile less than a clean application
 		// build. They can share the host with a browser while still reserving
 		// meaningful headroom for the OS and resident agent trees.
-		TestWeight: max(1, (capacity+2)/3),
+		TestWeight: testWeight,
 		// A strict majority keeps two compiler waves from overlapping while
 		// allowing one focused test to share the target 8-unit host capacity.
-		BuildWeight:        max(1, (capacity+2)/2),
+		BuildWeight:        buildWeight,
 		ExpressTestWeight:  expressTest,
 		ExpressBuildWeight: expressBuild,
 		EmulatorWeight:     max(1, (capacity*5+7)/8),
