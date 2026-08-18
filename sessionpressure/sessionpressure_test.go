@@ -683,6 +683,13 @@ func TestDefaultPolicyIsObserveOnlyAndValid(t *testing.T) {
 	if policy.WorkLimits != expectedPolicyLimits {
 		t.Fatalf("unexpected host work limits: %+v", policy.WorkLimits)
 	}
+	for _, cpus := range []int{1, 2, 3, 4, 8, 10} {
+		policy := DefaultPolicy(16 * 1024)
+		policy.WorkLimits = defaultWorkLimits(cpus)
+		if err := policy.Validate(); err != nil {
+			t.Fatalf("default work limits must validate on %d logical CPUs: %v (%+v)", cpus, err, policy.WorkLimits)
+		}
+	}
 	if got := defaultWorkLimits(10); got != (WorkLimits{
 		SchedulingPolicy: WorkSchedulingPolicy,
 		Capacity:         8, WarningCapacity: 4, WarningCapacityEnabled: true, TestWeight: 3, BuildWeight: 5, ExpressTestWeight: 1, ExpressBuildWeight: 2,
