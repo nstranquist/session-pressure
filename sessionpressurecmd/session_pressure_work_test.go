@@ -7,6 +7,7 @@ import (
 	"io"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -183,8 +184,9 @@ func TestParsePressureWorkRunArgsRejectsAmbiguity(t *testing.T) {
 func TestPressureWorkEnvironmentBoundsGoParallelismAndPreservesOverride(t *testing.T) {
 	limits := sessionpressure.DefaultPolicy(16 * 1024).WorkLimits
 	environment, err := pressureWorkEnvironment([]string{"PATH=/usr/bin"}, limits, sessionpressure.WorkClassBuild)
-	if err != nil || !slices.Contains(environment, "GOMAXPROCS=5") {
-		t.Fatalf("bounded environment=%v err=%v", environment, err)
+	wantProcs := "GOMAXPROCS=" + strconv.Itoa(limits.BuildWeight)
+	if err != nil || !slices.Contains(environment, wantProcs) {
+		t.Fatalf("bounded environment=%v want %s err=%v", environment, wantProcs, err)
 	}
 	overridden, err := pressureWorkEnvironment([]string{"GOMAXPROCS=2", "PATH=/usr/bin"}, limits, sessionpressure.WorkClassBuild)
 	if err != nil || !slices.Equal(overridden, []string{"GOMAXPROCS=2", "PATH=/usr/bin"}) {
