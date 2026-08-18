@@ -1,7 +1,7 @@
 GO ?= go
 PREFIX ?= $(CURDIR)/bin
 
-.PHONY: test vet fmt build desktop-test publish-ready secret-scan
+.PHONY: test vet fmt build desktop-test publish-ready secret-scan init
 
 fmt:
 	$(GO) fmt ./...
@@ -23,6 +23,9 @@ build:
 
 secret-scan:
 	@if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --source . --no-git --redact; else echo "gitleaks not installed; skipped"; fi
+
+init: build
+	@echo "init: built ./bin/session-pressure. Next: ./bin/session-pressure --json doctor"
 
 publish-ready: fmt vet test desktop-test build secret-scan
 	@echo "publish-ready: ok"

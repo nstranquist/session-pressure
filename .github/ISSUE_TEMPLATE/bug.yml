@@ -1,0 +1,26 @@
+name: Bug
+description: Report a defect in the public SessionPressure extract
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach live `~/.nicos-dev/session-pressure` files, process dumps, or session identifiers.
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or tag
+    validations:
+      required: true
