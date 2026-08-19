@@ -32,6 +32,12 @@ or notarized paid layer stay proprietary.
 admit and coordinate local agent work is open. Factory launch hooks, Toolguard,
 and nicos-only reclaim stay closed.
 
+**Public Go packages:** `sessionpressure`, `sessionpressurecmd`,
+`sessionpressurecontrol`, `sessionpressurecleanup`, and `pkg/`. Leftover
+`internal/atomicfile`, `internal/jsonl`, `internal/telemetry`, and
+`internal/orb` are factory copies that shipped in the extract. They are not
+the product contract. Do not import them from another module.
+
 Product names in this tree: `session-pressure` (CLI), `session-pressure-helper`
 (LaunchAgent), `session-pressure-api` (local control plane). The nicos-tools
 wrapper remains `ndev session pressure` and execs `ndev-pressure`.
