@@ -78,6 +78,20 @@ Do not copy a live `~/.nicos-dev/session-pressure` tree into issues, fixtures, o
 
 The public tree owns sampling, policy, the work coordinator, identity, the SSD write watchdog, doctor, helper, CLI, local API, and the thin Swift client.
 
+## Public packages
+
+Import and document these as the product:
+
+| Package | Role |
+|---|---|
+| `sessionpressure` | Sampling, policy, admission queue |
+| `sessionpressurecmd` | CLI |
+| `sessionpressurecontrol` | Local control API |
+| `sessionpressurecleanup` | Cleanup helpers |
+| `pkg/` | Portable helpers other packages in this module may use |
+
+`internal/atomicfile`, `internal/jsonl`, `internal/telemetry`, and `internal/orb` are leftover copies from the factory extract. They are not the public API. Do not import them from another module. A later extract pass may hide or delete them; see [OPEN-CORE.md](OPEN-CORE.md).
+
 nicos-tools keeps Toolguard, agent-launch hooks, and nicos-only reclaim providers. See [OPEN-CORE.md](OPEN-CORE.md) and [docs/architecture.md](docs/architecture.md).
 
 ## Examples
