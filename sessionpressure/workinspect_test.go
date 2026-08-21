@@ -121,6 +121,33 @@ func TestHandoffWorkWritesOperatorBrief(t *testing.T) {
 	}
 }
 
+func TestInspectWorkJoinsScheduleOriginFromLeaseEnviron(t *testing.T) {
+	t.Setenv("NDEV_SCHEDULE_ID", "docs-corpus-local-refresh")
+	t.Setenv("NDEV_SCHEDULE_RUN_ID", "9")
+	origLookup := lookupScheduleName
+	t.Cleanup(func() { lookupScheduleName = origLookup })
+	lookupScheduleName = func(id, runID string) (string, string) {
+		return "Local Documentation Corpus Refresh", "building standalone docs-puller"
+	}
+	dir := t.TempDir()
+	coordinator := NewWorkCoordinator(dir, DefaultPolicy(16<<10).WorkLimits)
+	lease, _, err := coordinator.Acquire(context.Background(), WorkClassExpressTest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lease.Release(context.Background()) }()
+	report, err := InspectWork(context.Background(), coordinator, lease.Record().OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Origin.Kind != "schedule" || report.Origin.ScheduleID != "docs-corpus-local-refresh" {
+		t.Fatalf("origin=%#v", report.Origin)
+	}
+	if report.Origin.ScheduleName != "Local Documentation Corpus Refresh" {
+		t.Fatalf("name=%q", report.Origin.ScheduleName)
+	}
+}
+
 func TestInspectWorkJoinsScheduleOriginFromEnv(t *testing.T) {
 	orig := readProcessEnv
 	t.Cleanup(func() { readProcessEnv = orig })

@@ -152,6 +152,10 @@ type WorkLeaseRecord struct {
 	SupervisorIdentity string    `json:"supervisor_identity"`
 	QueuedAt           time.Time `json:"queued_at"`
 	StartedAt          time.Time `json:"started_at"`
+	OriginKind         string    `json:"origin_kind,omitempty"`
+	ScheduleID         string    `json:"schedule_id,omitempty"`
+	ScheduleRunID      string    `json:"schedule_run_id,omitempty"`
+	AgentKind          string    `json:"agent_kind,omitempty"`
 }
 
 // WorkLeaseStatus keeps the established public v1 wire contract. The private
@@ -179,6 +183,10 @@ type WorkWaiterRecord struct {
 	OwnerIdentity string    `json:"owner_identity"`
 	QueuedAt      time.Time `json:"queued_at"`
 	HeartbeatAt   time.Time `json:"heartbeat_at"`
+	OriginKind    string    `json:"origin_kind,omitempty"`
+	ScheduleID    string    `json:"schedule_id,omitempty"`
+	ScheduleRunID string    `json:"schedule_run_id,omitempty"`
+	AgentKind     string    `json:"agent_kind,omitempty"`
 	BypassCount   int       `json:"bypass_count,omitempty"`
 	// LastBypassedAt is the retained schema-3 wire name. It records the first
 	// bypass and is intentionally set once so the age reservation cannot slide.
@@ -1554,10 +1562,12 @@ func (coordinator *WorkCoordinator) newLeaseRecord(class WorkClass, operationID 
 		return WorkLeaseRecord{}, err
 	}
 	now := coordinator.now()
+	stamp := originStampFromEnviron(os.Environ())
 	return WorkLeaseRecord{
 		ID: leaseID, OperationID: operationID, Class: class, Weight: weight,
 		PID: coordinator.PID, OwnerIdentity: ownerIdentity,
 		SupervisorPID: coordinator.PID, SupervisorIdentity: ownerIdentity, QueuedAt: now, StartedAt: now,
+		OriginKind: stamp.Kind, ScheduleID: stamp.ScheduleID, ScheduleRunID: stamp.ScheduleRunID, AgentKind: stamp.AgentKind,
 	}, nil
 }
 
@@ -1632,9 +1642,11 @@ func (coordinator *WorkCoordinator) RegisterWaiter(ctx context.Context, class Wo
 		return nil, WorkStatus{}, err
 	}
 	now := coordinator.now()
+	stamp := originStampFromEnviron(os.Environ())
 	record := WorkWaiterRecord{
 		OperationID: operationID, Class: class, Weight: weight, PID: coordinator.PID,
 		OwnerIdentity: ownerIdentity, QueuedAt: now, HeartbeatAt: now,
+		OriginKind: stamp.Kind, ScheduleID: stamp.ScheduleID, ScheduleRunID: stamp.ScheduleRunID, AgentKind: stamp.AgentKind,
 	}
 	status, err := coordinator.withState(ctx, func(state *workState) error {
 		for _, lease := range state.Leases {

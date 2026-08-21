@@ -174,7 +174,7 @@ func InspectWork(ctx context.Context, coordinator *WorkCoordinator, operationID 
 		"NDEV_SCHEDULE_ID", "NDEV_SCHEDULE_RUN_ID", "NDEV_SCHEDULE_TRIGGER",
 		"CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "GROK_SESSION_ID", "KIMI_SESSION_ID",
 	})
-	report.Origin = classifyInspectOrigin(env)
+	report.Origin = mergeInspectOrigin(lookupOriginStamp(coordinator, operationID), env)
 	report.Calibration = inspectCalibration(coordinator.Dir, class, ageMS)
 	report.StallClass = classifyStall(proc, report.Calibration)
 	report.Summary = inspectSummary(report)
@@ -290,13 +290,82 @@ func inspectActions(report WorkInspectReport) []WorkInspectAction {
 	return []WorkInspectAction{cancel, reschedule, handoff}
 }
 
+type workOriginStamp struct {
+	Kind          string
+	ScheduleID    string
+	ScheduleRunID string
+	AgentKind     string
+}
+
+func originStampFromEnviron(environ []string) workOriginStamp {
+	env := map[string]string{}
+	for _, pair := range environ {
+		key, value, ok := strings.Cut(pair, "=")
+		if ok {
+			env[key] = value
+		}
+	}
+	origin := classifyInspectOrigin(env)
+	return workOriginStamp{Kind: origin.Kind, ScheduleID: origin.ScheduleID, ScheduleRunID: origin.ScheduleRunID, AgentKind: origin.AgentKind}
+}
+
+func lookupOriginStamp(coordinator *WorkCoordinator, operationID string) workOriginStamp {
+	if coordinator == nil {
+		return workOriginStamp{}
+	}
+	var stamp workOriginStamp
+	_, _ = coordinator.withState(context.Background(), func(state *workState) error {
+		for _, lease := range state.Leases {
+			if lease.OperationID == operationID {
+				stamp = workOriginStamp{Kind: lease.OriginKind, ScheduleID: lease.ScheduleID, ScheduleRunID: lease.ScheduleRunID, AgentKind: lease.AgentKind}
+				return nil
+			}
+		}
+		for _, waiter := range state.Waiters {
+			if waiter.OperationID == operationID {
+				stamp = workOriginStamp{Kind: waiter.OriginKind, ScheduleID: waiter.ScheduleID, ScheduleRunID: waiter.ScheduleRunID, AgentKind: waiter.AgentKind}
+				return nil
+			}
+		}
+		return nil
+	})
+	return stamp
+}
+
+func mergeInspectOrigin(stamp workOriginStamp, env map[string]string) WorkInspectOrigin {
+	origin := classifyInspectOrigin(env)
+	if stamp.ScheduleID != "" && origin.ScheduleID == "" {
+		origin.Kind = stamp.Kind
+		if origin.Kind == "" {
+			origin.Kind = "schedule"
+		}
+		origin.ScheduleID = stamp.ScheduleID
+		origin.ScheduleRunID = stamp.ScheduleRunID
+	}
+	if stamp.AgentKind != "" && origin.AgentKind == "" {
+		origin.AgentKind = stamp.AgentKind
+		if origin.Kind == "ad_hoc" {
+			origin.Kind = "agent"
+		}
+	}
+	if origin.ScheduleID != "" {
+		name, snippet := lookupScheduleName(origin.ScheduleID, origin.ScheduleRunID)
+		if origin.ScheduleName == "" {
+			origin.ScheduleName = name
+		}
+		if origin.ScheduleSnippet == "" {
+			origin.ScheduleSnippet = snippet
+		}
+	}
+	return origin
+}
+
 func classifyInspectOrigin(env map[string]string) WorkInspectOrigin {
 	origin := WorkInspectOrigin{Kind: "ad_hoc"}
 	if id := strings.TrimSpace(env["NDEV_SCHEDULE_ID"]); id != "" {
 		origin.Kind = "schedule"
 		origin.ScheduleID = id
 		origin.ScheduleRunID = strings.TrimSpace(env["NDEV_SCHEDULE_RUN_ID"])
-		origin.ScheduleName, origin.ScheduleSnippet = lookupScheduleName(id, origin.ScheduleRunID)
 	}
 	switch {
 	case strings.TrimSpace(env["GROK_SESSION_ID"]) != "":
