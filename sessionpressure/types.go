@@ -171,6 +171,7 @@ type CoordinatedWorkSnapshot struct {
 	CPUPercent             float64                     `json:"cpu_percent"`
 	CPUAvailable           bool                        `json:"cpu_available"`
 	ByClass                []CoordinatedWorkClassUsage `json:"by_class"`
+	StatusReadPath         string                      `json:"status_read_path,omitempty"`
 	Error                  string                      `json:"error,omitempty"`
 }
 
@@ -244,6 +245,9 @@ type Snapshot struct {
 	GuardCPUAvgPercent         float64                 `json:"guard_cpu_avg_percent,omitempty"`
 	SampleDurationMS           float64                 `json:"sample_duration_ms"`
 	SamplePhaseMS              map[string]float64      `json:"sample_phase_ms,omitempty"`
+	SamplePhaseAvgMS           map[string]float64      `json:"sample_phase_avg_ms,omitempty"`
+	SamplePhaseP95MS           map[string]float64      `json:"sample_phase_p95_ms,omitempty"`
+	SamplePhaseMaxMS           map[string]float64      `json:"sample_phase_max_ms,omitempty"`
 	SampleDurationAvgMS        float64                 `json:"sample_duration_avg_ms,omitempty"`
 	SampleDurationP95MS        float64                 `json:"sample_duration_p95_ms,omitempty"`
 	SampleDurationMaxMS        float64                 `json:"sample_duration_max_ms,omitempty"`
@@ -656,11 +660,17 @@ func evaluate(snapshot Snapshot, policy Policy, includeCPU bool) Snapshot {
 	if durationMetric > durationLimit {
 		snapshot.GuardBudgetOK = false
 		if useRollingP95 {
-			snapshot.GuardBudgetReasons = append(snapshot.GuardBudgetReasons,
-				fmt.Sprintf("rolling sample p95 %.1f ms > budget %.1f ms", durationMetric, policy.ResourceBudgets.MaxSampleDurationMS))
+			reason := fmt.Sprintf("rolling sample p95 %.1f ms > budget %.1f ms", durationMetric, policy.ResourceBudgets.MaxSampleDurationMS)
+			if phase, phaseDuration := dominantSamplePhase(snapshot.SamplePhaseP95MS); phase != "" {
+				reason += fmt.Sprintf("; dominant phase %s p95 %.1f ms", phase, phaseDuration)
+			}
+			snapshot.GuardBudgetReasons = append(snapshot.GuardBudgetReasons, reason)
 		} else {
-			snapshot.GuardBudgetReasons = append(snapshot.GuardBudgetReasons,
-				fmt.Sprintf("current sample duration %.1f ms > hang budget %.1f ms", durationMetric, durationLimit))
+			reason := fmt.Sprintf("current sample duration %.1f ms > hang budget %.1f ms", durationMetric, durationLimit)
+			if phase, phaseDuration := dominantSamplePhase(snapshot.SamplePhaseMS); phase != "" {
+				reason += fmt.Sprintf("; dominant phase %s %.1f ms", phase, phaseDuration)
+			}
+			snapshot.GuardBudgetReasons = append(snapshot.GuardBudgetReasons, reason)
 		}
 	}
 	if cpuTimeMetric > policy.ResourceBudgets.MaxSampleCPUTimeMS {
@@ -683,6 +693,18 @@ func evaluate(snapshot Snapshot, policy Policy, includeCPU bool) Snapshot {
 			fmt.Sprintf("telemetry projection %d bytes > daily budget %d", telemetryMetric, policy.ResourceBudgets.MaxTelemetryBytesDay))
 	}
 	return snapshot
+}
+
+func dominantSamplePhase(phases map[string]float64) (string, float64) {
+	name := ""
+	duration := 0.0
+	for candidate, value := range phases {
+		if value > duration || (value == duration && value > 0 && (name == "" || candidate < name)) {
+			name = candidate
+			duration = value
+		}
+	}
+	return name, duration
 }
 
 func (snapshot Snapshot) Summary() string {

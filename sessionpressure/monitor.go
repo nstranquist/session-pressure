@@ -177,6 +177,7 @@ type Monitor struct {
 
 type monitorStats struct {
 	durations               []float64
+	phases                  []map[string]float64
 	cpuTimes                []float64
 	dutyCPUTimes            []float64
 	intervals               []float64
@@ -228,6 +229,7 @@ func (stats *monitorStats) add(snapshot Snapshot, sampleIntervalSeconds float64)
 	}
 	if len(stats.durations) < monitorStatsWindow {
 		stats.durations = append(stats.durations, snapshot.SampleDurationMS)
+		stats.phases = append(stats.phases, clonePhaseTimings(snapshot.SamplePhaseMS))
 		stats.cpuTimes = append(stats.cpuTimes, snapshot.SampleCPUTimeMS)
 		stats.dutyCPUTimes = append(stats.dutyCPUTimes, dutyCPUTimeMS)
 		stats.intervals = append(stats.intervals, sampleIntervalSeconds)
@@ -236,6 +238,7 @@ func (stats *monitorStats) add(snapshot Snapshot, sampleIntervalSeconds float64)
 		stats.cpu = append(stats.cpu, snapshot.GuardCPUPercent)
 	} else {
 		stats.durations[stats.next] = snapshot.SampleDurationMS
+		stats.phases[stats.next] = clonePhaseTimings(snapshot.SamplePhaseMS)
 		stats.cpuTimes[stats.next] = snapshot.SampleCPUTimeMS
 		stats.dutyCPUTimes[stats.next] = dutyCPUTimeMS
 		stats.intervals[stats.next] = sampleIntervalSeconds
@@ -245,6 +248,17 @@ func (stats *monitorStats) add(snapshot Snapshot, sampleIntervalSeconds float64)
 		stats.next = (stats.next + 1) % monitorStatsWindow
 	}
 	stats.count++
+}
+
+func clonePhaseTimings(source map[string]float64) map[string]float64 {
+	if len(source) == 0 {
+		return nil
+	}
+	result := make(map[string]float64, len(source))
+	for name, duration := range source {
+		result[name] = duration
+	}
+	return result
 }
 
 func (stats *monitorStats) recordEventBytes(event string, bytes int64) {
@@ -302,6 +316,7 @@ func (stats *monitorStats) apply(snapshot *Snapshot, policy Policy) {
 	}
 	snapshot.SampleDurationP95MS = ordered[p95Index]
 	snapshot.SampleDurationMaxMS = ordered[len(ordered)-1]
+	snapshot.SamplePhaseAvgMS, snapshot.SamplePhaseP95MS, snapshot.SamplePhaseMaxMS = aggregatePhaseTimings(stats.phases)
 	snapshot.SampleCPUTimeAvgMS = sampleCPUTimeTotal / float64(len(stats.cpuTimes))
 	snapshot.SampleCPUTimeP95MS = orderedCPU[p95Index]
 	snapshot.SampleCPUTimeMaxMS = orderedCPU[len(orderedCPU)-1]
@@ -321,6 +336,44 @@ func (stats *monitorStats) apply(snapshot *Snapshot, policy Policy) {
 	snapshot.TelemetryProjectedBytesDay = projection.TotalBytes
 	snapshot.GuardSampleErrors = stats.sampleErrors
 	snapshot.ResourceCleanupFailures = stats.resourceCleanupFailures
+}
+
+func aggregatePhaseTimings(samples []map[string]float64) (map[string]float64, map[string]float64, map[string]float64) {
+	if len(samples) == 0 {
+		return nil, nil, nil
+	}
+	values := make(map[string][]float64)
+	for _, sample := range samples {
+		for name := range sample {
+			if _, ok := values[name]; !ok {
+				values[name] = make([]float64, len(samples))
+			}
+		}
+	}
+	for index, sample := range samples {
+		for name, duration := range sample {
+			values[name][index] = duration
+		}
+	}
+	averages := make(map[string]float64, len(values))
+	p95 := make(map[string]float64, len(values))
+	maximums := make(map[string]float64, len(values))
+	for name, durations := range values {
+		ordered := append([]float64(nil), durations...)
+		sort.Float64s(ordered)
+		total := 0.0
+		for _, duration := range durations {
+			total += duration
+		}
+		index := int(float64(len(ordered))*0.95+0.999999) - 1
+		if index < 0 {
+			index = 0
+		}
+		averages[name] = total / float64(len(durations))
+		p95[name] = ordered[index]
+		maximums[name] = ordered[len(ordered)-1]
+	}
+	return averages, p95, maximums
 }
 
 func (monitor *Monitor) annotateOperationalTelemetry(snapshot *Snapshot, cleanup resourceCleanupTelemetryState, stats monitorStats) {

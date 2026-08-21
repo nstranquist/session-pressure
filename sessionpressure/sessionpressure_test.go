@@ -792,7 +792,10 @@ func TestMonitorStatsUseRollingP95AndProjectedSparseTelemetry(t *testing.T) {
 		if index == 0 {
 			duration = 550
 		}
-		stats.add(Snapshot{SampleDurationMS: duration, SampleCPUTimeMS: 30, GuardRSSMB: 8, GuardCPUPercent: 0.1}, 15)
+		stats.add(Snapshot{
+			SampleDurationMS: duration, SampleCPUTimeMS: 30, GuardRSSMB: 8, GuardCPUPercent: 0.1,
+			SamplePhaseMS: map[string]float64{"memory_pressure": duration - 10, "coordinated_work": 10},
+		}, 15)
 	}
 	stats.recordEventBytes("heartbeat", 500)
 	stats.recordEventBytes("state_transition", 2600)
@@ -802,6 +805,9 @@ func TestMonitorStatsUseRollingP95AndProjectedSparseTelemetry(t *testing.T) {
 	stats.apply(&snapshot, policy)
 	if snapshot.MonitorSamples != 20 || snapshot.SampleDurationP95MS != 40 || snapshot.SampleDurationMaxMS != 550 {
 		t.Fatalf("unexpected rolling duration stats: %+v", snapshot)
+	}
+	if snapshot.SamplePhaseAvgMS["memory_pressure"] != 55.5 || snapshot.SamplePhaseP95MS["memory_pressure"] != 30 || snapshot.SamplePhaseMaxMS["memory_pressure"] != 540 {
+		t.Fatalf("unexpected rolling phase attribution: avg=%v p95=%v max=%v", snapshot.SamplePhaseAvgMS, snapshot.SamplePhaseP95MS, snapshot.SamplePhaseMaxMS)
 	}
 	if snapshot.TelemetryProjectedBytesDay != 528384 {
 		t.Fatalf("telemetry projection = %d, want 528384", snapshot.TelemetryProjectedBytesDay)
