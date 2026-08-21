@@ -55,6 +55,7 @@ type Sampler struct {
 	powerThermalSource func(context.Context) (PowerThermalStatus, error)
 	storageSource      func(string) (StorageCapacity, error)
 	workStatusSource   func(context.Context) (WorkStatus, error)
+	workStatusReadPath string
 	sessionStateDir    string
 	binarySHA256       string
 
@@ -129,9 +130,11 @@ func (sampler *Sampler) WithWorkCoordinator(coordinator *WorkCoordinator) *Sampl
 	}
 	if coordinator == nil {
 		sampler.workStatusSource = nil
+		sampler.workStatusReadPath = ""
 		return sampler
 	}
-	sampler.workStatusSource = coordinator.Status
+	sampler.workStatusSource = coordinator.StatusSnapshot
+	sampler.workStatusReadPath = "atomic-snapshot"
 	return sampler
 }
 
@@ -735,6 +738,7 @@ func (sampler *Sampler) sampleCoordinatedWork(ctx context.Context, processes []P
 	result := attributeCoordinatedWork(processes, status.Leases, capturedAt, logicalCPUCount)
 	result.Fresh = inventoryFresh
 	result.InventoryAgeSeconds = ageSeconds
+	result.StatusReadPath = sampler.workStatusReadPath
 	return result
 }
 

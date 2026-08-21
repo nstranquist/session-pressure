@@ -53,6 +53,24 @@ func TestWorkStatusHonorsShortContext(t *testing.T) {
 	}
 }
 
+func TestWorkStatusSnapshotDoesNotWaitOnMutationLock(t *testing.T) {
+	coordinator := testWorkCoordinator(t)
+	unlock, err := filelock.Acquire(coordinator.statePath(), time.Second)
+	if err != nil {
+		t.Fatalf("hold lease lock: %v", err)
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	status, err := coordinator.StatusSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("diagnostic snapshot waited on mutation lock: %v", err)
+	}
+	if status.Capacity != testWorkLimits().Capacity || len(status.Leases) != 0 {
+		t.Fatalf("unexpected diagnostic snapshot: %+v", status)
+	}
+}
+
 func TestWorkCoordinatorAppliesOneWeightedCapacityAcrossClasses(t *testing.T) {
 	coordinator := testWorkCoordinator(t)
 	build, status, err := coordinator.Acquire(context.Background(), WorkClassBuild)

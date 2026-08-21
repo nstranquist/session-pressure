@@ -1416,6 +1416,32 @@ func (coordinator *WorkCoordinator) Status(ctx context.Context) (WorkStatus, err
 	return coordinator.withState(ctx, nil)
 }
 
+// StatusSnapshot reads the atomically published work ledger without taking the
+// mutation lock. It is for diagnostic sampling only: it does not reconcile,
+// prune, or persist state. Admission and every state-changing operation must
+// continue to use Status or withState so they observe repaired ownership.
+//
+// The resident monitor samples coordinated work only for attribution. Making
+// that read wait on the mutation lock caused 50 ms poll wakeups and up to
+// 500 ms of avoidable sample latency while a worker updated the same ledger.
+func (coordinator *WorkCoordinator) StatusSnapshot(ctx context.Context) (WorkStatus, error) {
+	if err := coordinator.validate(); err != nil {
+		return WorkStatus{}, err
+	}
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return WorkStatus{}, ctx.Err()
+		default:
+		}
+	}
+	state, err := coordinator.readState()
+	if err != nil {
+		return WorkStatus{}, err
+	}
+	return coordinator.status(state, 0, 0), nil
+}
+
 type WorkLease struct {
 	coordinator *WorkCoordinator
 	record      WorkLeaseRecord
