@@ -38,6 +38,10 @@ Subcommands:
   work history [--limit N] [--full]  Compact lifecycle rows (default 20); --full digests/forensics
   work stats|report [--since D] [--full]  Compact calibration counts; full diagnostics opt in
   work override --operation-id ID --confirm  Run one selected queued operation next without bypassing safety gates
+  work inspect --operation-id ID             Live process/origin/stall brief (argv is not persisted)
+  work cancel --operation-id ID --confirm    Signal the live lease tree and drop the lease
+  work reschedule --operation-id ID --confirm  Cancel a scheduled lease, then ndev schedule run-now
+  work handoff --operation-id ID             Write an operator brief for an interactive agent
   work run --class C [--exclusive] [--wait D] -- CMD  Hold shared host capacity while CMD runs
   policy show                      Show the effective policy
   policy profile show|apply NAME   Named balanced / throughput / interactive / observe work styles

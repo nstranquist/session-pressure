@@ -39,7 +39,7 @@ func CommandLeaf(args []string) string {
 		}
 		return leaf
 	case "work":
-		return AllowedLeaf("work", args[1:], "status", []string{"help", "status", "run", "batch", "override", "history", "stats", "report", "evaluate"})
+		return AllowedLeaf("work", args[1:], "status", []string{"help", "status", "run", "batch", "override", "inspect", "cancel", "reschedule", "handoff", "history", "stats", "report", "evaluate"})
 	case "policy":
 		leaf := AllowedLeaf("policy", args[1:], "show", []string{"show", "init", "migrate", "enable", "observe", "profile"})
 		if leaf == "policy.profile" {

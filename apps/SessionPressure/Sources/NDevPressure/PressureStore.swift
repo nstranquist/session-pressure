@@ -208,6 +208,9 @@ final class PressureStore: ObservableObject {
     @Published var isWorkDetailLoading = false
     @Published var workDetailError: String?
     @Published var workDetailLoadedAt: Date?
+    @Published var workInspect: WorkInspectReport?
+    @Published var pendingWorkCancel: WorkInspectReport?
+    @Published var pendingWorkReschedule: WorkInspectReport?
 
     @Published var diskWriteSummary: DiskWriteSummary?
     @Published var diskWriters: [DiskWriter] = []
@@ -619,6 +622,7 @@ final class PressureStore: ObservableObject {
         workDetailEvents = []
         workDetailError = nil
         workDetailLoadedAt = nil
+        workInspect = nil
         workDetailGeneration += 1
         isWorkDetailLoading = false
     }
@@ -646,12 +650,16 @@ final class PressureStore: ObservableObject {
             // The ledger filters server-side now; the client-side filter stays
             // as a cheap guard so an older helper that ignores the flag cannot
             // spill another operation's lifecycle into this drawer.
-            let history = try await client.workHistory(since: "48h", limit: 200, operationID: operationID)
+            async let historyTask = client.workHistory(since: "48h", limit: 200, operationID: operationID)
+            async let inspectTask = client.workInspect(operationID: operationID)
+            let history = try await historyTask
+            let inspectEnv = try? await inspectTask
             guard gen == workDetailGeneration else { return }
             let matched = history.workEvents
                 .filter { $0.operationID == operationID }
                 .sorted { ($0.timestamp ?? .distantPast) < ($1.timestamp ?? .distantPast) }
             workDetailEvents = matched
+            workInspect = inspectEnv?.inspect
             workDetailLoadedAt = Date()
             if matched.isEmpty {
                 workDetailError = nil
@@ -948,6 +956,38 @@ final class PressureStore: ObservableObject {
     func clearWorkOverride() async {
         await mutate("Releasing pinned promotions…") { client in
             _ = try await client.workOverrideClear()
+        }
+    }
+
+    func cancelInspectedWork() async {
+        guard let report = workInspect ?? pendingWorkCancel else { return }
+        await mutate("Stopping lease \(report.operationID.prefix(8))…") { client in
+            _ = try await client.workCancel(operationID: report.operationID)
+        }
+        pendingWorkCancel = nil
+        await reloadWorkDetail()
+    }
+
+    func rescheduleInspectedWork() async {
+        guard let report = workInspect ?? pendingWorkReschedule else { return }
+        await mutate("Rescheduling \(report.scheduleID ?? report.operationID)…") { client in
+            _ = try await client.workReschedule(operationID: report.operationID)
+        }
+        pendingWorkReschedule = nil
+        await reloadWorkDetail()
+    }
+
+    func handoffInspectedWork() async {
+        guard let report = workInspect else { return }
+        await mutate("Writing inspect brief…") { client in
+            let envelope = try await client.workHandoff(operationID: report.operationID)
+            if let prompt = envelope.handoff?.prompt, !prompt.isEmpty {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(prompt, forType: .string)
+            }
+            if let path = envelope.handoff?.path, !path.isEmpty {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            }
         }
     }
 

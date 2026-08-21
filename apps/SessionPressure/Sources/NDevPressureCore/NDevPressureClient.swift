@@ -543,6 +543,48 @@ public struct NDevPressureClient: Sendable {
         )
     }
 
+    public func workInspect(operationID: String) async throws -> WorkInspectEnvelope {
+        try await runJSON(
+            WorkInspectEnvelope.self,
+            arguments: [
+                "--json", "session", "pressure", "work", "inspect",
+                "--operation-id", operationID,
+            ]
+        )
+    }
+
+    public func workCancel(operationID: String) async throws -> WorkCancelEnvelope {
+        try await runJSON(
+            WorkCancelEnvelope.self,
+            arguments: [
+                "--json", "session", "pressure", "work", "cancel",
+                "--operation-id", operationID,
+                "--confirm",
+            ]
+        )
+    }
+
+    public func workReschedule(operationID: String) async throws -> WorkCancelEnvelope {
+        try await runJSON(
+            WorkCancelEnvelope.self,
+            arguments: [
+                "--json", "session", "pressure", "work", "reschedule",
+                "--operation-id", operationID,
+                "--confirm",
+            ]
+        )
+    }
+
+    public func workHandoff(operationID: String) async throws -> WorkHandoffEnvelope {
+        try await runJSON(
+            WorkHandoffEnvelope.self,
+            arguments: [
+                "--json", "session", "pressure", "work", "handoff",
+                "--operation-id", operationID,
+            ]
+        )
+    }
+
     public func workOverride(operationID: String) async throws -> WorkOverrideEnvelope {
         try await runJSON(
             WorkOverrideEnvelope.self,

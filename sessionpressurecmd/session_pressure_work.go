@@ -36,6 +36,10 @@ Subcommands:
   report [--since DURATION] [--full]
   evaluate
   override (--operation-id <ID> [--operation-id <ID>...] | --all | --clear) --confirm
+  inspect --operation-id ID        Live process/origin/stall brief (argv is not persisted)
+  cancel --operation-id ID --confirm  Signal the live lease tree and release the lease
+  reschedule --operation-id ID --confirm  Cancel a scheduled lease, then ndev schedule run-now
+  handoff --operation-id ID        Write an operator brief for an interactive agent
   run [--class <express-test|express-build|test|build|install|emulator|browser|heavy|benchmark|benchmark-exclusive|reclaim>] [--exclusive] [--no-reuse] [--priority] [--wait DURATION] [--progress <human|jsonl|quiet>] -- COMMAND [ARGS...]
   batch --file <MANIFEST.json|-> [--wait DURATION] [--progress <human|jsonl|quiet>]
 
@@ -156,6 +160,14 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 		return emitPressure(g, payload, text, 0)
 	case "override":
 		return cmdSessionPressureWorkOverride(g, coordinator, args)
+	case "inspect":
+		return cmdSessionPressureWorkInspect(g, coordinator, args)
+	case "cancel":
+		return cmdSessionPressureWorkCancel(g, coordinator, args)
+	case "reschedule":
+		return cmdSessionPressureWorkReschedule(g, coordinator, args)
+	case "handoff":
+		return cmdSessionPressureWorkHandoff(g, coordinator, args)
 	case "history":
 		return cmdSessionPressureWorkHistory(g, runtime.dir, args)
 	case "stats":
@@ -186,7 +198,7 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 		}
 		return emitPressure(g, payload, text, exit)
 	default:
-		return sessionPressureError("unknown work subcommand "+strconv.Quote(sub)+"; try: session-pressure work --help (status|run|batch|override|history|stats|report|evaluate)", 2)
+		return sessionPressureError("unknown work subcommand "+strconv.Quote(sub)+"; try: session-pressure work --help (status|run|batch|override|inspect|cancel|reschedule|handoff|history|stats|report|evaluate)", 2)
 	}
 }
 
@@ -266,6 +278,110 @@ func cmdSessionPressureWorkOverride(g *Flags, coordinator *sessionpressure.WorkC
 		fmt.Fprintf(&text, "  #%d %s class=%s weight=%d previous_position=%d\n", result.OverridePosition, result.OperationID, result.Class, result.Weight, result.PreviousPosition)
 	}
 	return emitPressure(g, payload, text.String(), 0)
+}
+
+func parseWorkOperationID(args []string) (string, bool, error) {
+	operationID := ""
+	confirmed := false
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--operation-id":
+			index++
+			if index >= len(args) || strings.TrimSpace(args[index]) == "" {
+				return "", false, fmt.Errorf("work --operation-id requires a value")
+			}
+			operationID = strings.TrimSpace(args[index])
+		case "--confirm":
+			confirmed = true
+		default:
+			if strings.HasPrefix(args[index], "-") {
+				return "", false, fmt.Errorf("unknown argument %s", args[index])
+			}
+			if operationID != "" {
+				return "", false, fmt.Errorf("unexpected argument %s", args[index])
+			}
+			operationID = strings.TrimSpace(args[index])
+		}
+	}
+	if operationID == "" {
+		return "", false, fmt.Errorf("work requires --operation-id")
+	}
+	return operationID, confirmed, nil
+}
+
+func cmdSessionPressureWorkInspect(g *Flags, coordinator *sessionpressure.WorkCoordinator, args []string) int {
+	operationID, _, err := parseWorkOperationID(args)
+	if err != nil {
+		return sessionPressureError(err.Error(), 2)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	report, err := sessionpressure.InspectWork(ctx, coordinator, operationID)
+	cancel()
+	if err != nil {
+		exit := 1
+		if strings.Contains(err.Error(), "must be a 32-character") {
+			exit = 2
+		}
+		return sessionPressureError(err.Error(), exit)
+	}
+	return emitPressure(g, map[string]any{"ok": true, "action": "work.inspect", "inspect": report}, report.Summary+"\n", 0)
+}
+
+func cmdSessionPressureWorkCancel(g *Flags, coordinator *sessionpressure.WorkCoordinator, args []string) int {
+	operationID, confirmed, err := parseWorkOperationID(args)
+	if err != nil {
+		return sessionPressureError(err.Error(), 2)
+	}
+	if !confirmed {
+		return sessionPressureError("work cancel requires --confirm; it signals the live lease process tree", 2)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	result, err := sessionpressure.CancelWork(ctx, coordinator, operationID)
+	cancel()
+	if err != nil {
+		return sessionPressureError(err.Error(), 1)
+	}
+	text := fmt.Sprintf("work cancel operation=%s signaled=%d used=%d/%d stall=%s\n", result.OperationID, len(result.SignaledPIDs), result.Work.Used, result.Work.Capacity, result.StallClass)
+	return emitPressure(g, map[string]any{"ok": true, "action": "work.cancel", "cancel": result}, text, 0)
+}
+
+func cmdSessionPressureWorkReschedule(g *Flags, coordinator *sessionpressure.WorkCoordinator, args []string) int {
+	operationID, confirmed, err := parseWorkOperationID(args)
+	if err != nil {
+		return sessionPressureError(err.Error(), 2)
+	}
+	if !confirmed {
+		return sessionPressureError("work reschedule requires --confirm; it cancels the lease then runs the schedule now", 2)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	result, err := sessionpressure.RescheduleWork(ctx, coordinator, operationID)
+	cancel()
+	if err != nil {
+		exit := 1
+		if strings.Contains(err.Error(), "requires a scheduled origin") {
+			exit = 2
+		}
+		if result != nil {
+			_ = emitPressure(g, result, err.Error()+"\n", exit)
+			return exit
+		}
+		return sessionPressureError(err.Error(), exit)
+	}
+	return emitPressure(g, result, fmt.Sprintf("work reschedule operation=%s schedule=%v\n", operationID, result["schedule_id"]), 0)
+}
+
+func cmdSessionPressureWorkHandoff(g *Flags, coordinator *sessionpressure.WorkCoordinator, args []string) int {
+	operationID, _, err := parseWorkOperationID(args)
+	if err != nil {
+		return sessionPressureError(err.Error(), 2)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	result, err := sessionpressure.HandoffWork(ctx, coordinator, operationID)
+	cancel()
+	if err != nil {
+		return sessionPressureError(err.Error(), 1)
+	}
+	return emitPressure(g, map[string]any{"ok": true, "action": "work.handoff", "handoff": result}, result.Path+"\n", 0)
 }
 
 func pressureWorkStatusText(status sessionpressure.WorkStatus) string {

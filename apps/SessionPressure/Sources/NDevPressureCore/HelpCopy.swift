@@ -82,7 +82,13 @@ public enum PressureHelp {
     public static let workOverrideAll =
         "Run all pins every waiter now in the queue as one ordered promotion sequence (ndev session pressure work override --all --confirm). The head runs first and each entry inherits the reservation as its predecessor acquires, so the queue drains in the order shown instead of letting later small arrivals bypass it. It never preempts a lease, raises capacity, or bypasses host pressure — with the host red, pinned work still waits."
     public static let workDetail =
-        "Privacy-bounded inspector for one work operation: identity, capacity role, and durable lifecycle events. Command argv and process stdout/stderr are intentionally never captured by the pressure control plane — they remain on the agent/terminal that launched `ndev session pressure work run`."
+        "Inspector for one work operation: identity, a live process sample, and durable lifecycle events. Live argv/cwd are sampled on demand for this drawer and never written to work-events."
+    public static let workCancel =
+        "Stop tree signals the live lease process group, then drops the capacity lease. It requires confirmation because it is destructive. It does not auto-kill at 15 minutes."
+    public static let workReschedule =
+        "For a scheduled origin, stop the live lease and run `ndev schedule run-now` for that job. Requires confirmation."
+    public static let workHandoff =
+        "Write an inspect brief under ~/.nicos-dev/session-pressure/inspect, copy it, and reveal the file. Use it as the first message in an interactive agent."
     public static let workOutputLocation =
         "Process output is not mirrored here. Look at the agent session or terminal that invoked `ndev session pressure work run` (or work batch). Pressure only stores opaque digests plus queued/acquired/started/completed lifecycle rows under ~/.nicos-dev/session-pressure/work-events-*.jsonl."
     public static let policyFull =

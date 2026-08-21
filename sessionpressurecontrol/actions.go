@@ -94,6 +94,34 @@ func newActionRegistry() *actionRegistry {
 		}
 		return append(args, "--confirm"), nil
 	})
+	registry.add("work.inspect", []string{"operation_id"}, func(params map[string]string) ([]string, error) {
+		id := params["operation_id"]
+		if !safeID.MatchString(id) {
+			return nil, fmt.Errorf("invalid operation_id %q", id)
+		}
+		return pressureArgs("work", "inspect", "--operation-id", id), nil
+	})
+	registry.add("work.cancel", []string{"operation_id"}, func(params map[string]string) ([]string, error) {
+		id := params["operation_id"]
+		if !safeID.MatchString(id) {
+			return nil, fmt.Errorf("invalid operation_id %q", id)
+		}
+		return append(pressureArgs("work", "cancel", "--operation-id", id), "--confirm"), nil
+	})
+	registry.add("work.reschedule", []string{"operation_id"}, func(params map[string]string) ([]string, error) {
+		id := params["operation_id"]
+		if !safeID.MatchString(id) {
+			return nil, fmt.Errorf("invalid operation_id %q", id)
+		}
+		return append(pressureArgs("work", "reschedule", "--operation-id", id), "--confirm"), nil
+	})
+	registry.add("work.handoff", []string{"operation_id"}, func(params map[string]string) ([]string, error) {
+		id := params["operation_id"]
+		if !safeID.MatchString(id) {
+			return nil, fmt.Errorf("invalid operation_id %q", id)
+		}
+		return pressureArgs("work", "handoff", "--operation-id", id), nil
+	})
 
 	for _, verb := range []string{"init", "schedule", "enable", "observe", "disable"} {
 		registry.addFixed("cleanup.policy."+verb, pressureArgs("cleanup", "policy", verb))

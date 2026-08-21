@@ -461,3 +461,33 @@ func TestPressureWorkOverrideAllPinsWholeQueue(t *testing.T) {
 		t.Fatalf("pending tail=%+v", payload.Work.OverrideQueue)
 	}
 }
+
+func TestPressureWorkCancelRequiresConfirm(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(sessionpressure.DataDirEnv, dir)
+	policy := sessionpressure.DefaultPolicy(16 * 1024)
+	if err := sessionpressure.SavePolicy(sessionpressure.PolicyPath(dir), policy); err != nil {
+		t.Fatal(err)
+	}
+	rc, _, stderr := captureMainOutput(t, func() int {
+		return cmdSessionPressureWork(&Flags{JSON: true}, []string{"cancel", "--operation-id", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
+	})
+	if rc != 2 || !strings.Contains(stderr, "requires --confirm") {
+		t.Fatalf("rc=%d stderr=%q", rc, stderr)
+	}
+}
+
+func TestPressureWorkInspectUnknownOperationJSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(sessionpressure.DataDirEnv, dir)
+	policy := sessionpressure.DefaultPolicy(16 * 1024)
+	if err := sessionpressure.SavePolicy(sessionpressure.PolicyPath(dir), policy); err != nil {
+		t.Fatal(err)
+	}
+	rc, _, stderr := captureMainOutput(t, func() int {
+		return cmdSessionPressureWork(&Flags{JSON: true}, []string{"inspect", "--operation-id", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
+	})
+	if rc != 1 || !strings.Contains(stderr, "not a live lease") {
+		t.Fatalf("rc=%d stderr=%q", rc, stderr)
+	}
+}

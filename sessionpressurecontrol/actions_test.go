@@ -36,6 +36,25 @@ func TestStorageAutoSafeApplyRejectsProviderAndShellText(t *testing.T) {
 	}
 }
 
+func TestWorkInspectAndCancelBuildTypedArgv(t *testing.T) {
+	registry := newActionRegistry()
+	id := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	inspect, err := registry.build("work.inspect", map[string]string{"operation_id": id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(inspect, " "), "--json session pressure work inspect --operation-id "+id; got != want {
+		t.Fatalf("inspect argv=%q want %q", got, want)
+	}
+	cancel, err := registry.build("work.cancel", map[string]string{"operation_id": id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(cancel, " "), "--confirm") {
+		t.Fatalf("cancel missing --confirm: %q", cancel)
+	}
+}
+
 func TestStorageProviderApplyStillBuildsNamedArgv(t *testing.T) {
 	registry := newActionRegistry()
 	args, err := registry.build("storage.provider.apply", map[string]string{"provider": "user-trash"})
