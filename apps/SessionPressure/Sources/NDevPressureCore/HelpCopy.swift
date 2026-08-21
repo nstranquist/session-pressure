@@ -88,7 +88,7 @@ public enum PressureHelp {
     public static let workReschedule =
         "For a scheduled origin, stop the live lease and run `ndev schedule run-now` for that job. Requires confirmation."
     public static let workHandoff =
-        "Write an inspect brief under ~/.nicos-dev/session-pressure/inspect, copy it, and reveal the file. Use it as the first message in an interactive agent."
+        "Write an inspect brief, capture it to Scratchpad Agents, copy it, and reveal the note. Use it as the first message in an interactive agent."
     public static let workOutputLocation =
         "Process output is not mirrored here. Look at the agent session or terminal that invoked `ndev session pressure work run` (or work batch). Pressure only stores opaque digests plus queued/acquired/started/completed lifecycle rows under ~/.nicos-dev/session-pressure/work-events-*.jsonl."
     public static let policyFull =

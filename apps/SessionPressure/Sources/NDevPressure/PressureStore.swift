@@ -985,7 +985,9 @@ final class PressureStore: ObservableObject {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(prompt, forType: .string)
             }
-            if let path = envelope.handoff?.path, !path.isEmpty {
+            if let scratch = envelope.handoff?.scratchpadPath, !scratch.isEmpty {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: scratch)])
+            } else if let path = envelope.handoff?.path, !path.isEmpty {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
             }
         }

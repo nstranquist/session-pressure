@@ -2,6 +2,7 @@ package sessionpressure
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -99,19 +100,23 @@ type WorkCancelResult struct {
 }
 
 type WorkHandoffResult struct {
-	SchemaVersion string `json:"schema_version,omitempty"`
-	OperationID   string `json:"operation_id"`
-	Path          string `json:"path"`
-	Prompt        string `json:"prompt"`
-	Suggested     string `json:"suggested_command,omitempty"`
+	SchemaVersion    string `json:"schema_version,omitempty"`
+	OperationID      string `json:"operation_id"`
+	Path             string `json:"path"`
+	Prompt           string `json:"prompt"`
+	Suggested        string `json:"suggested_command,omitempty"`
+	ScratchpadTarget string `json:"scratchpad_target,omitempty"`
+	ScratchpadPath   string `json:"scratchpad_path,omitempty"`
+	ScratchpadError  string `json:"scratchpad_error,omitempty"`
 }
 
 var (
-	errWorkInspectNotFound = errors.New("work inspect: operation is not a live lease or waiter")
-	lookupScheduleName     = lookupScheduleNameFromRegistry
-	readScheduleSnippet    = readScheduleOutputSnippet
-	runScheduleNowFn       = runScheduleNow
-	readProcessEnv         = processEnvKeys
+	errWorkInspectNotFound  = errors.New("work inspect: operation is not a live lease or waiter")
+	lookupScheduleName      = lookupScheduleNameFromRegistry
+	readScheduleSnippet     = readScheduleOutputSnippet
+	runScheduleNowFn        = runScheduleNow
+	readProcessEnv          = processEnvKeys
+	captureScratchpadAgents = captureScratchpadAgentsNote
 )
 
 // InspectWork samples the live process tree for one coordinator operation.
@@ -531,12 +536,83 @@ func HandoffWork(ctx context.Context, coordinator *WorkCoordinator, operationID 
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		return WorkHandoffResult{}, err
 	}
-	return WorkHandoffResult{
-		OperationID: operationID,
-		Path:        path,
-		Prompt:      body,
-		Suggested:   "Paste this brief into an interactive agent and ask it to stop, reschedule, or fix the stall.",
-	}, nil
+	header := "Work inspect " + operationID[:min(8, len(operationID))]
+	result := WorkHandoffResult{
+		OperationID:      operationID,
+		Path:             path,
+		Prompt:           body,
+		Suggested:        "Open the Scratchpad Agents note, or paste this brief into an interactive agent.",
+		ScratchpadTarget: "agents",
+	}
+	if scratchPath, capErr := captureScratchpadAgents(header, body); capErr != nil {
+		result.ScratchpadError = capErr.Error()
+	} else {
+		result.ScratchpadPath = scratchPath
+	}
+	return result, nil
+}
+
+func captureScratchpadAgentsNote(header, body string) (string, error) {
+	ndev, err := exec.LookPath("ndev")
+	if err != nil {
+		return "", fmt.Errorf("ndev not on PATH: %w", err)
+	}
+	args := []string{"--json", "scratchpad", "capture", "--target", "agents", "--source", "session-pressure", "--header", header}
+	if root := scratchpadAgentsRoot(); root != "" {
+		args = append(args, "--root", root)
+	}
+	cmd := exec.Command(ndev, args...)
+	cmd.Stdin = strings.NewReader(body)
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("scratchpad capture: %w\n%s", err, strings.TrimSpace(string(out)))
+	}
+	var receipt struct {
+		OK     bool   `json:"ok"`
+		Path   string `json:"path"`
+		File   string `json:"file"`
+		Target string `json:"target"`
+		Note   string `json:"note"`
+		ID     string `json:"id"`
+	}
+	if jsonErr := json.Unmarshal(out, &receipt); jsonErr != nil || !receipt.OK {
+		trimmed := strings.TrimSpace(string(out))
+		if jsonErr != nil {
+			return "", fmt.Errorf("scratchpad capture: decode receipt: %w\n%s", jsonErr, trimmed)
+		}
+		return "", fmt.Errorf("scratchpad capture rejected: %s", trimmed)
+	}
+	for _, candidate := range []string{receipt.Path, receipt.File, receipt.Note} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if filepath.IsAbs(candidate) {
+			return candidate, nil
+		}
+		root := scratchpadAgentsRoot()
+		if root != "" {
+			return filepath.Join(root, candidate), nil
+		}
+		return candidate, nil
+	}
+	return "", nil
+}
+
+func scratchpadAgentsRoot() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		for _, rel := range []string{
+			filepath.Join(".nicos-dev", "vscode-scratchpad"),
+			filepath.Join(".nicos-dev", "scratchpad"),
+		} {
+			root := filepath.Join(home, rel)
+			if st, err := os.Stat(root); err == nil && st.IsDir() {
+				return root
+			}
+		}
+	}
+	return ""
 }
 
 func formatInspectBrief(report WorkInspectReport) string {
