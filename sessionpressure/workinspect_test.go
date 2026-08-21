@@ -91,6 +91,14 @@ func TestCancelWorkStopsSetpgidChildAndPrunesLease(t *testing.T) {
 }
 
 func TestHandoffWorkWritesOperatorBrief(t *testing.T) {
+	origCapture := captureScratchpadAgents
+	t.Cleanup(func() { captureScratchpadAgents = origCapture })
+	captureScratchpadAgents = func(header, body string) (string, error) {
+		if !strings.Contains(body, "sleep") {
+			t.Fatalf("unexpected brief: %s", body)
+		}
+		return "/tmp/agents-work-inspect.md", nil
+	}
 	dir := t.TempDir()
 	t.Setenv(DataDirEnv, dir)
 	coordinator := NewWorkCoordinator(dir, DefaultPolicy(16<<10).WorkLimits)
@@ -118,6 +126,9 @@ func TestHandoffWorkWritesOperatorBrief(t *testing.T) {
 	body := string(raw)
 	if !strings.Contains(body, "sleep") || !strings.Contains(body, lease.Record().OperationID) {
 		t.Fatalf("brief=%s", body)
+	}
+	if handoff.ScratchpadPath != "/tmp/agents-work-inspect.md" || handoff.ScratchpadTarget != "agents" {
+		t.Fatalf("scratchpad=%#v", handoff)
 	}
 }
 

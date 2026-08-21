@@ -1476,11 +1476,17 @@ public struct WorkHandoffResult: Decodable, Sendable, Hashable {
     public var path: String?
     public var prompt: String?
     public var suggestedCommand: String?
+    public var scratchpadTarget: String?
+    public var scratchpadPath: String?
+    public var scratchpadError: String?
 
     enum CodingKeys: String, CodingKey {
         case operationID = "operation_id"
         case path, prompt
         case suggestedCommand = "suggested_command"
+        case scratchpadTarget = "scratchpad_target"
+        case scratchpadPath = "scratchpad_path"
+        case scratchpadError = "scratchpad_error"
     }
 }
 
