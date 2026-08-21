@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// AgentIdentityMiss is a diagnostic that install roots or basename shapes
-// suggest an agent is running but no tree was projected for it.
+// AgentIdentityMiss is a diagnostic that live process evidence suggests an
+// agent is running but no tree was projected for it.
 type AgentIdentityMiss struct {
 	Agent  string `json:"agent"`
 	Reason string `json:"reason"`
@@ -164,16 +164,15 @@ func countTreesByAgent(trees []AgentTree) map[string]int {
 	return counts
 }
 
-// DetectAgentIdentityMisses finds likely gaps between on-disk install roots /
-// path-probe basenames and projected agent trees.
-func DetectAgentIdentityMisses(catalog *AgentIdentityCatalog, home string, trees []AgentTree, processes []Process) []AgentIdentityMiss {
+// DetectAgentIdentityMisses finds likely gaps between live agent-shaped
+// processes and projected agent trees. Installed but idle tools remain visible
+// in AgentIdentityReport.Installs and are not identity misses.
+func DetectAgentIdentityMisses(catalog *AgentIdentityCatalog, _ string, _ []AgentTree, processes []Process) []AgentIdentityMiss {
 	if catalog == nil {
 		return nil
 	}
-	treeCounts := countTreesByAgent(trees)
 	// Processes that look like path-probe / exact basenames but were not labeled.
 	unlabeled := map[string]int{}
-	labeledLike := map[string]int{}
 	for _, process := range processes {
 		base := normalizeBasename(process.Executable)
 		if base == "" || base == "unknown" {
@@ -200,8 +199,6 @@ func DetectAgentIdentityMisses(catalog *AgentIdentityCatalog, home string, trees
 		}
 		if process.Agent == "" {
 			unlabeled[agent]++
-		} else {
-			labeledLike[agent]++
 		}
 	}
 
@@ -212,38 +209,6 @@ func DetectAgentIdentityMisses(catalog *AgentIdentityCatalog, home string, trees
 			Agent:  agent,
 			Reason: "unlabeled_agent_basename",
 			Detail: fmt.Sprintf("%d process(es) match %s identity shapes but have empty Agent", count, agent),
-		})
-	}
-
-	// Install root present + zero trees + no labeled processes → soft miss when
-	// the operator may have agents running under opaque names not yet in catalog.
-	presences := catalog.InstallPresences(home)
-	presentAgents := map[string]bool{}
-	for _, presence := range presences {
-		if presence.Present {
-			presentAgents[presence.Agent] = true
-		}
-	}
-	for agent := range presentAgents {
-		if treeCounts[agent] > 0 || labeledLike[agent] > 0 || unlabeled[agent] > 0 {
-			continue
-		}
-		// Only emit soft miss when the install exact binary is executable —
-		// empty download dirs are normal.
-		hasExecutableRoot := false
-		for _, presence := range presences {
-			if presence.Agent == agent && presence.Kind == "exact" && presence.Present && isExecutableFile(presence.Path) {
-				hasExecutableRoot = true
-				break
-			}
-		}
-		if !hasExecutableRoot {
-			continue
-		}
-		misses = append(misses, AgentIdentityMiss{
-			Agent:  agent,
-			Reason: "install_present_no_trees",
-			Detail: fmt.Sprintf("%s install root is present but no agent trees were projected", agent),
 		})
 	}
 
@@ -288,10 +253,6 @@ func AssessAgentIdentityCoverage(catalog *AgentIdentityCatalog, home string, tre
 	if catalog.OverlayLoaded {
 		surface.State = CoverageEnforced
 		surface.Detail = "shipped identity catalog plus operator overlay active"
-		return surface
-	}
-	if len(misses) > 0 {
-		surface.Detail = fmt.Sprintf("catalog active; %d soft install/tree mismatch(es) recorded for operator review", len(misses))
 		return surface
 	}
 	surface.Detail = "shipped identity catalog active; no unlabeled agent-shaped processes"

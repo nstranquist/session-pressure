@@ -209,6 +209,31 @@ func TestDetectIdentityMissUnlabeledBasename(t *testing.T) {
 	}
 }
 
+func TestDetectIdentityMissIgnoresInstalledIdleAgent(t *testing.T) {
+	catalog := CompileAgentIdentityCatalog(DefaultAgentIdentityRules())
+	home := t.TempDir()
+	kimi := filepath.Join(home, ".kimi-code", "bin", "kimi")
+	if err := os.MkdirAll(filepath.Dir(kimi), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kimi, []byte("idle fixture\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	report := BuildAgentIdentityReport(catalog, home, nil, nil)
+	if len(report.Misses) != 0 {
+		t.Fatalf("idle install created identity misses: %+v", report.Misses)
+	}
+	present := false
+	for _, install := range report.Installs {
+		if install.Agent == "kimi" && install.Present {
+			present = true
+		}
+	}
+	if !present {
+		t.Fatal("idle install was not retained in inventory")
+	}
+}
+
 func TestAssessAgentIdentityCoverageOverlayError(t *testing.T) {
 	catalog := CompileAgentIdentityCatalog(DefaultAgentIdentityRules())
 	catalog.OverlayError = "boom"
