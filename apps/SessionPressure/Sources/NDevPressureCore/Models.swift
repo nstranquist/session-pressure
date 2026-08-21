@@ -1356,6 +1356,134 @@ public struct WorkEnvelope: Codable, Sendable {
     public var work: WorkStatus?
 }
 
+public struct WorkInspectEnvelope: Decodable, Sendable {
+    public var action: String?
+    public var ok: Bool?
+    public var inspect: WorkInspectReport?
+}
+
+public struct WorkInspectReport: Decodable, Sendable, Hashable {
+    public var operationID: String
+    public var stallClass: String
+    public var summary: String
+    public var originKind: String
+    public var scheduleID: String?
+    public var scheduleName: String?
+    public var scheduleSnippet: String?
+    public var agentKind: String?
+    public var command: String?
+    public var cwd: String?
+    public var pid: Int?
+    public var ppid: Int?
+    public var state: String?
+    public var cpuPercent: Double?
+    public var rssKB: Int64?
+    public var ageMS: Int64
+    public var classP95RuntimeMS: Int64?
+    public var classP95Known: Bool
+    public var parentDead: Bool
+    public var actions: [WorkInspectAction]
+
+    enum CodingKeys: String, CodingKey {
+        case operationID = "operation_id"
+        case stallClass = "stall_class"
+        case summary
+        case origin
+        case process
+        case calibration
+        case suggestedActions = "suggested_actions"
+    }
+
+    enum OriginKeys: String, CodingKey {
+        case kind
+        case scheduleID = "schedule_id"
+        case scheduleName = "schedule_name"
+        case scheduleSnippet = "schedule_snippet"
+        case agentKind = "agent_kind"
+    }
+
+    enum ProcessKeys: String, CodingKey {
+        case pid, ppid, state, command, cwd
+        case cpuPercent = "cpu_percent"
+        case rssKB = "rss_kb"
+        case parentDead = "parent_dead"
+    }
+
+    enum CalibrationKeys: String, CodingKey {
+        case ageMS = "age_ms"
+        case classP95RuntimeMS = "class_p95_runtime_ms"
+        case classP95Known = "class_p95_known"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        operationID = try c.decodeIfPresent(String.self, forKey: .operationID) ?? ""
+        stallClass = try c.decodeIfPresent(String.self, forKey: .stallClass) ?? "unknown"
+        summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        actions = try c.decodeIfPresent([WorkInspectAction].self, forKey: .suggestedActions) ?? []
+        if let origin = try? c.nestedContainer(keyedBy: OriginKeys.self, forKey: .origin) {
+            originKind = try origin.decodeIfPresent(String.self, forKey: .kind) ?? "ad_hoc"
+            scheduleID = try origin.decodeIfPresent(String.self, forKey: .scheduleID)
+            scheduleName = try origin.decodeIfPresent(String.self, forKey: .scheduleName)
+            scheduleSnippet = try origin.decodeIfPresent(String.self, forKey: .scheduleSnippet)
+            agentKind = try origin.decodeIfPresent(String.self, forKey: .agentKind)
+        } else {
+            originKind = "ad_hoc"
+        }
+        if let process = try? c.nestedContainer(keyedBy: ProcessKeys.self, forKey: .process) {
+            pid = try process.decodeIfPresent(Int.self, forKey: .pid)
+            ppid = try process.decodeIfPresent(Int.self, forKey: .ppid)
+            state = try process.decodeIfPresent(String.self, forKey: .state)
+            command = try process.decodeIfPresent(String.self, forKey: .command)
+            cwd = try process.decodeIfPresent(String.self, forKey: .cwd)
+            cpuPercent = try process.decodeIfPresent(Double.self, forKey: .cpuPercent)
+            rssKB = try process.decodeIfPresent(Int64.self, forKey: .rssKB)
+            parentDead = try process.decodeIfPresent(Bool.self, forKey: .parentDead) ?? false
+        } else {
+            parentDead = false
+        }
+        if let calibration = try? c.nestedContainer(keyedBy: CalibrationKeys.self, forKey: .calibration) {
+            ageMS = try calibration.decodeIfPresent(Int64.self, forKey: .ageMS) ?? 0
+            classP95RuntimeMS = try calibration.decodeIfPresent(Int64.self, forKey: .classP95RuntimeMS)
+            classP95Known = try calibration.decodeIfPresent(Bool.self, forKey: .classP95Known) ?? false
+        } else {
+            ageMS = 0
+            classP95Known = false
+        }
+    }
+}
+
+public struct WorkInspectAction: Decodable, Sendable, Hashable, Identifiable {
+    public var id: String
+    public var available: Bool
+    public var reason: String?
+    public var command: String?
+}
+
+public struct WorkCancelEnvelope: Decodable, Sendable {
+    public var action: String?
+    public var ok: Bool?
+}
+
+public struct WorkHandoffEnvelope: Decodable, Sendable {
+    public var action: String?
+    public var ok: Bool?
+    public var handoff: WorkHandoffResult?
+}
+
+public struct WorkHandoffResult: Decodable, Sendable, Hashable {
+    public var operationID: String?
+    public var path: String?
+    public var prompt: String?
+    public var suggestedCommand: String?
+
+    enum CodingKeys: String, CodingKey {
+        case operationID = "operation_id"
+        case path, prompt
+        case suggestedCommand = "suggested_command"
+    }
+}
+
 /// Privacy-safe calibration envelope from `ndev session pressure work report|stats`.
 /// Counts only — never argv, cwd, or outcomes free text lists required for UI.
 public struct WorkCalibration: Codable, Sendable, Hashable {

@@ -11,6 +11,8 @@ func TestCommandLeafVocabulary(t *testing.T) {
 		{[]string{"board"}, "board"},
 		{[]string{"work", "stats"}, "work.stats"},
 		{[]string{"work", "run"}, "work.run"},
+		{[]string{"work", "inspect"}, "work.inspect"},
+		{[]string{"work", "cancel"}, "work.cancel"},
 		{[]string{"cleanup", "claim", "heartbeat"}, "cleanup.claim.heartbeat"},
 		{[]string{"policy", "profile", "show"}, "policy.profile.show"},
 		{[]string{"not-real"}, "unknown"},

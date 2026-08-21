@@ -16,3 +16,5 @@ func nativeProcesses(context.Context) ([]Process, string, error) {
 func refreshNativeProcessCPUTotals(_ context.Context, processes []Process) []Process {
 	return append([]Process(nil), processes...)
 }
+
+func darwinEnvKeys(int, []string) map[string]string { return nil }

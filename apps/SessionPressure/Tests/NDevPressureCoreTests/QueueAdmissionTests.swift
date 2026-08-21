@@ -43,6 +43,49 @@ struct QueueAdmissionTests {
         #expect(PressureFormat.durationMS(121_000) == "2m")
     }
 
+    @Test("decode work inspect live process brief")
+    func decodeWorkInspectBrief() throws {
+        let json = """
+        {
+          "action": "work.inspect",
+          "ok": true,
+          "inspect": {
+            "schema_version": 1,
+            "operation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "stall_class": "parent_dead",
+            "summary": "lease test pid=84923 age=23m vs class p95 2m. stall=parent_dead.",
+            "origin": {
+              "kind": "schedule",
+              "schedule_id": "docs-corpus-local-refresh",
+              "schedule_name": "Local Documentation Corpus Refresh",
+              "schedule_snippet": "building standalone docs-puller"
+            },
+            "process": {
+              "pid": 84923,
+              "ppid": 1,
+              "command": "make docs-refresh OUT=/tmp/docs-corpus",
+              "parent_dead": true,
+              "alive": true
+            },
+            "calibration": {
+              "age_ms": 1380000,
+              "class_p95_runtime_ms": 140000,
+              "class_p95_known": true
+            },
+            "suggested_actions": [
+              {"id": "cancel", "available": true, "command": "ndev --json session pressure work cancel --operation-id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --confirm"}
+            ]
+          }
+        }
+        """
+        let envelope = try PressureJSON.decode(WorkInspectEnvelope.self, from: Data(json.utf8))
+        #expect(envelope.inspect?.stallClass == "parent_dead")
+        #expect(envelope.inspect?.scheduleID == "docs-corpus-local-refresh")
+        #expect(envelope.inspect?.command?.contains("docs-refresh") == true)
+        #expect(envelope.inspect?.parentDead == true)
+        #expect(envelope.inspect?.actions.first?.id == "cancel")
+    }
+
     @Test("decode queue-aware launch admission and policy")
     func decodeQueueAdmission() throws {
         let checkJSON = """

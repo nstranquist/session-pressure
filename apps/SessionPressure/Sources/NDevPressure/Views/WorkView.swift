@@ -418,6 +418,7 @@ struct WorkDetailDrawer: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if let selection = store.workSelection {
                         identityCard(selection)
+                        inspectCard
                         actionsCard(selection)
                         outputCard
                         lifecycleCard
@@ -428,6 +429,36 @@ struct WorkDetailDrawer: View {
         }
         .background(.ultraThinMaterial)
         .help(PressureHelp.workDetail)
+        .confirmationDialog(
+            "Stop this live lease?",
+            isPresented: Binding(
+                get: { store.pendingWorkCancel != nil },
+                set: { if !$0 { store.pendingWorkCancel = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Stop process tree", role: .destructive) {
+                Task { await store.cancelInspectedWork() }
+            }
+            Button("Cancel", role: .cancel) { store.pendingWorkCancel = nil }
+        } message: {
+            Text(store.pendingWorkCancel?.summary ?? "Signals the lease tree, then drops the capacity lease.")
+        }
+        .confirmationDialog(
+            "Reschedule this job?",
+            isPresented: Binding(
+                get: { store.pendingWorkReschedule != nil },
+                set: { if !$0 { store.pendingWorkReschedule = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Stop and run now", role: .destructive) {
+                Task { await store.rescheduleInspectedWork() }
+            }
+            Button("Cancel", role: .cancel) { store.pendingWorkReschedule = nil }
+        } message: {
+            Text("Cancels the live lease, then runs \(store.pendingWorkReschedule?.scheduleID ?? "the schedule") now.")
+        }
     }
 
     private var header: some View {
@@ -522,9 +553,72 @@ struct WorkDetailDrawer: View {
     }
 
     @ViewBuilder
+    private var inspectCard: some View {
+        if let inspect = store.workInspect {
+            SectionCard(title: "What is this?", systemImage: "stethoscope") {
+                Text(inspect.summary)
+                    .font(.caption)
+                    .textSelection(.enabled)
+                labeledRow("Stall", inspect.stallClass)
+                if inspect.originKind != "ad_hoc" {
+                    labeledRow("Origin", inspect.scheduleName ?? inspect.originKind)
+                }
+                if let command = inspect.command, !command.isEmpty {
+                    labeledRow("Command", command)
+                        .textSelection(.enabled)
+                }
+                if let cwd = inspect.cwd, !cwd.isEmpty {
+                    labeledRow("cwd", cwd)
+                        .textSelection(.enabled)
+                }
+                if let snippet = inspect.scheduleSnippet, !snippet.isEmpty {
+                    Text(snippet)
+                        .font(PressureTheme.monoCaption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .padding(.top, 4)
+                }
+                if inspect.classP95Known, let p95 = inspect.classP95RuntimeMS {
+                    labeledRow("Class p95", PressureFormat.durationMS(p95))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private func actionsCard(_ selection: PressureStore.WorkSelection) -> some View {
         SectionCard(title: "Actions", systemImage: "hammer") {
             VStack(alignment: .leading, spacing: 8) {
+                if store.workInspect != nil, selection.isLease {
+                    Button(role: .destructive) {
+                        store.pendingWorkCancel = store.workInspect
+                    } label: {
+                        Label("Stop tree", systemImage: "stop.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(store.busyAction != nil)
+                    .help(PressureHelp.workCancel)
+                    if store.workInspect?.scheduleID != nil {
+                        Button {
+                            store.pendingWorkReschedule = store.workInspect
+                        } label: {
+                            Label("Reschedule now", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(store.busyAction != nil)
+                        .help(PressureHelp.workReschedule)
+                    }
+                    Button {
+                        Task { await store.handoffInspectedWork() }
+                    } label: {
+                        Label("Copy agent brief", systemImage: "sparkles")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(store.busyAction != nil)
+                    .help(PressureHelp.workHandoff)
+                }
                 if case .waiter(let waiter) = selection {
                     let overridden = store.board.work?.overrideOperationID == waiter.operationID
                     if overridden {

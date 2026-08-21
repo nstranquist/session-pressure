@@ -380,6 +380,52 @@ func (coordinator *WorkCoordinator) recordExpired(operationID, leaseID string, c
 	})
 }
 
+// DropLease is the operator cancel path: remove a live lease after signaling
+// its process tree. The wrapper is no longer the finalization authority.
+func (coordinator *WorkCoordinator) DropLease(ctx context.Context, operationID string) (WorkStatus, error) {
+	operationID = strings.TrimSpace(operationID)
+	if !validPrivateID(operationID) {
+		return WorkStatus{}, errors.New("work cancel operation_id must be a 32-character lowercase hex identity")
+	}
+	return coordinator.withState(ctx, func(state *workState) error {
+		kept := state.Leases[:0]
+		dropped := false
+		for _, lease := range state.Leases {
+			if lease.OperationID != operationID {
+				kept = append(kept, lease)
+				continue
+			}
+			dropped = true
+			if err := coordinator.recordCancelled(lease.OperationID, lease.ID, lease.Class, lease.Weight, lease.PID, "operator_cancel"); err != nil {
+				return err
+			}
+		}
+		if !dropped {
+			return fmt.Errorf("%w: %s", errWorkInspectNotFound, operationID)
+		}
+		state.Leases = kept
+		return nil
+	})
+}
+
+func (coordinator *WorkCoordinator) recordCancelled(operationID, leaseID string, class WorkClass, weight, pid int, outcome string) error {
+	store := coordinator.EventStore
+	if store == nil {
+		store = NewWorkEventStore(coordinator.Dir)
+	}
+	terminal, err := store.operationHasTerminal(operationID)
+	if err != nil {
+		return fmt.Errorf("check work operation terminal state: %w", err)
+	}
+	if terminal {
+		return nil
+	}
+	return store.AppendDurable(WorkEvent{
+		Event: WorkEventCancelled, OperationID: operationID, LeaseID: leaseID,
+		Class: class, Weight: weight, PID: pid, Outcome: outcome,
+	})
+}
+
 func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false

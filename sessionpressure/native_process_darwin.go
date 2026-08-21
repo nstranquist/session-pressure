@@ -417,6 +417,33 @@ func parseDarwinProcessArgs(body []byte) ([]string, error) {
 	return args, nil
 }
 
+func darwinEnvKeys(pid int, keys []string) map[string]string {
+	found := map[string]string{}
+	if pid <= 0 || len(keys) == 0 {
+		return found
+	}
+	var reader darwinProcessArgsReader
+	_, _ = reader.args(pid)
+	body := reader.buffer
+	if len(body) == 0 {
+		return found
+	}
+	for _, key := range keys {
+		needle := []byte(key + "=")
+		offset := bytes.Index(body, needle)
+		if offset < 0 {
+			continue
+		}
+		rest := body[offset+len(needle):]
+		end := bytes.IndexByte(rest, 0)
+		if end < 0 {
+			continue
+		}
+		found[key] = string(rest[:end])
+	}
+	return found
+}
+
 func findDarwinSessionID(body []byte) []byte {
 	const uuidBytes = 36
 	for searchAt := 8; searchAt < len(body); {
