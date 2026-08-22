@@ -62,7 +62,7 @@ Examples:
   session-pressure --json doctor
   session-pressure --json audit --since 24h
   session-pressure --json snapshot
-  session-pressure --json self-test --wait 10m
+  session-pressure --json self-test --scope monitor --wait 10m
   session-pressure monitor install
   session-pressure policy enable
   session-pressure policy profile apply observe
