@@ -9,6 +9,8 @@ Target version: `0.5.0`.
   the strict default.
 - Package-scoped `go -C <dir>` and absolute `pnpm --dir <dir>` commands receive
   express work classes without a manual override.
+- Storage plans report Xcode device symbols, simulator state, documentation,
+  and derived data. This provider is read-only and never grants deletion.
 
 ## 0.1.0 — 2026-08-18
 
