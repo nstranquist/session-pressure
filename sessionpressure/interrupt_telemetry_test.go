@@ -91,7 +91,9 @@ func TestWrapperInterruptHeartbeatStreamsBoundedWorkHistory(t *testing.T) {
 	if summary.WrapperInterruptRatePerHour != float64(want)/24 {
 		t.Fatalf("wrapper interrupt rate = %v, want %v", summary.WrapperInterruptRatePerHour, float64(want)/24)
 	}
-	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 16<<20 {
+	// Race instrumentation changes allocation accounting. The race run still
+	// proves correctness, while the ordinary run owns the production budget.
+	if allocated := after.TotalAlloc - before.TotalAlloc; !raceDetectorEnabled && allocated > 16<<20 {
 		t.Fatalf("streaming %d work rows allocated %d bytes", eventCount, allocated)
 	}
 }
