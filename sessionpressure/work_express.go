@@ -408,14 +408,10 @@ func tokenizeSafeShellSequence(input string) ([][]string, bool) {
 // targets become express.
 func ClassifyGoWorkArgv(argv []string) (WorkClass, bool) {
 	tokens := normalizeGoArgv(argv)
-	if len(tokens) < 2 {
+	verb, rest, ok := splitGoWorkArgv(tokens)
+	if !ok {
 		return "", false
 	}
-	if !isGoToolchainBinary(tokens[0]) {
-		return "", false
-	}
-	verb := tokens[1]
-	rest := tokens[2:]
 	switch verb {
 	case "test":
 		if goTestRequiresFullWeight(rest) {
@@ -448,6 +444,42 @@ func ClassifyGoWorkArgv(argv []string) (WorkClass, bool) {
 	default:
 		return "", false
 	}
+}
+
+// splitGoWorkArgv keeps the Go -C directory in the phase arguments while it
+// finds the command verb. Go accepts -C before the verb, and monorepo agents
+// use that shape to avoid a shell-level directory change.
+func splitGoWorkArgv(tokens []string) (string, []string, bool) {
+	if len(tokens) < 2 || !isGoToolchainBinary(tokens[0]) {
+		return "", nil, false
+	}
+	prefix := make([]string, 0, 2)
+	for index := 1; index < len(tokens); {
+		arg := tokens[index]
+		switch {
+		case arg == "-C":
+			if index+1 >= len(tokens) || strings.TrimSpace(tokens[index+1]) == "" {
+				return "", nil, false
+			}
+			prefix = append(prefix, arg, tokens[index+1])
+			index += 2
+		case strings.HasPrefix(arg, "-C="):
+			if strings.TrimSpace(strings.TrimPrefix(arg, "-C=")) == "" {
+				return "", nil, false
+			}
+			prefix = append(prefix, arg)
+			index++
+		case strings.HasPrefix(arg, "-"):
+			// Unknown global flags can change command behavior. Refuse to guess.
+			return "", nil, false
+		default:
+			rest := make([]string, 0, len(prefix)+len(tokens)-index-1)
+			rest = append(rest, prefix...)
+			rest = append(rest, tokens[index+1:]...)
+			return arg, rest, true
+		}
+	}
+	return "", nil, false
 }
 
 func goTestRequiresFullWeight(args []string) bool {
@@ -741,8 +773,11 @@ func nodePackageSelectorIsSingle(value string) bool {
 
 func nodePackageDirIsConcrete(value string) bool {
 	clean := filepath.Clean(strings.TrimSpace(value))
-	if clean == "." || clean == ".." || clean == string(filepath.Separator) || filepath.IsAbs(clean) {
+	if clean == "." || clean == ".." || clean == string(filepath.Separator) {
 		return false
+	}
+	if filepath.IsAbs(clean) {
+		return clean != filepath.VolumeName(clean)+string(filepath.Separator)
 	}
 	return !strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }
@@ -1182,11 +1217,10 @@ func expressShapeMaterialAt(class WorkClass, command []string, cwdOverride strin
 		return strings.Join([]string{string(class), "make", workdir, target}, "\x00")
 	}
 	tokens := normalizeGoArgv(command)
-	if len(tokens) < 2 || !isGoToolchainBinary(tokens[0]) {
+	verb, rest, ok := splitGoWorkArgv(tokens)
+	if !ok {
 		return ""
 	}
-	verb := tokens[1]
-	rest := tokens[2:]
 	workdir, workdirOK := expressEffectiveWorkDir(rest, cwdOverride)
 	if !workdirOK {
 		return ""

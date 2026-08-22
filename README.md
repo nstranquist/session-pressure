@@ -8,11 +8,11 @@ This is the extracted open-core product. `ndev session pressure` in nicos-tools 
 
 ## What it does
 
-- Samples host CPU, memory, swap, and fail-open thermal / low-power signals
-- Admits or defers agent work through a weighted queue
-- Identifies Claude, Codex, Grok, and Kimi process trees
-- Watches internal-SSD write pressure
-- Ships a resident helper, a local opt-in API, and a thin native macOS client
+- Samples host CPU, memory, swap, and fail-open thermal or low-power signals.
+- Admits or defers agent work through a weighted queue.
+- Identifies Claude, Codex, Grok, and Kimi process trees.
+- Watches internal-SSD write pressure.
+- Ships a resident helper, a local opt-in API, and a thin native macOS client.
 
 ## Quick Start
 
@@ -88,9 +88,12 @@ Import and document these as the product:
 | `sessionpressurecmd` | CLI |
 | `sessionpressurecontrol` | Local control API |
 | `sessionpressurecleanup` | Cleanup helpers |
-| `pkg/` | Portable helpers other packages in this module may use |
+| `pkg/` | Portable helpers that other packages in this module can use |
 
-`internal/atomicfile`, `internal/jsonl`, `internal/telemetry`, and `internal/orb` are leftover copies from the factory extract. They are not the public API. Do not import them from another module. A later extract pass may hide or delete them; see [OPEN-CORE.md](OPEN-CORE.md).
+`internal/atomicfile`, `internal/jsonl`, `internal/telemetry`, and `internal/orb`
+are leftover copies from the factory extract. They are not the public API. Do
+not import them from another module. A later extract pass can hide or delete
+them. See [OPEN-CORE.md](OPEN-CORE.md).
 
 nicos-tools keeps Toolguard, agent-launch hooks, and nicos-only reclaim providers. See [OPEN-CORE.md](OPEN-CORE.md) and [docs/architecture.md](docs/architecture.md).
 
@@ -101,6 +104,11 @@ nicos-tools keeps Toolguard, agent-launch hooks, and nicos-only reclaim provider
 ./bin/session-pressure --json work status
 ./bin/session-pressure --json storage plan --target-free 50GiB
 ```
+
+The work coordinator recognizes package-scoped `go -C <dir> test/build` and
+`pnpm --dir <dir> test/build/typecheck` commands. It assigns the express class
+without a manual `--class` flag. Recursive and multi-package commands keep the
+full test or build weight.
 
 ## License
 

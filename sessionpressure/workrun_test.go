@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -55,6 +56,37 @@ func TestWorkEnvironmentDropsShellBookkeepingSoReuseDigestIsStable(t *testing.T)
 	// Variables a workload can legitimately read must stay bound.
 	if !slices.Contains(first, "GOFLAGS=-mod=mod") || !slices.Contains(first, "HOME=/Users/x") {
 		t.Fatalf("dropped a workload-visible variable: %v", first)
+	}
+}
+
+func TestClassifyWorkArgvSupportsMonorepoDirectoryFlags(t *testing.T) {
+	packageDir := filepath.Join(t.TempDir(), "app")
+	tests := []struct {
+		name     string
+		argv     []string
+		want     WorkClass
+		wantOK   bool
+		reusable bool
+	}{
+		{name: "go build after C", argv: []string{"go", "-C", packageDir, "build", "./cmd/tool"}, want: WorkClassExpressBuild, wantOK: true, reusable: true},
+		{name: "go test after C assignment", argv: []string{"go", "-C=" + packageDir, "test", "./pkg"}, want: WorkClassExpressTest, wantOK: true, reusable: true},
+		{name: "go recursive test after C", argv: []string{"go", "-C", packageDir, "test", "./..."}, want: WorkClassTest, wantOK: true},
+		{name: "go missing C value", argv: []string{"go", "-C"}, wantOK: false},
+		{name: "pnpm absolute test dir", argv: []string{"pnpm", "--dir", packageDir, "test"}, want: WorkClassExpressTest, wantOK: true},
+		{name: "pnpm absolute build dir", argv: []string{"pnpm", "--dir=" + packageDir, "build"}, want: WorkClassExpressBuild, wantOK: true},
+		{name: "pnpm filesystem root", argv: []string{"pnpm", "--dir", string(filepath.Separator), "test"}, want: WorkClassTest, wantOK: true},
+		{name: "pnpm recursive absolute dir", argv: []string{"pnpm", "--dir", packageDir, "--recursive", "test"}, want: WorkClassTest, wantOK: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := ClassifyWorkArgv(test.argv)
+			if got != test.want || ok != test.wantOK {
+				t.Fatalf("ClassifyWorkArgv(%q) = %q, %v; want %q, %v", test.argv, got, ok, test.want, test.wantOK)
+			}
+			if test.reusable && expressShapeMaterial(got, test.argv) == "" {
+				t.Fatalf("express command has no reuse identity: %q", test.argv)
+			}
+		})
 	}
 }
 
