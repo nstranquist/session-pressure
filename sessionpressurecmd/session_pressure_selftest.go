@@ -23,11 +23,19 @@ const (
 	pressureSelfTestErrorLimit                = 1024
 )
 
-var errPressureSelfTestUsage = errors.New("self-test accepts only --wait with 0 or a positive duration such as 10m, plus optional --full")
+var errPressureSelfTestUsage = errors.New("self-test accepts --wait with 0 or a positive duration such as 10m, --scope operator|monitor, and optional --full")
+
+type pressureSelfTestScope string
+
+const (
+	pressureSelfTestScopeOperator pressureSelfTestScope = "operator"
+	pressureSelfTestScopeMonitor  pressureSelfTestScope = "monitor"
+)
 
 type pressureSelfTestOptions struct {
-	wait time.Duration
-	full bool
+	wait  time.Duration
+	full  bool
+	scope pressureSelfTestScope
 }
 
 type pressureSelfTestOutput struct {
@@ -81,7 +89,7 @@ type pressureSelfTestState struct {
 }
 
 func parsePressureSelfTestArgs(args []string) (pressureSelfTestOptions, error) {
-	options := pressureSelfTestOptions{wait: pressureSelfTestDefaultWait}
+	options := pressureSelfTestOptions{wait: pressureSelfTestDefaultWait, scope: pressureSelfTestScopeOperator}
 	for len(args) > 0 {
 		switch args[0] {
 		case "--full":
@@ -102,6 +110,17 @@ func parsePressureSelfTestArgs(args []string) (pressureSelfTestOptions, error) {
 					return pressureSelfTestOptions{}, errPressureSelfTestUsage
 				}
 				options.wait = wait
+			}
+			args = args[2:]
+		case "--scope":
+			if len(args) < 2 {
+				return pressureSelfTestOptions{}, errPressureSelfTestUsage
+			}
+			switch pressureSelfTestScope(args[1]) {
+			case pressureSelfTestScopeOperator, pressureSelfTestScopeMonitor:
+				options.scope = pressureSelfTestScope(args[1])
+			default:
+				return pressureSelfTestOptions{}, errPressureSelfTestUsage
 			}
 			args = args[2:]
 		default:
@@ -127,7 +146,7 @@ func cmdSessionPressureSelfTest(g *Flags, args []string) int {
 	}
 	coordinator := sessionpressure.NewWorkCoordinator(runtime.dir, runtime.policy.WorkLimits)
 	state, stateErr := readPressureSelfTestState(runtime, manager, coordinator)
-	payload := pressureSelfTestPayload(runtime, state, options.full)
+	payload := pressureSelfTestPayload(runtime, state, options)
 	fail := func(message string) int {
 		message = boundedPressureSelfTestError(message)
 		payload["ok"] = false
@@ -143,8 +162,8 @@ func cmdSessionPressureSelfTest(g *Flags, args []string) int {
 	if state.HasRecovery {
 		return fail("an unclean-shutdown recovery hint is pending")
 	}
-	if !state.Health.OperatorReady {
-		return fail("resident is not operator ready: " + strings.Join(state.Health.OperatorReasons, "; "))
+	if reason := pressureSelfTestReadinessFailure(state, options.scope); reason != "" {
+		return fail(reason)
 	}
 
 	helper, err := resolvePressureWorkHelper()
@@ -171,7 +190,7 @@ func cmdSessionPressureSelfTest(g *Flags, args []string) int {
 	}
 	afterCoordinator := sessionpressure.NewWorkCoordinator(afterRuntime.dir, afterRuntime.policy.WorkLimits)
 	after, afterErr := readPressureSelfTestState(afterRuntime, manager, afterCoordinator)
-	payload = pressureSelfTestPayload(afterRuntime, after, options.full)
+	payload = pressureSelfTestPayload(afterRuntime, after, options)
 	if afterErr != nil {
 		return fail(afterErr.Error())
 	}
@@ -184,14 +203,15 @@ func cmdSessionPressureSelfTest(g *Flags, args []string) int {
 	if after.Launchd.PID != state.Launchd.PID || after.Launchd.ArtifactSHA256 != state.Launchd.ArtifactSHA256 {
 		return fail("resident PID or artifact changed during the work probe")
 	}
-	if !after.Health.OperatorReady {
-		return fail("resident lost operator readiness during the work probe: " + strings.Join(after.Health.OperatorReasons, "; "))
+	if reason := pressureSelfTestReadinessFailure(after, options.scope); reason != "" {
+		return fail("resident lost " + string(options.scope) + " readiness during the work probe: " + reason)
 	}
 
 	payload["ok"] = true
 	elapsed := time.Since(started).Round(time.Millisecond)
 	text := fmt.Sprintf(
-		"session pressure self-test: PASS pid=%d artifact=%s work=browser:true elapsed=%s capacity=%d/%d\n",
+		"session pressure self-test: PASS scope=%s pid=%d artifact=%s work=browser:true elapsed=%s capacity=%d/%d\n",
+		options.scope,
 		after.Launchd.PID, shortPressureDigest(after.Launchd.ArtifactSHA256), elapsed,
 		after.Work.Available, after.Work.Capacity,
 	)
@@ -225,9 +245,26 @@ func readPressureSelfTestState(runtime pressureRuntime, manager LaunchdControlle
 	return state, nil
 }
 
-func pressureSelfTestPayload(runtime pressureRuntime, state pressureSelfTestState, full bool) map[string]any {
+func pressureSelfTestReadinessFailure(state pressureSelfTestState, scope pressureSelfTestScope) string {
+	if scope == pressureSelfTestScopeOperator {
+		if state.Health.OperatorReady {
+			return ""
+		}
+		return "resident is not operator ready: " + strings.Join(state.Health.OperatorReasons, "; ")
+	}
+	if !state.Health.MonitorHealthy {
+		return "resident monitor is unhealthy: " + strings.Join(state.Health.HealthReasons, "; ")
+	}
+	if !state.HasLatest || !state.Latest.GuardBaselineProven {
+		return fmt.Sprintf("resident monitor baseline is not proven: need %d normal samples from this pid", state.Health.RequiredNormalSamples)
+	}
+	return ""
+}
+
+func pressureSelfTestPayload(runtime pressureRuntime, state pressureSelfTestState, options pressureSelfTestOptions) map[string]any {
 	payload := map[string]any{
 		"ok": false, "action": "self-test", "output_scope": "compact",
+		"readiness_scope":  string(options.scope),
 		"policy_persisted": runtime.persisted,
 		"launchd_summary":  compactPressureLaunchdStatus(state.Launchd), "health": state.Health,
 		"has_latest_monitor": state.HasLatest, "has_recovery_hint": state.HasRecovery,
@@ -236,7 +273,7 @@ func pressureSelfTestPayload(runtime pressureRuntime, state pressureSelfTestStat
 	if state.HasLatest {
 		payload["latest_monitor_summary"] = compactPressureStatusSnapshot(state.Latest)
 	}
-	if full {
+	if options.full {
 		payload["output_scope"] = "full"
 		payload["policy"] = runtime.policy
 		payload["policy_path"] = runtime.path

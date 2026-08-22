@@ -32,6 +32,18 @@ To write the tuned observe-only default policy, then sample once:
 ./bin/session-pressure --json snapshot
 ```
 
+After the resident has four normal samples, verify the installed observe-only
+path:
+
+```bash
+./bin/session-pressure --json self-test --scope monitor --wait 10m
+```
+
+This scope verifies the resident, its immutable artifact, and the weighted-work
+path. It does not claim that launch admission or automatic relief is active.
+The default `self-test` scope is `operator`. It requires the full protection
+policy.
+
 ## Install
 
 From source:
@@ -68,7 +80,7 @@ Do not copy a live `~/.nicos-dev/session-pressure` tree into issues, fixtures, o
 
 ## Troubleshooting
 
-- **`doctor` reports the host red or `ok=false`.** That is live host pressure, not a broken install. Check `session-pressure --json status --live`.
+- **`doctor` shows host red or `ok=false`.** This result means live host pressure. It does not mean a broken install. Run `session-pressure --json status --live` for details.
 - **`ndev session pressure` exits 127.** The nicos-tools wrapper cannot find the product CLI. Install `session-pressure` or `ndev-pressure` on `PATH`.
 - **Desktop says the binary is missing.** Set `SESSION_PRESSURE_BIN` to the built `bin/session-pressure`. The client prefers that name over nicos-tools paths.
 - **`storage apply` refuses a provider.** Extract pageskein reclaim is closed. Factory-only providers stay visible and non-actionable. See [OPEN-CORE.md](OPEN-CORE.md).

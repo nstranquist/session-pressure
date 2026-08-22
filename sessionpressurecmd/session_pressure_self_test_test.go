@@ -56,17 +56,21 @@ func seedReadyPressureSelfTest(t *testing.T) (string, sessionpressure.Policy) {
 
 func TestParsePressureSelfTestArgs(t *testing.T) {
 	tests := []struct {
-		args    []string
-		want    time.Duration
-		full    bool
-		wantErr bool
+		args      []string
+		want      time.Duration
+		full      bool
+		wantScope pressureSelfTestScope
+		wantErr   bool
 	}{
-		{want: pressureSelfTestDefaultWait},
-		{args: []string{"--wait", "0"}, want: 0},
-		{args: []string{"--wait", "45s"}, want: 45 * time.Second},
-		{args: []string{"--full", "--wait", "45s"}, want: 45 * time.Second, full: true},
+		{want: pressureSelfTestDefaultWait, wantScope: pressureSelfTestScopeOperator},
+		{args: []string{"--wait", "0"}, want: 0, wantScope: pressureSelfTestScopeOperator},
+		{args: []string{"--wait", "45s"}, want: 45 * time.Second, wantScope: pressureSelfTestScopeOperator},
+		{args: []string{"--full", "--wait", "45s"}, want: 45 * time.Second, full: true, wantScope: pressureSelfTestScopeOperator},
+		{args: []string{"--scope", "monitor"}, want: pressureSelfTestDefaultWait, wantScope: pressureSelfTestScopeMonitor},
 		{args: []string{"--wait"}, wantErr: true},
 		{args: []string{"--wait", "later"}, wantErr: true},
+		{args: []string{"--scope"}, wantErr: true},
+		{args: []string{"--scope", "ready"}, wantErr: true},
 		{args: []string{"--other", "1m"}, wantErr: true},
 	}
 	if pressureSelfTestDefaultWait != 30*time.Second {
@@ -74,8 +78,8 @@ func TestParsePressureSelfTestArgs(t *testing.T) {
 	}
 	for _, test := range tests {
 		got, err := parsePressureSelfTestArgs(test.args)
-		if (err != nil) != test.wantErr || got.wait != test.want || got.full != test.full {
-			t.Fatalf("args=%v options=%+v err=%v want_wait=%s want_full=%v want_err=%v", test.args, got, err, test.want, test.full, test.wantErr)
+		if (err != nil) != test.wantErr || got.wait != test.want || got.full != test.full || got.scope != test.wantScope {
+			t.Fatalf("args=%v options=%+v err=%v want_wait=%s want_full=%v want_scope=%q want_err=%v", test.args, got, err, test.want, test.full, test.wantScope, test.wantErr)
 		}
 	}
 }
@@ -175,6 +179,65 @@ func TestCmdSessionPressureSelfTestDoesNotProbeUnreadyResident(t *testing.T) {
 	}
 	if err := operationcontract.ValidateOutputJSON(operationcontract.All(), "nicos.session.pressure-result.v1", []byte(stdout)); err != nil {
 		t.Fatalf("failure output contract: %v\n%s", err, stdout)
+	}
+}
+
+func TestCmdSessionPressureSelfTestMonitorScopeProbesObserveOnlyResident(t *testing.T) {
+	dir, policy := seedReadyPressureSelfTest(t)
+	policy.EnforceAdmission = false
+	policy.AutoShedCritical = false
+	if err := sessionpressure.SavePolicy(sessionpressure.PolicyPath(dir), policy); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	installPressureSelfTestProbe(t, func(context.Context, string, time.Duration) error {
+		calls++
+		return nil
+	})
+	rc, stdout, stderr := captureMainOutput(t, func() int {
+		return cmdSessionPressureSelfTest(&Flags{JSON: true}, []string{"--scope", "monitor", "--wait", "0"})
+	})
+	if rc != 0 || stderr != "" || calls != 1 {
+		t.Fatalf("rc=%d calls=%d stderr=%q output=%s", rc, calls, stderr, stdout)
+	}
+	var payload struct {
+		OK             bool                        `json:"ok"`
+		ReadinessScope string                      `json:"readiness_scope"`
+		Health         sessionpressure.GuardHealth `json:"health"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.OK || payload.ReadinessScope != "monitor" || !payload.Health.MonitorHealthy || payload.Health.DailyDriverReady {
+		t.Fatalf("unexpected monitor-scope payload: %+v", payload)
+	}
+	if err := operationcontract.ValidateOutputJSON(operationcontract.All(), "nicos.session.pressure-result.v1", []byte(stdout)); err != nil {
+		t.Fatalf("monitor-scope output contract: %v\n%s", err, stdout)
+	}
+}
+
+func TestCmdSessionPressureSelfTestMonitorScopeRequiresBaseline(t *testing.T) {
+	dir, _ := seedReadyPressureSelfTest(t)
+	store := sessionpressure.NewTelemetryStore(dir)
+	latest, ok := store.ReadLatest()
+	if !ok {
+		t.Fatal("latest monitor fixture is absent")
+	}
+	latest.GuardBaselineProven = false
+	latest.NormalMonitorSamples = 3
+	if err := store.WriteLatest(latest); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	installPressureSelfTestProbe(t, func(context.Context, string, time.Duration) error {
+		calls++
+		return nil
+	})
+	rc, stdout, _ := captureMainOutput(t, func() int {
+		return cmdSessionPressureSelfTest(&Flags{JSON: true}, []string{"--scope", "monitor", "--wait", "0"})
+	})
+	if rc != 1 || calls != 0 || !strings.Contains(stdout, "baseline is not proven") {
+		t.Fatalf("rc=%d calls=%d output=%s", rc, calls, stdout)
 	}
 }
 

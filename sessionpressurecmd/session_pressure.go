@@ -25,7 +25,8 @@ Subcommands:
   doctor                           Compact agent/operator health (monitor, policy, queue, soft-launch)
   audit [--no-live] [--since D] [--full]  Compact category pass/fail; --full adds metrics blobs
   status [--live] [--full]         Show compact health; --live samples, --full adds diagnostics
-  self-test [--wait D] [--full]    Verify the installed path; default queue wait is 30s, compact JSON by default
+  self-test [--wait D] [--scope operator|monitor] [--full]
+                                  Verify the installed path; operator scope is the default
   board [--live] [--full] [--include S]  One composite read; compact by default, --full for desktop diagnostics
   recovery [clear]                 Show or clear an unclean-shutdown session recovery hint
   telemetry [--limit N] [--since D]  Read bounded transition/heartbeat telemetry
