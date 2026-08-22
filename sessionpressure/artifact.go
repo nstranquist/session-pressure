@@ -23,7 +23,7 @@ const artifactManifestMinimumSchemaVersion = 1
 const artifactFileMode = 0o555
 const ArtifactRollbackCount = 2
 
-const Version = "0.4.0"
+const Version = "0.5.0"
 
 // InstalledArtifact is the immutable helper revision selected for launchd.
 // Ordinary repository builds never mutate this content-addressed path.
