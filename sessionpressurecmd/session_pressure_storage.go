@@ -459,6 +459,29 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 		}
 		reports = append(reports, report)
 	}
+	xcodeDeveloperPath := filepath.Join(home, "Library", "Developer")
+	xcodeDeveloperBytes := int64(0)
+	xcodeDeveloperPresent := storagePathExists(xcodeDeveloperPath)
+	xcodeDeveloperErr := error(nil)
+	xcodeEstimateKind := "presence_only"
+	if measure {
+		xcodeDeveloperBytes, xcodeDeveloperPresent, xcodeDeveloperErr = storageDirectoryBytes(xcodeDeveloperPath)
+		xcodeEstimateKind = "inventory"
+	}
+	xcodeDeveloperReport := storageProviderReport{
+		ID:                "xcode-developer-data",
+		Classification:    storageProviderReportOnly,
+		Summary:           "Xcode device symbols, simulator state, documentation, and derived data; inspect by owner",
+		Path:              xcodeDeveloperPath,
+		Present:           xcodeDeveloperPresent,
+		EstimatedBytes:    xcodeDeveloperBytes,
+		EstimateKind:      xcodeEstimateKind,
+		MutationSupported: false,
+	}
+	if xcodeDeveloperErr != nil {
+		xcodeDeveloperReport.BlockedReason = xcodeDeveloperErr.Error()
+	}
+	reports = append(reports, xcodeDeveloperReport)
 	for _, definition := range []struct {
 		id, summary, path string
 		overlaps          []string

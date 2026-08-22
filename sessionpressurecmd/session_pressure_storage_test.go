@@ -111,11 +111,15 @@ func TestStorageProviderClassificationPreservesPersonalStateAndRequiresExplicitG
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"mobile-sync", "downloads", "go-module-cache"} {
+	for _, id := range []string{"mobile-sync", "downloads", "go-module-cache", "xcode-developer-data"} {
 		report, ok := storageProviderByID(reports, id)
 		if !ok || report.Classification != storageProviderReportOnly || report.MutationSupported {
 			t.Fatalf("provider %s = %+v", id, report)
 		}
+	}
+	xcodeReport, _ := storageProviderByID(reports, "xcode-developer-data")
+	if xcodeReport.EstimatedBytes <= 0 || xcodeReport.EstimateKind != "inventory" {
+		t.Fatalf("xcode developer inventory = %+v", xcodeReport)
 	}
 	for _, id := range []string{"go-build-cache", "yarn-cache", "npm-cache", "brew-cache", "swiftpm-cache", "playwright-cache", "gradle-caches", "nicos-telemetry-archive", "nicos-voice-models", "nicos-wine-proof", "nicos-pw-archive"} {
 		report, ok := storageProviderByID(reports, id)
