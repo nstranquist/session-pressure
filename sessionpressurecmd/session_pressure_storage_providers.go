@@ -10,7 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nstranquist/session-pressure/pkg/processtree"
@@ -20,6 +23,8 @@ const (
 	storageHotnessSchemaVersion = 1
 	storageHotnessAgeFloor      = 7 * 24 * time.Hour
 	storageHotnessMaxItems      = 1_000_000
+	storageHotnessTimeout       = 90 * time.Second
+	storageHotnessWorkers       = 8
 )
 
 type storageAgeBucket struct {
@@ -49,6 +54,16 @@ type storageProviderHotnessEvidence struct {
 	ColdEligibleBytes  int64              `json:"cold_eligible_bytes"`
 	ColdMeetsShortfall bool               `json:"cold_meets_shortfall"`
 	AgeBuckets         []storageAgeBucket `json:"age_buckets"`
+}
+
+type storageHotnessPartial struct {
+	path              string
+	itemCount         int64
+	totalBytes        int64
+	hotBytes          int64
+	coldEligibleBytes int64
+	ageBuckets        [4]storageAgeBucket
+	err               error
 }
 
 func measureStorageHotness(path string, now time.Time) (*storageProviderHotnessEvidence, error) {
@@ -85,10 +100,71 @@ func measureStorageHotness(path string, now time.Time) (*storageProviderHotnessE
 	}
 	evidence.Available = true
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), storageHotnessTimeout)
 	defer cancel()
-	entryCount := 0
-	err = filepath.WalkDir(path, func(entryPath string, entry os.DirEntry, walkErr error) error {
+	children, err := os.ReadDir(path)
+	if err != nil {
+		evidence.ErrorCode = "walk_failed"
+		return evidence, fmt.Errorf("measure hotness %s: %w", path, err)
+	}
+	workerCount := min(storageHotnessWorkers, max(1, len(children)))
+	tasks := make(chan string, len(children))
+	results := make(chan storageHotnessPartial, len(children))
+	var visited atomic.Int64
+	var workers sync.WaitGroup
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for childPath := range tasks {
+				results <- measureStorageHotnessTree(ctx, childPath, now, &visited)
+			}
+		}()
+	}
+	for _, child := range children {
+		tasks <- filepath.Join(path, child.Name())
+	}
+	close(tasks)
+	workers.Wait()
+	close(results)
+
+	partials := make([]storageHotnessPartial, 0, len(children))
+	for partial := range results {
+		partials = append(partials, partial)
+	}
+	sort.Slice(partials, func(i, j int) bool { return partials[i].path < partials[j].path })
+	for _, partial := range partials {
+		evidence.ItemCount += partial.itemCount
+		evidence.TotalBytes += partial.totalBytes
+		evidence.HotBytes += partial.hotBytes
+		evidence.ColdEligibleBytes += partial.coldEligibleBytes
+		for index := range evidence.AgeBuckets {
+			evidence.AgeBuckets[index].ItemCount += partial.ageBuckets[index].ItemCount
+			evidence.AgeBuckets[index].Bytes += partial.ageBuckets[index].Bytes
+		}
+		if err == nil && partial.err != nil {
+			err = partial.err
+		}
+	}
+	if evidence.TotalBytes > 0 {
+		evidence.HotFraction = float64(evidence.HotBytes) / float64(evidence.TotalBytes)
+	}
+	if err != nil {
+		evidence.Complete = false
+		if errors.Is(err, errStorageHotnessItemLimit) {
+			evidence.ErrorCode = "item_limit"
+		} else if evidence.ErrorCode == "" {
+			evidence.ErrorCode = "walk_failed"
+		}
+		return evidence, fmt.Errorf("measure hotness %s: %w", path, err)
+	}
+	evidence.Complete = true
+	return evidence, nil
+}
+
+func measureStorageHotnessTree(ctx context.Context, path string, now time.Time, visited *atomic.Int64) storageHotnessPartial {
+	partial := storageHotnessPartial{path: path}
+	partial.err = filepath.WalkDir(path, func(_ string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -98,14 +174,12 @@ func measureStorageHotness(path string, now time.Time) (*storageProviderHotnessE
 		if entry.IsDir() {
 			return nil
 		}
-		if entryCount >= storageHotnessMaxItems {
-			evidence.ErrorCode = "item_limit"
+		if visited.Add(1) > storageHotnessMaxItems {
 			return errStorageHotnessItemLimit
 		}
-		entryCount++
-		fileInfo, infoErr := entry.Info()
-		if infoErr != nil {
-			return infoErr
+		fileInfo, err := entry.Info()
+		if err != nil {
+			return err
 		}
 		if !fileInfo.Mode().IsRegular() {
 			return nil
@@ -114,34 +188,20 @@ func measureStorageHotness(path string, now time.Time) (*storageProviderHotnessE
 		if age < 0 {
 			age = 0
 		}
+		bytes := max(int64(0), fileInfo.Size())
 		bucket := storageAgeBucketIndex(age)
-		bytes := fileInfo.Size()
-		if bytes < 0 {
-			bytes = 0
-		}
-		evidence.ItemCount++
-		evidence.TotalBytes += bytes
-		evidence.AgeBuckets[bucket].ItemCount++
-		evidence.AgeBuckets[bucket].Bytes += bytes
+		partial.itemCount++
+		partial.totalBytes += bytes
+		partial.ageBuckets[bucket].ItemCount++
+		partial.ageBuckets[bucket].Bytes += bytes
 		if age < storageHotnessAgeFloor {
-			evidence.HotBytes += bytes
+			partial.hotBytes += bytes
 		} else {
-			evidence.ColdEligibleBytes += bytes
+			partial.coldEligibleBytes += bytes
 		}
 		return nil
 	})
-	if evidence.TotalBytes > 0 {
-		evidence.HotFraction = float64(evidence.HotBytes) / float64(evidence.TotalBytes)
-	}
-	if err != nil {
-		evidence.Complete = false
-		if evidence.ErrorCode == "" {
-			evidence.ErrorCode = "walk_failed"
-		}
-		return evidence, fmt.Errorf("measure hotness %s: %w", path, err)
-	}
-	evidence.Complete = true
-	return evidence, nil
+	return partial
 }
 
 var errStorageHotnessItemLimit = errors.New("hotness measurement item limit reached")
