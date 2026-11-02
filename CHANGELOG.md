@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.1 — 2026-11-02
+
 ### Fixed
 
 - `io health` on a Mac with no SMART-capable NVMe device (VMs, CI runners,
