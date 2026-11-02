@@ -48,9 +48,9 @@ public enum PressureHelp {
     public static let storageAutoSafe =
         "Closed auto_safe class: browser-dead-profiles and pnpm-store. Factory-only or blocked rows stay visible and non-actionable, including pageskein reclaim in the open extract."
     public static let storageOperator =
-        "Named operator providers. Each Apply control previews then confirms --provider ID. go-build-cache is never part of --auto-safe. Operator --force skips only that provider's reclaim cooldown."
+        "Named operator providers. Each Apply control previews then confirms --provider ID. go-build-cache is never part of --auto-safe and requires --full-wipe because a full GOCACHE reset is rebuild tax. Operator --force skips only that provider's reclaim cooldown."
     public static let storageReportOnly =
-        "Inventory only. downloads, library-caches, go-module-cache, and mobile-sync cannot be applied from this app."
+        "Inventory only. downloads, library-caches, go-module-cache, cargo-registry, xcode-device-support, and mobile-sync cannot be applied from this app."
     public static let storageReceipt =
         "Append-only log of the typed storage apply command and its JSON/text output. This is not an agent terminal and does not capture unrelated process argv."
     public static let storagePolicyEnable =

@@ -290,13 +290,29 @@ func isResidentWorkCommand(command []string) bool {
 		}
 		name, args = strings.ToLower(filepath.Base(args[0])), args[1:]
 	}
-	if name == "vite" || name == "next" || name == "vinext" || name == "webpack-dev-server" {
-		return len(args) == 0 || args[0] == "dev" || args[0] == "serve" || name == "webpack-dev-server"
+	if name == "vite" || name == "next" || name == "vinext" || name == "astro" || name == "wrangler" || name == "webpack-dev-server" {
+		if name == "webpack-dev-server" {
+			return true
+		}
+		if len(args) == 0 {
+			return name == "vite" || name == "vinext"
+		}
+		verb := args[0]
+		if name == "wrangler" {
+			return verb == "dev" || (verb == "pages" && len(args) > 1 && args[1] == "dev")
+		}
+		return verb == "dev" || verb == "serve" || verb == "start" || verb == "preview"
+	}
+	if name == "npx" || name == "bunx" {
+		return isResidentWorkCommand(args)
 	}
 	if name != "npm" && name != "pnpm" && name != "yarn" && name != "bun" {
 		return false
 	}
 	for i, arg := range args {
+		if (arg == "exec" || arg == "dlx") && i+1 < len(args) {
+			return isResidentWorkCommand(args[i+1:])
+		}
 		if (arg == "run" || arg == "run-script") && i+1 < len(args) {
 			return args[i+1] == "dev" || args[i+1] == "start" || args[i+1] == "serve"
 		}
@@ -305,6 +321,10 @@ func isResidentWorkCommand(command []string) bool {
 		}
 	}
 	return false
+}
+
+func workTerminationSignals() []os.Signal {
+	return []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
 }
 
 // workShellBookkeepingEnv lists variables a shell rewrites as a side effect of
@@ -829,6 +849,9 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	if err := eventStore.Prune(retentionDays); err != nil {
 		return 1, fmt.Errorf("prune work event telemetry: %w", err)
 	}
+	if pruneErr := pruneWorkOutput(coordinator.Dir, time.Hour); pruneErr != nil {
+		fmt.Fprintln(streams.Stderr, "ndev session pressure: prune work output preview:", pruneErr)
+	}
 	commandDigest := CommandShapeDigest(resolvedExecutable, len(options.Command)-1)
 	sessionDigest := DetectedAgentSessionDigest(os.Environ())
 	// Declared ahead of appendEvent so every persisted row can carry the gate's
@@ -889,7 +912,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	if options.Wait > 0 {
 		waitCtx, cancel = context.WithTimeout(context.Background(), options.Wait)
 	}
-	waitCtx, stopWaiting := signal.NotifyContext(waitCtx, os.Interrupt, syscall.SIGTERM)
+	waitCtx, stopWaiting := signal.NotifyContext(waitCtx, workTerminationSignals()...)
 	var lease *WorkLease
 	var acquiredAt time.Time
 	var childStartedAt time.Time
@@ -1226,7 +1249,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	var ownedSignals chan os.Signal
 	if signals == nil {
 		ownedSignals = make(chan os.Signal, 2)
-		signal.Notify(ownedSignals, os.Interrupt, syscall.SIGTERM)
+		signal.Notify(ownedSignals, workTerminationSignals()...)
 		signals = ownedSignals
 		defer signal.Stop(ownedSignals)
 	}
@@ -1274,6 +1297,12 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	command.Stdin = streams.Stdin
 	command.Stdout = streams.Stdout
 	command.Stderr = streams.Stderr
+	if preview, previewErr := openWorkOutputTee(coordinator.Dir, operationID); previewErr != nil {
+		fmt.Fprintln(streams.Stderr, "ndev session pressure: work output preview:", previewErr)
+	} else {
+		command.Stdout = io.MultiWriter(streams.Stdout, preview)
+		command.Stderr = io.MultiWriter(streams.Stderr, preview)
+	}
 	environment, environmentErr := WorkEnvironment(os.Environ(), coordinator.Limits, options.Class)
 	if environmentErr != nil {
 		if gate != nil {

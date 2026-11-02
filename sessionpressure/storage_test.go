@@ -134,13 +134,16 @@ func TestFormatStorageDeadlockAdviceActionable(t *testing.T) {
 	if !strings.Contains(line, "storage-red deadlock") || !strings.Contains(line, "storage plan") || !strings.Contains(line, "release=") {
 		t.Fatalf("advice not actionable: %s", line)
 	}
-	for _, want := range []string{"skill storage-reclaim", "--auto-safe --apply", "--provider user-trash", "--provider app-updater-caches", "--provider browser-media-caches", "--provider brew-cache", "catalog skill.storage-reclaim"} {
+	for _, want := range []string{"skill storage-reclaim", "--auto-safe --apply", "--provider user-trash", "--provider app-updater-caches", "--provider browser-media-caches", "--provider ios-simulator-runtime", "--provider brew-cache", "--full-wipe", "catalog skill.storage-reclaim"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("advice missing %q: %s", want, line)
 		}
 	}
 	if strings.Index(line, "--auto-safe --apply") > strings.Index(line, "--provider go-build-cache") {
 		t.Fatalf("go-build-cache was not last reclaim lever: %s", line)
+	}
+	if strings.Index(line, "--provider ios-simulator-runtime") > strings.Index(line, "--provider go-build-cache") {
+		t.Fatalf("ios-simulator-runtime must precede go-build-cache: %s", line)
 	}
 }
 

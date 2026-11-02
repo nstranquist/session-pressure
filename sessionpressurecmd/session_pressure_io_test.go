@@ -63,6 +63,10 @@ func seedPressureIOTest(t *testing.T) (string, sessionpressure.DiskWriteSummary)
 		"sample_count":       240,
 		"baseline_p99_bytes": 32 << 20,
 		"contexts":           map[string]any{},
+		"executables": []map[string]any{
+			{"executable": "codex", "total_bytes": 64 << 20, "histogram": map[string]any{"count": 10}},
+			{"executable": "go", "total_bytes": 16 << 20, "histogram": map[string]any{"count": 4}},
+		},
 	}
 	body, err := json.Marshal(history)
 	if err != nil {
@@ -80,8 +84,10 @@ func TestCmdSessionPressureIOReadContractsAndPrivacy(t *testing.T) {
 	commands := [][]string{
 		{"pressure", "io", "status"},
 		{"pressure", "io", "status", "--full"},
+		{"pressure", "io", "health"},
 		{"pressure", "io", "top", "--limit", "1"},
 		{"pressure", "io", "history", "--since", "24h", "--limit", "1"},
+		{"pressure", "io", "history", "--since", "24h", "--limit", "1", "--full"},
 		{"pressure", "io", "policy", "show"},
 		{"pressure", "io", "trace", "--pid", strconv.Itoa(os.Getpid()), "--duration", "5s"},
 	}
@@ -101,6 +107,15 @@ func TestCmdSessionPressureIOReadContractsAndPrivacy(t *testing.T) {
 			}
 			if args[2] == "top" && (strings.Contains(stdout, "\"pid\"") || strings.Contains(stdout, "process_start_id")) {
 				t.Fatalf("default top leaked ephemeral process identity: %s", stdout)
+			}
+			if args[2] == "history" && containsArg(args, "--full") && (!strings.Contains(stdout, `"codex"`) || !strings.Contains(stdout, `all_disk_io_best_effort`)) {
+				t.Fatalf("history --full omitted executables or attribution: %s", stdout)
+			}
+			if args[2] == "history" && !containsArg(args, "--full") && strings.Contains(stdout, `"executables"`) {
+				t.Fatalf("compact history leaked executables: %s", stdout)
+			}
+			if args[2] == "health" && !strings.Contains(stdout, `"action": "io.health"`) {
+				t.Fatalf("health missing action: %s", stdout)
 			}
 		})
 	}
@@ -175,6 +190,15 @@ func TestCmdSessionPressureIOTopUsesStableEmptyArray(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil || payload.Writers == nil || len(payload.Writers) != 0 {
 		t.Fatalf("empty writer contract=%+v err=%v\n%s", payload, err, stdout)
 	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCmdSessionPressureIORejectsUnboundedRequests(t *testing.T) {

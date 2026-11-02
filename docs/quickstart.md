@@ -28,3 +28,14 @@ default operator-scope self-test only after an approved policy enables both
 protections.
 
 Default state directory is `~/.nicos-dev/session-pressure`. Override it with `SESSION_PRESSURE_HOME` or `NDEV_SESSION_PRESSURE_HOME`.
+
+Read internal SSD lifetime wear (observe-only). This is NVMe SMART, not the
+15-minute write-rate window:
+
+```bash
+./bin/session-pressure --json io health
+./bin/session-pressure --json io history --since 168h --limit 48 --full
+```
+
+`io health` writes `nvme-smart-latest.json` and appends
+`nvme-smart-health.jsonl` when percent used or host writes change.

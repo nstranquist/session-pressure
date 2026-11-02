@@ -11,6 +11,10 @@ Target version: `0.5.0`.
   express work classes without a manual override.
 - Storage plans report Xcode device symbols, simulator state, documentation,
   and derived data. This provider is read-only and never grants deletion.
+- `io health` reads NVMe SMART lifetime wear (percent used, host TB written)
+  through Apple's NVMeSMARTLib and appends `nvme-smart-health.jsonl`.
+- `io history --full` returns the bounded per-hour executable list already
+  stored in `disk-writes-*.jsonl`. Compact history stays token-cheap.
 
 ## 0.1.0 — 2026-08-18
 

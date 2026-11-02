@@ -127,6 +127,47 @@ func TestWorkGateClosesControlDescriptorBeforeExec(t *testing.T) {
 	}
 }
 
+func TestRunWorkCommandTeesStdoutIntoInspectablePreview(t *testing.T) {
+	dir := t.TempDir()
+	coordinator := NewWorkCoordinator(dir, testWorkLimits())
+	var stdout bytes.Buffer
+	code, err := RunWorkCommand(
+		coordinator,
+		WorkRunOptions{Class: WorkClassExpressTest, Wait: time.Second, Command: []string{"/bin/echo", "hello-from-tee-preview"}},
+		func() Admission { return Admission{Allowed: true, Level: LevelNormal} },
+		time.Millisecond,
+		WorkRunStreams{
+			Stdout: &stdout,
+			Stderr: io.Discard,
+			CommandFactory: func(target string, args []string) (*exec.Cmd, io.WriteCloser, error) {
+				return exec.Command(target, args...), nil, nil
+			},
+		},
+	)
+	if code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v stdout=%q", code, err, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "hello-from-tee-preview") {
+		t.Fatalf("stdout=%q", stdout.String())
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, workOutputDirName, "*.log"))
+	if len(matches) != 1 {
+		t.Fatalf("preview files=%v", matches)
+	}
+	raw, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "hello-from-tee-preview") {
+		t.Fatalf("tee=%q", raw)
+	}
+	id := strings.TrimSuffix(filepath.Base(matches[0]), ".log")
+	out := collectWorkInspectOutput(dir, id, WorkInspectOrigin{})
+	if out.Source != WorkOutputWorkRun || !strings.Contains(out.Text, "hello-from-tee-preview") {
+		t.Fatalf("inspect output=%#v", out)
+	}
+}
+
 func TestRunWorkCommandRejectsNilFactoryCommandWithoutLeakingLease(t *testing.T) {
 	coordinator := NewWorkCoordinator(t.TempDir(), testWorkLimits())
 	code, err := RunWorkCommand(
@@ -388,6 +429,11 @@ func TestWorkRunRejectsResidentCommands(t *testing.T) {
 		{"--class", "browser", "--", "pnpm", "dev"},
 		{"--class", "browser", "--", "npm", "run", "start"},
 		{"--class", "browser", "--", "env", "PORT=3000", "vinext", "dev"},
+		{"--class", "browser", "--", "pnpm", "exec", "next", "dev", "-p", "3937"},
+		{"--class", "browser", "--", "pnpm", "dlx", "vite", "preview"},
+		{"--class", "browser", "--", "npx", "next", "start"},
+		{"--class", "browser", "--", "bunx", "astro", "dev"},
+		{"--class", "browser", "--", "wrangler", "pages", "dev", "dist"},
 	}
 	for _, args := range resident {
 		if _, err := ParseWorkRunArgs(args); err == nil || !strings.Contains(err.Error(), "ndev dev") {
@@ -396,6 +442,28 @@ func TestWorkRunRejectsResidentCommands(t *testing.T) {
 	}
 	if _, err := ParseWorkRunArgs([]string{"--class", "test", "--", "pnpm", "test"}); err != nil {
 		t.Fatalf("finite command rejected: %v", err)
+	}
+	for _, args := range [][]string{
+		{"--class", "build", "--", "pnpm", "exec", "next", "build"},
+		{"--class", "test", "--", "pnpm", "exec", "eslint", "."},
+		{"--class", "build", "--", "wrangler", "deploy", "--dry-run"},
+	} {
+		if _, err := ParseWorkRunArgs(args); err != nil {
+			t.Fatalf("finite wrapped command rejected: args=%v err=%v", args, err)
+		}
+	}
+}
+
+func TestWorkTerminationSignalsIncludeParentHangup(t *testing.T) {
+	want := []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
+	got := workTerminationSignals()
+	if len(got) != len(want) {
+		t.Fatalf("termination signals=%v want=%v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("termination signals=%v want=%v", got, want)
+		}
 	}
 }
 
@@ -577,7 +645,15 @@ func TestWorkSignalTreeHelperProcess(t *testing.T) {
 		os.Exit(120)
 	}
 	if err := atomicWrite(path, []byte(fmt.Sprintf("%d\n", child.Process.Pid)), 0o600); err != nil {
-		_ = child.Process.Kill()
+		if killErr := child.Process.Kill(); killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+			os.Exit(123)
+		}
+		if waitErr := child.Wait(); waitErr != nil {
+			var exitErr *exec.ExitError
+			if !errors.As(waitErr, &exitErr) {
+				os.Exit(124)
+			}
+		}
 		os.Exit(121)
 	}
 	if err := child.Wait(); err != nil {

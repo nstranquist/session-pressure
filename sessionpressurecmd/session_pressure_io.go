@@ -14,20 +14,23 @@ import (
 
 const sessionPressureIOHelp = `Usage: session-pressure [--json] io <subcommand> [flags]
 
-Observe internal-SSD block writes and correlate best-effort process writes.
+Observe internal-SSD block writes, NVMe lifetime wear, and best-effort process writes.
 Process counters cover all volumes and are not exact internal-SSD attribution.
 
 Subcommands:
   status [--live] [--full]                 Compact summary; live takes a bounded one-second sample
+  health                                   Read-only NVMe SMART lifetime wear (TBW / percent used)
   top [--live] [--limit N]                 Persisted lead writer; --live defaults to 5, maximum 20
-  history [--since D] [--limit N]          Hourly bounded history, default 24h/20 and maximum 200
+  history [--since D] [--limit N] [--full] Hourly bounded history; --full adds top executables
   policy show|observe|enable-alerts|disable Control observation and notification opt-in
   trace --pid PID [--duration D] [--open]  Hand off an interactive 5-30 second path trace to NDev Pressure
 
 Examples:
   session-pressure --json io status --live
+  session-pressure --json io health
   session-pressure --json io top --live --limit 5
   session-pressure --json io history --since 24h --limit 20
+  session-pressure --json io history --since 168h --limit 48 --full
   session-pressure io policy enable-alerts
   session-pressure --json io trace --pid 1234
 `
@@ -43,6 +46,8 @@ func cmdSessionPressureIO(g *Flags, args []string) int {
 		return 0
 	case "status":
 		return cmdSessionPressureIOStatus(g, args)
+	case "health":
+		return cmdSessionPressureIOHealth(g, args)
 	case "top":
 		return cmdSessionPressureIOTop(g, args)
 	case "history":
@@ -147,6 +152,48 @@ func cmdSessionPressureIOStatus(g *Flags, args []string) int {
 	return emitPressure(g, payload, text, 0)
 }
 
+func cmdSessionPressureIOHealth(g *Flags, args []string) int {
+	if len(args) != 0 {
+		return sessionPressureError("io health accepts no arguments", 2)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	snapshot, err := sessionpressure.ReadNVMeSMART(ctx)
+	if err != nil {
+		return sessionPressureError(err.Error(), 1)
+	}
+	dir, dirErr := sessionpressure.DataDir()
+	persisted := false
+	appended := false
+	if dirErr == nil && snapshot.Available {
+		if wrote, persistErr := sessionpressure.PersistNVMeSMART(dir, snapshot); persistErr != nil {
+			return sessionPressureError("read SMART but persist failed: "+persistErr.Error(), 1)
+		} else {
+			persisted = true
+			appended = wrote
+		}
+	}
+	payload := map[string]any{
+		"ok": true, "action": "io.health", "available": snapshot.Available,
+		"snapshot": snapshot, "persisted": persisted, "history_appended": appended,
+	}
+	if dirErr == nil {
+		payload["data_dir"] = dir
+	}
+	if !snapshot.Available {
+		reason := snapshot.Reason
+		if reason == "" {
+			reason = "nvme_smart_unavailable"
+		}
+		payload["reason"] = reason
+		return emitPressure(g, payload, "nvme SMART unavailable: "+reason+"\n", 0)
+	}
+	text := fmt.Sprintf("model=%s percent_used=%d%% host_written=%s spare=%d%% media_errors=%d temp=%.1fC warning=0x%02x\n",
+		snapshot.Model, snapshot.PercentageUsed, humanBytes(int64(snapshot.HostBytesWritten)),
+		snapshot.AvailableSparePercent, snapshot.MediaErrors, snapshot.TemperatureCelsius, snapshot.CriticalWarning)
+	return emitPressure(g, payload, text, 0)
+}
+
 func cmdSessionPressureIOTop(g *Flags, args []string) int {
 	live, limit := false, 0
 	for index := 0; index < len(args); index++ {
@@ -224,6 +271,7 @@ func cmdSessionPressureIOTop(g *Flags, args []string) int {
 func cmdSessionPressureIOHistory(g *Flags, args []string) int {
 	limit := 20
 	sinceDuration := 24 * time.Hour
+	full := false
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
 		case "--limit":
@@ -246,6 +294,8 @@ func cmdSessionPressureIOHistory(g *Flags, args []string) int {
 				return sessionPressureError("io history --since must be between 1ns and 720h", 2)
 			}
 			sinceDuration = value
+		case "--full":
+			full = true
 		default:
 			return sessionPressureError("unknown io history argument "+strconv.Quote(args[index]), 2)
 		}
@@ -255,13 +305,29 @@ func cmdSessionPressureIOHistory(g *Flags, args []string) int {
 		return sessionPressureError(err.Error(), 1)
 	}
 	since := time.Now().UTC().Add(-sinceDuration)
-	points, available, err := sessionpressure.NewDiskWriteStore(dir).ReadHistory(limit, since)
+	store := sessionpressure.NewDiskWriteStore(dir)
+	var points []sessionpressure.DiskWriteHistoryPoint
+	var available int
+	if full {
+		points, available, err = store.ReadHistoryWithExecutables(limit, since, 8)
+	} else {
+		points, available, err = store.ReadHistory(limit, since)
+	}
 	if err != nil {
 		return sessionPressureError(err.Error(), 1)
 	}
+	outputScope := "compact"
+	if full {
+		outputScope = "full"
+	}
 	payload := map[string]any{
 		"ok": true, "action": "io.history", "since": since, "history": points,
+		"output_scope":    outputScope,
 		"available_count": available, "returned_count": len(points), "truncated": available > len(points),
+	}
+	if full {
+		payload["attribution_scope"] = "all_disk_io_best_effort"
+		payload["attribution_note"] = "executables are all-volume process counters, not exact internal-SSD NAND writes"
 	}
 	if g != nil && g.JSON {
 		return emitPressure(g, payload, "", 0)
