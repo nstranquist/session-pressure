@@ -14,6 +14,9 @@ func TestWorkCancelOutcomeClosedEnums(t *testing.T) {
 	if got := workCancelOutcome(nil, syscall.SIGINT); got != "wrapper_interrupt" {
 		t.Fatalf("SIGINT=%q", got)
 	}
+	if got := workCancelOutcome(nil, syscall.SIGHUP); got != "wrapper_interrupt" {
+		t.Fatalf("SIGHUP=%q", got)
+	}
 	if got := workCancelOutcome(context.Canceled, 0); got != "wrapper_interrupt" {
 		t.Fatalf("canceled=%q", got)
 	}

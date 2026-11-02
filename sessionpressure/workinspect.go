@@ -41,6 +41,7 @@ type WorkInspectReport struct {
 	Calibration      WorkInspectCalibration `json:"calibration"`
 	StallClass       string                 `json:"stall_class"`
 	Summary          string                 `json:"summary"`
+	Output           WorkInspectOutput      `json:"output"`
 	SuggestedActions []WorkInspectAction    `json:"suggested_actions"`
 }
 
@@ -183,6 +184,7 @@ func InspectWork(ctx context.Context, coordinator *WorkCoordinator, operationID 
 	report.Calibration = inspectCalibration(coordinator.Dir, class, ageMS)
 	report.StallClass = classifyStall(proc, report.Calibration)
 	report.Summary = inspectSummary(report)
+	report.Output = collectWorkInspectOutput(coordinator.Dir, operationID, report.Origin)
 	report.SuggestedActions = inspectActions(report)
 	return report, nil
 }
@@ -634,7 +636,9 @@ func formatInspectBrief(report WorkInspectReport) string {
 			fmt.Fprintf(&b, "- cwd: %s\n", report.Process.CWD)
 		}
 	}
-	if report.Origin.ScheduleSnippet != "" {
+	if report.Output.Text != "" {
+		fmt.Fprintf(&b, "\n## Output (%s)\n\n```\n%s\n```\n", report.Output.Source, report.Output.Text)
+	} else if report.Origin.ScheduleSnippet != "" {
 		fmt.Fprintf(&b, "\n## Last schedule output\n\n```\n%s\n```\n", report.Origin.ScheduleSnippet)
 	}
 	fmt.Fprintf(&b, "\n## Suggested actions\n")

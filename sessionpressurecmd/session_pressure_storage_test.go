@@ -34,8 +34,28 @@ func withStorageProviderFakes(t *testing.T) {
 	originalDockerReclaimable := storageDockerReclaimable
 	originalRunDockerPrune := storageRunDockerPrune
 	originalMeasureHotness := storageMeasureHotness
+	originalSimctlRuntime := storageSimctlRuntimeJSON
+	originalSimctlDevices := storageSimctlDevicesJSON
+	originalSimulatorAssets := storageSimulatorAssetRoot
+	originalBrewLookPath := storageBrewLookPath
+	originalUVLookPath := storageUVLookPath
+	originalBrewAutoremove := storageBrewAutoremoveDryFormulae
+	originalBrewCleanup := storageRunBrewCleanup
+	originalBrewAutoremoveRun := storageRunBrewAutoremove
+	originalUVPrune := storageRunUVCachePrune
+	originalSimulatorReclaim := storageRunSimulatorReclaim
 	storageGradleActive = func() (bool, error) { return false, nil }
 	storageCacheOwnerActive = func(string) (bool, error) { return false, nil }
+	storageSimctlRuntimeJSON = func() ([]byte, error) { return []byte("{}"), nil }
+	storageSimctlDevicesJSON = func() ([]byte, error) { return []byte(`{"devices":{}}`), nil }
+	storageSimulatorAssetRoot = filepath.Join(t.TempDir(), "missing-simulator-assets")
+	storageBrewLookPath = func() (string, error) { return "", errors.New("brew executable is unavailable") }
+	storageUVLookPath = func() (string, error) { return "", errors.New("uv executable is unavailable") }
+	storageBrewAutoremoveDryFormulae = func() ([]string, error) { return nil, nil }
+	storageRunBrewCleanup = func(context.Context) error { return nil }
+	storageRunBrewAutoremove = func(context.Context) error { return nil }
+	storageRunUVCachePrune = func(context.Context) error { return nil }
+	storageRunSimulatorReclaim = func(context.Context) error { return nil }
 	storageMobileSyncEvidence = func(string, time.Time) storageProviderDecisionEvidence {
 		return storageProviderDecisionEvidence{SchemaVersion: 1, Scope: "direct_backup_roots", Available: true, IdentityRedacted: true}
 	}
@@ -63,6 +83,16 @@ func withStorageProviderFakes(t *testing.T) {
 		storageDockerReclaimable = originalDockerReclaimable
 		storageRunDockerPrune = originalRunDockerPrune
 		storageMeasureHotness = originalMeasureHotness
+		storageSimctlRuntimeJSON = originalSimctlRuntime
+		storageSimctlDevicesJSON = originalSimctlDevices
+		storageSimulatorAssetRoot = originalSimulatorAssets
+		storageBrewLookPath = originalBrewLookPath
+		storageUVLookPath = originalUVLookPath
+		storageBrewAutoremoveDryFormulae = originalBrewAutoremove
+		storageRunBrewCleanup = originalBrewCleanup
+		storageRunBrewAutoremove = originalBrewAutoremoveRun
+		storageRunUVCachePrune = originalUVPrune
+		storageRunSimulatorReclaim = originalSimulatorReclaim
 	})
 }
 
@@ -111,15 +141,15 @@ func TestStorageProviderClassificationPreservesPersonalStateAndRequiresExplicitG
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"mobile-sync", "downloads", "go-module-cache", "xcode-developer-data"} {
+	for _, id := range []string{"mobile-sync", "downloads", "go-module-cache", "cargo-registry", "xcode-developer-data", "xcode-device-support"} {
 		report, ok := storageProviderByID(reports, id)
 		if !ok || report.Classification != storageProviderReportOnly || report.MutationSupported {
 			t.Fatalf("provider %s = %+v", id, report)
 		}
 	}
 	xcodeReport, _ := storageProviderByID(reports, "xcode-developer-data")
-	if xcodeReport.EstimatedBytes <= 0 || xcodeReport.EstimateKind != "inventory" {
-		t.Fatalf("xcode developer inventory = %+v", xcodeReport)
+	if xcodeReport.EstimatedBytes != 0 || xcodeReport.EstimateKind != "presence_only" {
+		t.Fatalf("xcode developer umbrella should stay presence_only: %+v", xcodeReport)
 	}
 	for _, id := range []string{"go-build-cache", "yarn-cache", "npm-cache", "brew-cache", "swiftpm-cache", "playwright-cache", "gradle-caches", "nicos-telemetry-archive", "nicos-voice-models", "nicos-wine-proof", "nicos-pw-archive"} {
 		report, ok := storageProviderByID(reports, id)
@@ -142,6 +172,12 @@ func TestStorageProviderClassificationPreservesPersonalStateAndRequiresExplicitG
 }
 
 func TestBrowserDeadProfilesClosedWhenExtractGCUnavailable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("live browser GC skipped under -short")
+	}
+	if os.Getenv("NDEV_LIVE_HOST_TESTS") != "1" && os.Getenv("SESSION_PRESSURE_LIVE_HOST") != "1" {
+		t.Skip("set NDEV_LIVE_HOST_TESTS=1 to run live extract browser.GC")
+	}
 	withStorageProviderFakes(t)
 	storageBrowserGC = browser.GC
 	reports, err := inspectStorageProviders(sessionpressure.DefaultPolicy(16<<10), true)
@@ -271,22 +307,32 @@ func TestExecuteGoBuildCacheProviderWritesAuditedReceipts(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(sessionpressure.StorageVolumePathEnv, t.TempDir())
 	cleanCalls := 0
+	brewCalls := 0
 	storageRunGoBuildCacheClean = func(context.Context, string) error {
 		cleanCalls++
 		return nil
 	}
+	storageRunBrewCleanup = func(context.Context) error {
+		brewCalls++
+		return nil
+	}
 	storageGradleActive = func() (bool, error) { return false, nil }
 	runtime := pressureRuntime{dir: dir, policy: sessionpressure.DefaultPolicy(16 << 10)}
-	// All rebuildable-cache providers share the quarantine-rename executor.
-	for _, id := range []string{"go-build-cache", "yarn-cache", "npm-cache", "brew-cache", "swiftpm-cache", "playwright-cache", "gradle-caches"} {
+	for _, id := range []string{"go-build-cache", "yarn-cache", "npm-cache", "swiftpm-cache", "playwright-cache", "gradle-caches"} {
 		provider := storageProviderReport{ID: id, Classification: storageProviderOperator, MutationSupported: true}
 		receipts, err := executeStorageProvider(t.Context(), runtime, provider)
 		if err != nil || len(receipts) != 2 || receipts[0].Mode != "intent" || receipts[1].Mode != "result" || receipts[1].Outcome != "completed" {
 			t.Fatalf("provider %s receipts=%+v err=%v", id, receipts, err)
 		}
 	}
-	if cleanCalls != 7 {
-		t.Fatalf("cleanCalls=%d, want 7", cleanCalls)
+	if _, err := executeStorageProvider(t.Context(), runtime, storageProviderReport{ID: "brew-cache", Classification: storageProviderOperator, MutationSupported: true}); err != nil {
+		t.Fatal(err)
+	}
+	if cleanCalls != 6 {
+		t.Fatalf("cleanCalls=%d, want 6", cleanCalls)
+	}
+	if brewCalls != 1 {
+		t.Fatalf("brew cleanup calls=%d, want 1", brewCalls)
 	}
 }
 
@@ -470,7 +516,7 @@ func TestStorageApplyRequiresGoBuildHotnessEvidence(t *testing.T) {
 	cleanCalled := false
 	storageRunGoBuildCacheClean = func(context.Context, string) error { cleanCalled = true; return nil }
 	exit, stdout, stderr := captureMainOutput(t, func() int {
-		return cmdSessionPressureStorage(&Flags{JSON: true}, []string{"apply", "--provider", "go-build-cache", "--target-free", "900GiB", "--apply"})
+		return cmdSessionPressureStorage(&Flags{JSON: true}, []string{"apply", "--provider", "go-build-cache", "--full-wipe", "--target-free", "900GiB", "--apply"})
 	})
 	out := stdout + stderr
 	if exit == 0 || cleanCalled || !strings.Contains(out, "hotness") {
@@ -512,7 +558,7 @@ func TestStorageApplyUsesCurrentGoBuildHotnessEvidence(t *testing.T) {
 	}
 	var exit int
 	out := captureStdout(t, func() {
-		exit = cmdSessionPressureStorage(&Flags{JSON: true}, []string{"apply", "--provider", "go-build-cache", "--target-free", "900GiB", "--apply"})
+		exit = cmdSessionPressureStorage(&Flags{JSON: true}, []string{"apply", "--provider", "go-build-cache", "--full-wipe", "--target-free", "900GiB", "--apply"})
 	})
 	if exit != 0 || measureCalls != 1 || cleanCalls != 1 {
 		t.Fatalf("exit=%d measureCalls=%d cleanCalls=%d output=%s", exit, measureCalls, cleanCalls, out)
@@ -870,6 +916,13 @@ func TestStoragePlanIncludesTypedOperatorProvidersAndGoHotness(t *testing.T) {
 	if len(goProvider.HotnessEvidence.AgeBuckets) != 4 || plan.ColdEligibleBytes == 0 || plan.ColdMeetsShortfall {
 		t.Fatalf("unexpected cold evidence plan=%+v provider=%+v", plan, goProvider.HotnessEvidence)
 	}
+	if plan.RebuildTaxBytes < goProvider.HotnessEvidence.HotBytes {
+		t.Fatalf("plan rebuild tax %d missing go hot bytes %d", plan.RebuildTaxBytes, goProvider.HotnessEvidence.HotBytes)
+	}
+	reclaimable, tax := storagePlanReclaimableBytes(goProvider)
+	if reclaimable != goProvider.HotnessEvidence.ColdEligibleBytes || tax != goProvider.HotnessEvidence.HotBytes {
+		t.Fatalf("go reclaimable=%d tax=%d hot=%d cold=%d", reclaimable, tax, goProvider.HotnessEvidence.HotBytes, goProvider.HotnessEvidence.ColdEligibleBytes)
+	}
 }
 
 func TestStorageProviderMutatorsStayWithinAllowlistedRoots(t *testing.T) {
@@ -969,5 +1022,108 @@ func TestDockerReclaimEstimateExcludesVolumes(t *testing.T) {
 	want := int64(1_500_000_000) + 512<<20
 	if got != want {
 		t.Fatalf("docker reclaim estimate=%d, want %d", got, want)
+	}
+}
+
+func TestStorageApplyGoBuildCacheRequiresFullWipe(t *testing.T) {
+	withStorageProviderFakes(t)
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv(sessionpressure.DataDirEnv, dir)
+	t.Setenv(sessionpressure.StorageVolumePathEnv, t.TempDir())
+	t.Setenv("HOME", home)
+	if err := sessionpressure.SavePolicy(sessionpressure.PolicyPath(dir), sessionpressure.DefaultPolicy(16<<10)); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(home, "Library", "Caches", "go-build")
+	if err := os.MkdirAll(cache, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	storageBrowserGC = func(browser.GCOptions) (*browser.GCReport, error) { return &browser.GCReport{}, nil }
+	storageMeasureHotness = func(string, time.Time) (*storageProviderHotnessEvidence, error) {
+		return &storageProviderHotnessEvidence{Available: true, Complete: true, HotFraction: 0.99, HotBytes: 40 << 30, ColdEligibleBytes: 4 << 20}, nil
+	}
+	cleanCalled := false
+	storageRunGoBuildCacheClean = func(context.Context, string) error { cleanCalled = true; return nil }
+	exit, stdout, stderr := captureMainOutput(t, func() int {
+		return cmdSessionPressureStorage(&Flags{JSON: true}, []string{"apply", "--provider", "go-build-cache", "--target-free", "900GiB", "--apply"})
+	})
+	out := stdout + stderr
+	if exit == 0 || cleanCalled || !strings.Contains(out, "--full-wipe") {
+		t.Fatalf("exit=%d cleanCalled=%v output=%s", exit, cleanCalled, out)
+	}
+}
+
+func TestStorageApplyRejectsFullWipeOnNonGoProvider(t *testing.T) {
+	withStorageProviderFakes(t)
+	dir := t.TempDir()
+	t.Setenv(sessionpressure.DataDirEnv, dir)
+	t.Setenv(sessionpressure.StorageVolumePathEnv, t.TempDir())
+	if err := sessionpressure.SavePolicy(sessionpressure.PolicyPath(dir), sessionpressure.DefaultPolicy(16<<10)); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr := captureMainOutput(t, func() int {
+		return cmdSessionPressureStorage(&Flags{JSON: true}, []string{"apply", "--provider", "user-trash", "--full-wipe", "--apply"})
+	})
+	out := stdout + stderr
+	if exit == 0 || !strings.Contains(out, "go-build-cache") {
+		t.Fatalf("exit=%d output=%s", exit, out)
+	}
+}
+
+func TestIOSSimulatorRuntimeProviderUsesSimctlInventory(t *testing.T) {
+	withStorageProviderFakes(t)
+	storageSimctlRuntimeJSON = func() ([]byte, error) {
+		return []byte(`{"abc":{"identifier":"abc","version":"18.6","deletable":true,"sizeBytes":8000000000,"state":"Ready"}}`), nil
+	}
+	storageSimctlDevicesJSON = func() ([]byte, error) { return []byte(`{"devices":{}}`), nil }
+	report := inspectIOSSimulatorRuntimeProvider(false)
+	if !report.Present || !report.MutationSupported || report.EstimatedBytes != 8000000000 {
+		t.Fatalf("simulator provider = %+v", report)
+	}
+	if report.SimulatorEvidence == nil || report.SimulatorEvidence.RuntimeCount != 1 {
+		t.Fatalf("simulator evidence = %+v", report.SimulatorEvidence)
+	}
+}
+
+func TestIOSSimulatorRuntimeSIPResidualIsNotMutable(t *testing.T) {
+	withStorageProviderFakes(t)
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "dead.asset"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	storageSimulatorAssetRoot = root
+	storageSimctlRuntimeJSON = func() ([]byte, error) { return []byte("{}"), nil }
+	storageSimctlDevicesJSON = func() ([]byte, error) { return []byte(`{"devices":{}}`), nil }
+	report := inspectIOSSimulatorRuntimeProvider(false)
+	if !report.Present || report.MutationSupported || report.SimulatorEvidence == nil || report.SimulatorEvidence.ResidualCode != sipProtectedOrphanCode {
+		t.Fatalf("sip residual provider = %+v evidence=%+v", report, report.SimulatorEvidence)
+	}
+}
+
+func TestParseBrewAutoremoveDry(t *testing.T) {
+	got := parseBrewAutoremoveDry([]byte("==> Would autoremove 2 unneeded formulae:\nllvm\nz3\n==> This operation would free approximately 87MB of disk space.\n"))
+	if len(got) != 2 || got[0] != "llvm" || got[1] != "z3" {
+		t.Fatalf("formulae=%v", got)
+	}
+}
+
+func TestBrewAndUVUseNativePruneNotDirectoryWipe(t *testing.T) {
+	withStorageProviderFakes(t)
+	dir := t.TempDir()
+	t.Setenv(sessionpressure.StorageVolumePathEnv, t.TempDir())
+	runtime := pressureRuntime{dir: dir, policy: sessionpressure.DefaultPolicy(16 << 10)}
+	brewCalls, uvCalls, wipeCalls := 0, 0, 0
+	storageRunBrewCleanup = func(context.Context) error { brewCalls++; return nil }
+	storageRunUVCachePrune = func(context.Context) error { uvCalls++; return nil }
+	storageRunGoBuildCacheClean = func(context.Context, string) error { wipeCalls++; return nil }
+	if _, err := executeStorageProvider(t.Context(), runtime, storageProviderReport{ID: "brew-cache", Path: t.TempDir(), Classification: storageProviderOperator, MutationSupported: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executeStorageProvider(t.Context(), runtime, storageProviderReport{ID: "uv-cache", Path: t.TempDir(), Classification: storageProviderOperator, MutationSupported: true}); err != nil {
+		t.Fatal(err)
+	}
+	if brewCalls != 1 || uvCalls != 1 || wipeCalls != 0 {
+		t.Fatalf("brew=%d uv=%d wipe=%d", brewCalls, uvCalls, wipeCalls)
 	}
 }

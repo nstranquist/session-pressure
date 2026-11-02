@@ -85,13 +85,19 @@ type diskWriteHistoryRecord struct {
 	executableHistograms map[string]*diskHistogram
 }
 
+type DiskWriteHistoryExecutable struct {
+	Executable string `json:"executable"`
+	TotalBytes uint64 `json:"total_bytes,omitempty"`
+}
+
 type DiskWriteHistoryPoint struct {
-	Hour             time.Time      `json:"hour"`
-	State            DiskWriteState `json:"state,omitempty"`
-	BytesWritten     uint64         `json:"bytes_written,omitempty"`
-	UnscoredGapBytes uint64         `json:"unscored_gap_bytes,omitempty"`
-	BaselineP99Bytes uint64         `json:"baseline_p99_bytes,omitempty"`
-	SampleCount      uint64         `json:"sample_count"`
+	Hour             time.Time                    `json:"hour"`
+	State            DiskWriteState               `json:"state,omitempty"`
+	BytesWritten     uint64                       `json:"bytes_written,omitempty"`
+	UnscoredGapBytes uint64                       `json:"unscored_gap_bytes,omitempty"`
+	BaselineP99Bytes uint64                       `json:"baseline_p99_bytes,omitempty"`
+	SampleCount      uint64                       `json:"sample_count"`
+	Executables      []DiskWriteHistoryExecutable `json:"executables,omitempty"`
 }
 
 type DiskWriteStore struct {
@@ -313,6 +319,37 @@ func (store *DiskWriteStore) loadRecordsWithCheckpoint(since time.Time) ([]diskW
 }
 
 func (store *DiskWriteStore) ReadHistory(limit int, since time.Time) ([]DiskWriteHistoryPoint, int, error) {
+	return store.readHistory(limit, since, 0)
+}
+
+func (store *DiskWriteStore) ReadHistoryWithExecutables(limit int, since time.Time, maxExecutables int) ([]DiskWriteHistoryPoint, int, error) {
+	if maxExecutables <= 0 {
+		maxExecutables = 8
+	}
+	return store.readHistory(limit, since, maxExecutables)
+}
+
+func summarizeHistoryExecutables(executables []diskExecutableHistory, maxExecutables int) []DiskWriteHistoryExecutable {
+	if maxExecutables <= 0 || len(executables) == 0 {
+		return nil
+	}
+	copied := append([]diskExecutableHistory(nil), executables...)
+	sort.Slice(copied, func(i, j int) bool { return copied[i].TotalBytes > copied[j].TotalBytes })
+	if len(copied) > maxExecutables {
+		copied = copied[:maxExecutables]
+	}
+	out := make([]DiskWriteHistoryExecutable, 0, len(copied))
+	for _, executable := range copied {
+		name := strings.TrimSpace(executable.Executable)
+		if name == "" {
+			continue
+		}
+		out = append(out, DiskWriteHistoryExecutable{Executable: name, TotalBytes: executable.TotalBytes})
+	}
+	return out
+}
+
+func (store *DiskWriteStore) readHistory(limit int, since time.Time, maxExecutables int) ([]DiskWriteHistoryPoint, int, error) {
 	records, _, err := store.loadRecordsWithCheckpoint(since)
 	if err != nil {
 		return nil, 0, err
@@ -332,6 +369,9 @@ func (store *DiskWriteStore) ReadHistory(limit int, since time.Time) ([]DiskWrit
 			point.State = record.State
 			point.BaselineP99Bytes = record.BaselineP99Bytes
 			latestByHour[hour] = record
+			if maxExecutables > 0 {
+				point.Executables = summarizeHistoryExecutables(record.Executables, maxExecutables)
+			}
 		}
 		point.BytesWritten = saturatingAddUint64(point.BytesWritten, record.BytesWritten)
 		point.UnscoredGapBytes = saturatingAddUint64(point.UnscoredGapBytes, record.UnscoredGapBytes)

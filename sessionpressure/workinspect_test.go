@@ -210,6 +210,31 @@ func TestInspectWorkJoinsScheduleOriginFromEnv(t *testing.T) {
 	}
 }
 
+func TestInspectWorkIncludesWorkRunOutput(t *testing.T) {
+	dir := t.TempDir()
+	coordinator := NewWorkCoordinator(dir, DefaultPolicy(16<<10).WorkLimits)
+	lease, _, err := coordinator.Acquire(context.Background(), WorkClassExpressTest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lease.Release(context.Background()) }()
+	id := lease.Record().OperationID
+	tee, err := openWorkOutputTee(dir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tee.Write([]byte("ok 1\nPASS\n")); err != nil {
+		t.Fatal(err)
+	}
+	report, err := InspectWork(context.Background(), coordinator, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Output.Source != WorkOutputWorkRun || !strings.Contains(report.Output.Text, "PASS") {
+		t.Fatalf("output=%#v", report.Output)
+	}
+}
+
 func TestInspectWorkUnknownOperation(t *testing.T) {
 	coordinator := NewWorkCoordinator(t.TempDir(), DefaultPolicy(16<<10).WorkLimits)
 	_, err := InspectWork(context.Background(), coordinator, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")

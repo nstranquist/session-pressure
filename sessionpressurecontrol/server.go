@@ -458,7 +458,7 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIO(w http.ResponseWriter, r *http.Request) {
-	view, err := projectionView(r, "status", map[string]bool{"status": true, "top": true, "history": true, "policy": true}, "unsupported io view")
+	view, err := projectionView(r, "status", map[string]bool{"status": true, "health": true, "top": true, "history": true, "policy": true}, "unsupported io view")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_view", err.Error(), false)
 		return
@@ -474,7 +474,7 @@ func (s *Server) handleIO(w http.ResponseWriter, r *http.Request) {
 	case "top":
 		allowed = allowedQuery{"live": queryBool, "limit": queryLimit}
 	case "history":
-		allowed = allowedQuery{"limit": queryLimit, "since": queryDuration}
+		allowed = allowedQuery{"limit": queryLimit, "since": queryDuration, "full": queryBool}
 	}
 	args, err := projectionArgs(r, "io", allowed, parts...)
 	if err != nil {

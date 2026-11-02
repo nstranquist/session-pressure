@@ -8,6 +8,14 @@ That is a live pressure reading. It does not mean the install failed. Use `sessi
 
 `ndev session pressure` execs the product CLI. Install `session-pressure` or `ndev-pressure` on `PATH`.
 
+## `io health` says NVMe SMART is unavailable
+
+The command is read-only. It uses Apple's NVMeSMARTLib. Internal Apple Fabric
+SSDs on this Mac expose it. Many USB bridges do not. `percentage_used` and
+`host_bytes_written` are the lifetime wear fields. `power_on_hours` and
+`controller_busy_minutes` can be empty on Apple ANS. Process `io history`
+executables are all-volume best-effort names, not exact NAND writes.
+
 ## Desktop cannot find the CLI
 
 Set `SESSION_PRESSURE_BIN` to the built `bin/session-pressure` file. The client prefers that name.

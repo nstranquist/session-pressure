@@ -365,6 +365,9 @@ func TestNativeSamplerBuildsAgentTreesWithinOperatorBudget(t *testing.T) {
 }
 
 func TestResidentSampler64SampleCPUAndLatencySoak(t *testing.T) {
+	if testing.Short() {
+		t.Skip("64-sample soak skipped under -short")
+	}
 	policy := DefaultPolicy(16 * 1024)
 	// This is the healthy-cadence soak. Keep live agent RSS on the developer's
 	// machine from intentionally activating pressure-refresh behavior.

@@ -437,6 +437,16 @@ func TestDiskWriteHistoryIsBoundedAndReadsCompactPoints(t *testing.T) {
 	if err != nil || available != 1 || len(points) != 1 || points[0].SampleCount != 240 || points[0].BytesWritten != 1<<30 {
 		t.Fatalf("compact history points=%+v available=%d err=%v", points, available, err)
 	}
+	if len(points[0].Executables) != 0 {
+		t.Fatalf("compact history leaked executables: %+v", points[0].Executables)
+	}
+	full, _, err := store.ReadHistoryWithExecutables(20, hour.Add(-time.Hour), 3)
+	if err != nil || len(full) != 1 || len(full[0].Executables) != 3 {
+		t.Fatalf("full history executables=%+v err=%v", full, err)
+	}
+	if full[0].Executables[0].TotalBytes < full[0].Executables[2].TotalBytes {
+		t.Fatalf("executables are not descending: %+v", full[0].Executables)
+	}
 }
 
 func TestDiskWriteHistoryUsesLatestSameHourStateAndAggregatesTraffic(t *testing.T) {

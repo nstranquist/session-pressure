@@ -44,6 +44,7 @@ type storageProviderReport struct {
 	Overlaps          []string                         `json:"overlaps,omitempty"`
 	DecisionEvidence  *storageProviderDecisionEvidence `json:"decision_evidence,omitempty"`
 	HotnessEvidence   *storageProviderHotnessEvidence  `json:"hotness_evidence,omitempty"`
+	SimulatorEvidence *storageSimulatorEvidence        `json:"simulator_evidence,omitempty"`
 }
 
 // storageProviderDecisionEvidence gives an operator enough bounded evidence to
@@ -73,6 +74,7 @@ type storagePlan struct {
 	ShortfallBytes     int64                           `json:"shortfall_bytes"`
 	EstimatedBytes     int64                           `json:"estimated_reclaimable_bytes"`
 	ColdEligibleBytes  int64                           `json:"cold_eligible_reclaimable_bytes,omitempty"`
+	RebuildTaxBytes    int64                           `json:"rebuild_tax_bytes,omitempty"`
 	ColdMeetsShortfall bool                            `json:"cold_buckets_meet_shortfall,omitempty"`
 	Providers          []storageProviderReport         `json:"providers"`
 }
@@ -95,6 +97,10 @@ var storageDockerAvailable = dockerCLIAvailable
 var storageDockerReclaimable = dockerReclaimableBytes
 var storageRunDockerPrune = runDockerSystemPrune
 var storageMeasureHotness = measureStorageHotness
+var storageRunSimulatorReclaim = runIOSSimulatorReclaim
+var storageRunBrewCleanup = runBrewCleanup
+var storageRunBrewAutoremove = runBrewAutoremove
+var storageRunUVCachePrune = runUVCachePrune
 
 func cmdSessionPressureStorage(g *Flags, args []string) int {
 	sub := "status"
@@ -110,9 +116,10 @@ Subcommands:
   status                              Cheap live filesystem-capacity sample
   providers                           Inventory typed reclaim providers
   plan [--target-free SIZE]           Dry-run provider plan (default target from policy)
-  apply [--provider ID|--auto-safe] [--target-free SIZE] [--force] [--apply]
+  apply [--provider ID|--auto-safe] [--target-free SIZE] [--force] [--full-wipe] [--apply]
                                       Dry-run by default; literal --apply mutates
                                       --force skips reclaim cooldown on named --provider only
+                                      --full-wipe is required for go-build-cache; it is a rebuild tax
   history [--since D] [--limit N]     Read bounded private reclaim receipts
   policy enable|observe               Toggle disk-growth admission independently
 
@@ -232,7 +239,7 @@ func cmdSessionPressureStoragePlan(g *Flags, args []string) int {
 		return sessionPressureError(err.Error(), 1)
 	}
 	payload := map[string]any{"ok": true, "action": "storage.plan", "plan": plan, "apply": false}
-	text := fmt.Sprintf("storage plan effective=%s instantaneous=%s hysteresis=%v available=%.1fGiB target=%.1fGiB shortfall=%.1fGiB estimated=%.1fGiB cold-eligible=%.1fGiB cold-meets-shortfall=%v\n", sample.Level, sample.InstantaneousLevel, sample.HysteresisActive, bytesToGiB(sample.AvailableBytes), bytesToGiB(target), bytesToGiB(plan.ShortfallBytes), bytesToGiB(plan.EstimatedBytes), bytesToGiB(plan.ColdEligibleBytes), plan.ColdMeetsShortfall)
+	text := fmt.Sprintf("storage plan effective=%s instantaneous=%s hysteresis=%v available=%.1fGiB target=%.1fGiB shortfall=%.1fGiB estimated=%.1fGiB cold-eligible=%.1fGiB rebuild-tax=%.1fGiB cold-meets-shortfall=%v\n", sample.Level, sample.InstantaneousLevel, sample.HysteresisActive, bytesToGiB(sample.AvailableBytes), bytesToGiB(target), bytesToGiB(plan.ShortfallBytes), bytesToGiB(plan.EstimatedBytes), bytesToGiB(plan.ColdEligibleBytes), bytesToGiB(plan.RebuildTaxBytes), plan.ColdMeetsShortfall)
 	for _, provider := range plan.Providers {
 		if provider.HotnessEvidence == nil || !provider.HotnessEvidence.Available {
 			continue
@@ -250,11 +257,14 @@ func buildStoragePlan(policy sessionpressure.Policy, sample sessionpressure.Stor
 	shortfall := max(int64(0), target-sample.AvailableBytes)
 	estimated := int64(0)
 	coldEligible := int64(0)
+	rebuildTax := int64(0)
 	for index := range providers {
 		provider := &providers[index]
 		eligible := (provider.Classification == storageProviderAutoSafe || provider.Classification == storageProviderOperator) && provider.MutationSupported && !provider.ActiveOwner
 		if eligible {
-			estimated += provider.EstimatedBytes
+			reclaimable, tax := storagePlanReclaimableBytes(*provider)
+			estimated += reclaimable
+			rebuildTax += tax
 			if provider.HotnessEvidence != nil && provider.HotnessEvidence.Available && provider.HotnessEvidence.Complete {
 				coldEligible += provider.HotnessEvidence.ColdEligibleBytes
 			}
@@ -267,7 +277,20 @@ func buildStoragePlan(policy sessionpressure.Policy, sample sessionpressure.Stor
 			evidence.ColdMeetsShortfall = eligible && coldEligible >= shortfall
 		}
 	}
-	return storagePlan{Sample: sample, TargetFreeBytes: target, ShortfallBytes: shortfall, EstimatedBytes: estimated, ColdEligibleBytes: coldEligible, ColdMeetsShortfall: coldEligible >= shortfall, Providers: providers}, nil
+	return storagePlan{Sample: sample, TargetFreeBytes: target, ShortfallBytes: shortfall, EstimatedBytes: estimated, ColdEligibleBytes: coldEligible, RebuildTaxBytes: rebuildTax, ColdMeetsShortfall: coldEligible >= shortfall, Providers: providers}, nil
+}
+
+// storagePlanReclaimableBytes splits mutable provider bytes into reclaim that
+// does not force a hot rebuild, versus rebuild-tax bytes. Hot GOCACHE is tax,
+// never the headline estimated_reclaimable_bytes figure.
+func storagePlanReclaimableBytes(provider storageProviderReport) (reclaimable, rebuildTax int64) {
+	if provider.ID == "go-build-cache" {
+		if evidence := provider.HotnessEvidence; evidence != nil && evidence.Available && evidence.Complete {
+			return evidence.ColdEligibleBytes, evidence.HotBytes
+		}
+		return 0, provider.EstimatedBytes
+	}
+	return provider.EstimatedBytes, 0
 }
 
 func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]storageProviderReport, error) {
@@ -312,6 +335,7 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 	if dockerReport, include := inspectDockerReclaimProvider(measure); include {
 		reports = append(reports, dockerReport)
 	}
+	reports = append(reports, inspectIOSSimulatorRuntimeProvider(measure))
 	goBuildCachePath := filepath.Join(home, "Library", "Caches", "go-build")
 	goBuildCacheBytes, goBuildCachePresent, goBuildCacheErr := int64(0), storagePathExists(goBuildCachePath), error(nil)
 	if measure {
@@ -367,7 +391,7 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 	}{
 		{"yarn-cache", "Rebuildable Yarn download cache; explicit operator reset", filepath.Join(home, "Library", "Caches", "Yarn"), []string{"library-caches"}},
 		{"npm-cache", "Rebuildable npm content-addressed cache (_cacache); explicit operator reset", filepath.Join(home, ".npm", "_cacache"), nil},
-		{"brew-cache", "Rebuildable Homebrew download cache; explicit operator reset", filepath.Join(home, "Library", "Caches", "Homebrew"), []string{"library-caches"}},
+		{"brew-cache", "Homebrew download cache via brew cleanup; not a directory wipe", filepath.Join(home, "Library", "Caches", "Homebrew"), []string{"library-caches"}},
 		{"swiftpm-cache", "Rebuildable SwiftPM repository cache; explicit operator reset with active-owner revalidation", filepath.Join(home, "Library", "Caches", "org.swift.swiftpm", "repositories"), []string{"library-caches"}},
 		{"playwright-cache", "Rebuildable Playwright browser runtime cache; explicit operator reset with active-owner revalidation", filepath.Join(home, "Library", "Caches", "ms-playwright"), []string{"library-caches"}},
 	} {
@@ -403,6 +427,7 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 		}
 		reports = append(reports, report)
 	}
+	reports = append(reports, inspectBrewAutoremoveProvider(measure), inspectUVCacheProvider(home, measure))
 	gradlePath := filepath.Join(home, ".gradle", "caches")
 	gradleBytes, gradlePresent, gradleErr := int64(0), storagePathExists(gradlePath), error(nil)
 	if measure {
@@ -430,7 +455,7 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 		gradleReport.BlockedReason = "a Gradle process is active"
 		gradleReport.MutationSupported = false
 	}
-	reports = append(reports, gradleReport)
+	reports = append(reports, gradleReport, inspectXcodeDerivedDataProvider(home, measure))
 	for _, definition := range []struct {
 		id, summary, path string
 	}{
@@ -460,33 +485,25 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 		reports = append(reports, report)
 	}
 	xcodeDeveloperPath := filepath.Join(home, "Library", "Developer")
-	xcodeDeveloperBytes := int64(0)
 	xcodeDeveloperPresent := storagePathExists(xcodeDeveloperPath)
-	xcodeDeveloperErr := error(nil)
-	xcodeEstimateKind := "presence_only"
-	if measure {
-		xcodeDeveloperBytes, xcodeDeveloperPresent, xcodeDeveloperErr = storageDirectoryBytes(xcodeDeveloperPath)
-		xcodeEstimateKind = "inventory"
-	}
 	xcodeDeveloperReport := storageProviderReport{
 		ID:                "xcode-developer-data",
 		Classification:    storageProviderReportOnly,
-		Summary:           "Xcode device symbols, simulator state, documentation, and derived data; inspect by owner",
+		Summary:           "Umbrella Xcode Developer tree; child providers own measured simulator, DerivedData, and DeviceSupport",
 		Path:              xcodeDeveloperPath,
 		Present:           xcodeDeveloperPresent,
-		EstimatedBytes:    xcodeDeveloperBytes,
-		EstimateKind:      xcodeEstimateKind,
+		EstimatedBytes:    0,
+		EstimateKind:      "presence_only",
 		MutationSupported: false,
+		Overlaps:          []string{"ios-simulator-runtime", "xcode-derived-data", "xcode-device-support"},
 	}
-	if xcodeDeveloperErr != nil {
-		xcodeDeveloperReport.BlockedReason = xcodeDeveloperErr.Error()
-	}
-	reports = append(reports, xcodeDeveloperReport)
+	reports = append(reports, xcodeDeveloperReport, inspectXcodeDeviceSupportProvider(home, measure))
 	for _, definition := range []struct {
 		id, summary, path string
 		overlaps          []string
 	}{
 		{"go-module-cache", "Useful Go module download cache preserved by operator preference", filepath.Join(home, "go", "pkg", "mod", "cache"), nil},
+		{"cargo-registry", "Useful Cargo crate download cache preserved like the Go module cache", filepath.Join(home, ".cargo", "registry"), nil},
 		{"library-caches", "Aggregate application caches; inspect by owner", filepath.Join(home, "Library", "Caches"), []string{"go-build-cache", "swiftpm-cache", "playwright-cache"}},
 		{"downloads", "Operator-owned downloads", filepath.Join(home, "Downloads"), nil},
 		{"mobile-sync", "Personal iPhone/iPad backups", filepath.Join(home, "Library", "Application Support", "MobileSync"), nil},
@@ -591,6 +608,7 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 	apply := false
 	autoSafe := false
 	force := false
+	fullWipe := false
 	providerID := ""
 	for index := 0; index < len(remaining); index++ {
 		switch remaining[index] {
@@ -600,6 +618,8 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 			autoSafe = true
 		case "--force":
 			force = true
+		case "--full-wipe":
+			fullWipe = true
 		case "--provider":
 			index++
 			if index >= len(remaining) {
@@ -615,6 +635,12 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 	}
 	if force && autoSafe {
 		return sessionPressureError("--force is only valid with --provider; --auto-safe keeps reclaim cooldown", 2)
+	}
+	if fullWipe && autoSafe {
+		return sessionPressureError("--full-wipe is only valid with --provider go-build-cache", 2)
+	}
+	if fullWipe && providerID != "go-build-cache" {
+		return sessionPressureError("--full-wipe is only valid with --provider go-build-cache", 2)
 	}
 	// Actual reclaim must not repeat the expensive report-only attribution walk.
 	// The explicit plan/dry-run path owns size inventory; execution needs only
@@ -634,7 +660,7 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 		if err != nil {
 			return sessionPressureError(err.Error(), 1)
 		}
-		return emitPressure(g, map[string]any{"ok": true, "action": "storage.apply", "apply": false, "plan": plan, "selected_provider": providerID, "auto_safe": autoSafe, "force": force}, fmt.Sprintf("dry-run only: available=%.1fGiB target=%.1fGiB; pass --apply to mutate\n", bytesToGiB(sample.AvailableBytes), bytesToGiB(target)), 0)
+		return emitPressure(g, map[string]any{"ok": true, "action": "storage.apply", "apply": false, "plan": plan, "selected_provider": providerID, "auto_safe": autoSafe, "force": force, "full_wipe": fullWipe}, fmt.Sprintf("dry-run only: available=%.1fGiB target=%.1fGiB; pass --apply to mutate\n", bytesToGiB(sample.AvailableBytes), bytesToGiB(target)), 0)
 	}
 	if !runtime.persisted {
 		return sessionPressureError("storage apply requires an initialized pressure policy", 1)
@@ -723,6 +749,9 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 			if err := requireGoBuildCacheHotness(&provider); err != nil {
 				return sessionPressureError("go-build-cache apply requires current complete hotness evidence: "+err.Error(), 1)
 			}
+			if err := requireGoBuildCacheFullWipe(fullWipe, provider); err != nil {
+				return sessionPressureError(err.Error(), 1)
+			}
 		}
 		providerReceipts, runErr := executeStorageProvider(ctx, runtime, provider)
 		receipts = append(receipts, providerReceipts...)
@@ -732,7 +761,7 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 	}
 	after := sessionpressure.SampleStorageCapacity(sessionpressure.DefaultStorageVolumePath(), time.Now())
 	after = sessionpressure.EvaluateStorage(after, runtime.policy.Storage, sample.Level)
-	payload := map[string]any{"ok": true, "action": "storage.apply", "apply": true, "target_free_bytes": target, "storage": after, "receipts": receipts, "skipped_providers": skipped, "force": force, "cooldown_bypassed": cooldownBypassed}
+	payload := map[string]any{"ok": true, "action": "storage.apply", "apply": true, "target_free_bytes": target, "storage": after, "receipts": receipts, "skipped_providers": skipped, "force": force, "full_wipe": fullWipe, "cooldown_bypassed": cooldownBypassed}
 	return emitPressure(g, payload, fmt.Sprintf("storage reclaim complete: available=%.1fGiB target=%.1fGiB receipts=%d\n", bytesToGiB(after.AvailableBytes), bytesToGiB(target), len(receipts)), 0)
 }
 
@@ -762,6 +791,21 @@ func requireGoBuildCacheHotness(provider *storageProviderReport) error {
 	provider.HotnessEvidence = evidence
 	provider.EstimateKind = "measured_age_buckets"
 	return nil
+}
+
+func requireGoBuildCacheFullWipe(fullWipe bool, provider storageProviderReport) error {
+	if fullWipe {
+		return nil
+	}
+	hotFraction := 0.0
+	coldBytes := int64(0)
+	rebuildTax := provider.EstimatedBytes
+	if evidence := provider.HotnessEvidence; evidence != nil {
+		hotFraction = evidence.HotFraction
+		coldBytes = evidence.ColdEligibleBytes
+		rebuildTax = evidence.HotBytes
+	}
+	return fmt.Errorf("go-build-cache full wipe requires --full-wipe; hot_fraction=%.3f cold_eligible=%.1fGiB rebuild_tax=%.1fGiB. Go already trims unused entries after 5 days. Do not wipe the hot cache to hit a free-space target", hotFraction, bytesToGiB(coldBytes), bytesToGiB(rebuildTax))
 }
 
 func executeStorageProvider(ctx context.Context, runtime pressureRuntime, provider storageProviderReport) ([]sessionpressure.StorageReceipt, error) {
@@ -824,6 +868,8 @@ func executeStorageProvider(ctx context.Context, runtime pressureRuntime, provid
 		}
 	case "docker-reclaim":
 		runErr = storageRunDockerPrune(ctx)
+	case "ios-simulator-runtime":
+		runErr = storageRunSimulatorReclaim(ctx)
 	case "pnpm-store":
 		active, activeErr := storagePNPMActive()
 		if activeErr != nil {
@@ -849,15 +895,42 @@ func executeStorageProvider(ctx context.Context, runtime pressureRuntime, provid
 		}
 	case "nicos-telemetry-archive", "nicos-voice-models", "nicos-wine-proof", "nicos-pw-archive":
 		runErr = storageRunGoBuildCacheClean(ctx, provider.Path)
-	case "go-build-cache", "yarn-cache", "npm-cache", "brew-cache", "swiftpm-cache", "playwright-cache":
+	case "xcode-derived-data":
+		active, activeErr := storageCacheOwnerActive(provider.ID)
+		if activeErr != nil {
+			runErr = activeErr
+		} else if active {
+			runErr = errors.New("xcode-derived-data provider refused because Xcode or xcodebuild is active")
+		} else {
+			runErr = storageRunGoBuildCacheClean(ctx, provider.Path)
+		}
+	case "brew-cache":
+		active, activeErr := storageCacheOwnerActive(provider.ID)
+		if activeErr != nil {
+			runErr = activeErr
+		} else if active {
+			runErr = errors.New("brew-cache provider refused because an owning process is active")
+		} else {
+			runErr = storageRunBrewCleanup(ctx)
+		}
+	case "brew-autoremove":
+		runErr = storageRunBrewAutoremove(ctx)
+	case "uv-cache":
+		active, activeErr := storageCacheOwnerActive(provider.ID)
+		if activeErr != nil {
+			runErr = activeErr
+		} else if active {
+			runErr = errors.New("uv-cache provider refused because an owning process is active")
+		} else {
+			runErr = storageRunUVCachePrune(ctx)
+		}
+	case "go-build-cache", "yarn-cache", "npm-cache", "swiftpm-cache", "playwright-cache":
 		active, activeErr := storageCacheOwnerActive(provider.ID)
 		if activeErr != nil {
 			runErr = activeErr
 		} else if active {
 			runErr = fmt.Errorf("%s provider refused because an owning process is active", provider.ID)
 		} else {
-			// These are rebuildable cache directories; the quarantine-rename
-			// clean is content-agnostic.
 			runErr = storageRunGoBuildCacheClean(ctx, provider.Path)
 		}
 	default:
@@ -886,6 +959,10 @@ func executeStorageProvider(ctx context.Context, runtime pressureRuntime, provid
 }
 
 func runGoBuildCacheClean(ctx context.Context, path string) error {
+	return storageQuarantineRemoveDirectory(ctx, path)
+}
+
+func storageQuarantineRemoveDirectory(ctx context.Context, path string) error {
 	path = filepath.Clean(strings.TrimSpace(path))
 	if path == "." || !filepath.IsAbs(path) || path == string(filepath.Separator) {
 		return fmt.Errorf("go build cache path must be a non-root absolute path: %q", path)
@@ -1130,6 +1207,12 @@ func rebuildableCacheProcessActive(providerID string) (bool, error) {
 		pattern = `(^|/)(swift-build|swift-package|xcodebuild)( |$)|(^|/)swift( |$).*(build|package|resolve|test)( |$)`
 	case "playwright-cache":
 		pattern = `ms-playwright|(^|/)(playwright)( |$)`
+	case "uv-cache":
+		pattern = `(^|/)uv( |$)`
+	case "xcode-derived-data":
+		pattern = `(^|/)(Xcode|xcodebuild)( |$)`
+	case "ios-simulator-runtime":
+		pattern = `(^|/)(Simulator|simctl|xcodebuild|Xcode)( |$)`
 	case "app-updater-caches":
 		pattern = `(^|/)[^/]*[Uu]pdater( |$)|(^|/)(ShipIt|shipit)( |$)`
 	case "browser-media-caches":

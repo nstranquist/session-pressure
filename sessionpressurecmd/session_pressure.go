@@ -34,7 +34,7 @@ Subcommands:
   cleanup <subcommand>             Pressure reclaim policy, plan, history, and resource claims
   artifact status|prune [--apply]  Verify installed helper provenance and safely retain rollbacks
   storage <subcommand>             Inspect capacity, plan/provider reclaim, receipts, and storage policy
-  io <subcommand>                  Observe internal SSD writes and likely all-volume process writers
+  io <subcommand>                  Observe internal SSD writes, NVMe lifetime wear, and likely writers
   work status                      Show the weighted heavy-work coordinator
   work history [--limit N] [--full]  Compact lifecycle rows (default 20); --full digests/forensics
   work stats|report [--since D] [--full]  Compact calibration counts; full diagnostics opt in
@@ -71,8 +71,9 @@ Examples:
   session-pressure work run --class express-test -- go test ./internal/sessionpressure
   session-pressure work run --class test -- go test ./...
   session-pressure work run --class benchmark-exclusive -- go test -bench . ./...
-	  session-pressure --json storage plan --target-free 50GiB
-	  session-pressure --json io status --live
+  session-pressure --json storage plan --target-free 50GiB
+  session-pressure --json io status --live
+  session-pressure --json io health
   session-pressure --json telemetry --since 24h --limit 20
   session-pressure --json idle --min-age 12h --limit 10
   session-pressure idle --apply --root-pid PID --session-id ID
