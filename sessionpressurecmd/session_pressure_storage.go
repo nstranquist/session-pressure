@@ -265,19 +265,18 @@ func buildStoragePlan(policy sessionpressure.Policy, sample sessionpressure.Stor
 			reclaimable, tax := storagePlanReclaimableBytes(*provider)
 			estimated += reclaimable
 			rebuildTax += tax
-			if provider.HotnessEvidence != nil && provider.HotnessEvidence.Available && provider.HotnessEvidence.Complete {
-				coldEligible += provider.HotnessEvidence.ColdEligibleBytes
-			}
+			// Go's only supported action is a full wipe; cold bytes cannot be
+			// reclaimed independently and must not satisfy a shortfall.
 		}
 	}
 	for index := range providers {
 		provider := &providers[index]
 		if evidence := provider.HotnessEvidence; evidence != nil && evidence.Available && evidence.Complete {
 			eligible := (provider.Classification == storageProviderAutoSafe || provider.Classification == storageProviderOperator) && provider.MutationSupported && !provider.ActiveOwner
-			evidence.ColdMeetsShortfall = eligible && coldEligible >= shortfall
+			evidence.ColdMeetsShortfall = eligible && shortfall > 0 && coldEligible >= shortfall
 		}
 	}
-	return storagePlan{Sample: sample, TargetFreeBytes: target, ShortfallBytes: shortfall, EstimatedBytes: estimated, ColdEligibleBytes: coldEligible, RebuildTaxBytes: rebuildTax, ColdMeetsShortfall: coldEligible >= shortfall, Providers: providers}, nil
+	return storagePlan{Sample: sample, TargetFreeBytes: target, ShortfallBytes: shortfall, EstimatedBytes: estimated, ColdEligibleBytes: coldEligible, RebuildTaxBytes: rebuildTax, ColdMeetsShortfall: shortfall > 0 && coldEligible >= shortfall, Providers: providers}, nil
 }
 
 // storagePlanReclaimableBytes splits mutable provider bytes into reclaim that
@@ -286,9 +285,14 @@ func buildStoragePlan(policy sessionpressure.Policy, sample sessionpressure.Stor
 func storagePlanReclaimableBytes(provider storageProviderReport) (reclaimable, rebuildTax int64) {
 	if provider.ID == "go-build-cache" {
 		if evidence := provider.HotnessEvidence; evidence != nil && evidence.Available && evidence.Complete {
-			return evidence.ColdEligibleBytes, evidence.HotBytes
+			return 0, evidence.HotBytes
 		}
 		return 0, provider.EstimatedBytes
+	}
+	// Inventories and upper bounds are not measured reclaimable bytes. They
+	// remain visible on the provider, but cannot be added to the headline.
+	if provider.EstimateKind != "exact_gc" && provider.EstimateKind != "docker_system_df" {
+		return 0, 0
 	}
 	return provider.EstimatedBytes, 0
 }
@@ -391,7 +395,7 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 	}{
 		{"yarn-cache", "Rebuildable Yarn download cache; explicit operator reset", filepath.Join(home, "Library", "Caches", "Yarn"), []string{"library-caches"}},
 		{"npm-cache", "Rebuildable npm content-addressed cache (_cacache); explicit operator reset", filepath.Join(home, ".npm", "_cacache"), nil},
-		{"brew-cache", "Homebrew download cache via brew cleanup; not a directory wipe", filepath.Join(home, "Library", "Caches", "Homebrew"), []string{"library-caches"}},
+		{"brew-cache", "Homebrew cleanup --prune=all -s; also removes old installed formula versions", filepath.Join(home, "Library", "Caches", "Homebrew"), []string{"library-caches"}},
 		{"swiftpm-cache", "Rebuildable SwiftPM repository cache; explicit operator reset with active-owner revalidation", filepath.Join(home, "Library", "Caches", "org.swift.swiftpm", "repositories"), []string{"library-caches"}},
 		{"playwright-cache", "Rebuildable Playwright browser runtime cache; explicit operator reset with active-owner revalidation", filepath.Join(home, "Library", "Caches", "ms-playwright"), []string{"library-caches"}},
 	} {
@@ -470,17 +474,20 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 		}
 		report := storageProviderReport{
 			ID:                definition.id,
-			Classification:    storageProviderOperator,
+			Classification:    storageProviderReportOnly,
 			Summary:           definition.summary,
 			Path:              definition.path,
 			Present:           present,
 			EstimatedBytes:    size,
 			EstimateKind:      "inventory",
-			MutationSupported: present,
+			MutationSupported: false,
 		}
 		if err != nil {
 			report.BlockedReason = err.Error()
 			report.MutationSupported = false
+		}
+		if report.BlockedReason == "" {
+			report.BlockedReason = "archive retention and recovery require individual review"
 		}
 		reports = append(reports, report)
 	}
@@ -708,6 +715,7 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 	for _, id := range selected {
 		current := sessionpressure.SampleStorageCapacity(sessionpressure.DefaultStorageVolumePath(), time.Now())
 		if current.Available && current.AvailableBytes >= target {
+			skipped = append(skipped, map[string]any{"provider_id": id, "reason": "target already met; no reclaim attempted"})
 			break
 		}
 		provider, found := storageProviderByID(plan.Providers, id)
@@ -761,8 +769,12 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 	}
 	after := sessionpressure.SampleStorageCapacity(sessionpressure.DefaultStorageVolumePath(), time.Now())
 	after = sessionpressure.EvaluateStorage(after, runtime.policy.Storage, sample.Level)
-	payload := map[string]any{"ok": true, "action": "storage.apply", "apply": true, "target_free_bytes": target, "storage": after, "receipts": receipts, "skipped_providers": skipped, "force": force, "full_wipe": fullWipe, "cooldown_bypassed": cooldownBypassed}
-	return emitPressure(g, payload, fmt.Sprintf("storage reclaim complete: available=%.1fGiB target=%.1fGiB receipts=%d\n", bytesToGiB(after.AvailableBytes), bytesToGiB(target), len(receipts)), 0)
+	outcome := "completed"
+	if len(receipts) == 0 {
+		outcome = "no_action"
+	}
+	payload := map[string]any{"ok": true, "action": "storage.apply", "apply": true, "outcome": outcome, "target_free_bytes": target, "storage": after, "receipts": receipts, "skipped_providers": skipped, "force": force, "full_wipe": fullWipe, "cooldown_bypassed": cooldownBypassed}
+	return emitPressure(g, payload, fmt.Sprintf("storage reclaim %s: available=%.1fGiB target=%.1fGiB receipts=%d skipped=%v\n", outcome, bytesToGiB(after.AvailableBytes), bytesToGiB(target), len(receipts), skipped), 0)
 }
 
 func storageProviderInsideCooldown(receipts []sessionpressure.StorageReceipt, providerID string) bool {
@@ -869,7 +881,7 @@ func executeStorageProvider(ctx context.Context, runtime pressureRuntime, provid
 	case "docker-reclaim":
 		runErr = storageRunDockerPrune(ctx)
 	case "ios-simulator-runtime":
-		runErr = storageRunSimulatorReclaim(ctx)
+		runErr = errors.New("simulator reclaim requires individual device and runtime selection; bulk deletion is disabled")
 	case "pnpm-store":
 		active, activeErr := storagePNPMActive()
 		if activeErr != nil {
@@ -894,7 +906,7 @@ func executeStorageProvider(ctx context.Context, runtime pressureRuntime, provid
 			runErr = storageRunGoBuildCacheClean(ctx, provider.Path)
 		}
 	case "nicos-telemetry-archive", "nicos-voice-models", "nicos-wine-proof", "nicos-pw-archive":
-		runErr = storageRunGoBuildCacheClean(ctx, provider.Path)
+		runErr = errors.New("archive deletion requires individual retention and recovery review")
 	case "xcode-derived-data":
 		active, activeErr := storageCacheOwnerActive(provider.ID)
 		if activeErr != nil {
