@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## 0.5.2 — 2026-11-02
+
+### Fixed
+
+- `storage plan` and `storage apply` now fail closed. The headline
+  `estimated_reclaimable_bytes` counts only measured reclaim (`exact_gc`,
+  `docker_system_df`); inventories and upper bounds stay visible per provider
+  but no longer inflate the total. Go build cache cold bytes no longer satisfy
+  a shortfall, because the only supported Go action is a full wipe.
+- Simulator devices/runtimes and the retained Nico archives are now
+  report-only. Bulk `simctl delete all` and whole-archive deletion are
+  disabled until individual selection and recovery review exist.
+- `storage apply` reports an `outcome` (`completed` or `no_action`) and records
+  a `skipped_providers` reason when the free-space target is already met.
+- The `brew-cache` summary now states that `brew cleanup --prune=all -s` also
+  removes old installed formula versions.
+
+### Documentation
+
+- Added [Storage reclaim](docs/storage-reclaim.md) covering plan limits,
+  provider effects, and archive checks.
+
 ## 0.5.1 — 2026-11-02
 
 ### Fixed
