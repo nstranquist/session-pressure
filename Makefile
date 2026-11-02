@@ -1,7 +1,7 @@
 GO ?= go
 PREFIX ?= $(CURDIR)/bin
 
-.PHONY: test vet fmt build desktop-test publish-ready secret-scan init
+.PHONY: test vet fmt build desktop-test desktop-gpui publish-ready secret-scan init
 
 fmt:
 	$(GO) fmt ./...
@@ -14,6 +14,10 @@ test:
 
 desktop-test:
 	$(MAKE) -C apps/SessionPressure test
+
+desktop-gpui:
+	$(MAKE) -C apps/pressure-ui core-test
+	$(MAKE) -C apps/pressure-ui build
 
 build:
 	mkdir -p $(PREFIX)
