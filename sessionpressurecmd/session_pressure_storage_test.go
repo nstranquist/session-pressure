@@ -141,7 +141,7 @@ func TestStorageProviderClassificationPreservesPersonalStateAndRequiresExplicitG
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"mobile-sync", "downloads", "go-module-cache", "cargo-registry", "xcode-developer-data", "xcode-device-support"} {
+	for _, id := range []string{"mobile-sync", "downloads", "go-module-cache", "cargo-registry", "xcode-developer-data", "xcode-device-support", "nicos-telemetry-archive", "nicos-voice-models", "nicos-wine-proof", "nicos-pw-archive"} {
 		report, ok := storageProviderByID(reports, id)
 		if !ok || report.Classification != storageProviderReportOnly || report.MutationSupported {
 			t.Fatalf("provider %s = %+v", id, report)
@@ -151,7 +151,7 @@ func TestStorageProviderClassificationPreservesPersonalStateAndRequiresExplicitG
 	if xcodeReport.EstimatedBytes != 0 || xcodeReport.EstimateKind != "presence_only" {
 		t.Fatalf("xcode developer umbrella should stay presence_only: %+v", xcodeReport)
 	}
-	for _, id := range []string{"go-build-cache", "yarn-cache", "npm-cache", "brew-cache", "swiftpm-cache", "playwright-cache", "gradle-caches", "nicos-telemetry-archive", "nicos-voice-models", "nicos-wine-proof", "nicos-pw-archive"} {
+	for _, id := range []string{"go-build-cache", "yarn-cache", "npm-cache", "brew-cache", "swiftpm-cache", "playwright-cache", "gradle-caches"} {
 		report, ok := storageProviderByID(reports, id)
 		if !ok || report.Classification != storageProviderOperator || !report.MutationSupported {
 			t.Fatalf("provider %s = %+v", id, report)
@@ -728,8 +728,12 @@ func TestStorageApplyStopsAtSatisfiedTargetWithoutMutating(t *testing.T) {
 	}
 	var payload struct {
 		Receipts []sessionpressure.StorageReceipt `json:"receipts"`
+		Outcome  string                           `json:"outcome"`
+		Skipped  []struct {
+			Reason string `json:"reason"`
+		} `json:"skipped_providers"`
 	}
-	if err := json.Unmarshal([]byte(out), &payload); err != nil || len(payload.Receipts) != 0 {
+	if err := json.Unmarshal([]byte(out), &payload); err != nil || len(payload.Receipts) != 0 || payload.Outcome != "no_action" || len(payload.Skipped) != 1 || !strings.Contains(payload.Skipped[0].Reason, "target already met") {
 		t.Fatalf("payload=%+v err=%v output=%s", payload, err, out)
 	}
 }
@@ -897,8 +901,8 @@ func TestStoragePlanIncludesTypedOperatorProvidersAndGoHotness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.EstimatedBytes <= 0 {
-		t.Fatalf("plan estimated=%d, expected typed operator reclaim", plan.EstimatedBytes)
+	if plan.EstimatedBytes != 0 {
+		t.Fatalf("unproven inventory must not count as reclaimable: %d", plan.EstimatedBytes)
 	}
 	for _, id := range []string{"user-trash", "app-updater-caches", "browser-media-caches", "brew-cache"} {
 		provider, ok := storageProviderByID(plan.Providers, id)
@@ -913,15 +917,34 @@ func TestStoragePlanIncludesTypedOperatorProvidersAndGoHotness(t *testing.T) {
 	if goProvider.HotnessEvidence.HotBytes == 0 || goProvider.HotnessEvidence.ColdEligibleBytes == 0 || goProvider.HotnessEvidence.HotFraction <= 0 || goProvider.HotnessEvidence.HotFraction >= 1 {
 		t.Fatalf("unexpected go hotness evidence: %+v", goProvider.HotnessEvidence)
 	}
-	if len(goProvider.HotnessEvidence.AgeBuckets) != 4 || plan.ColdEligibleBytes == 0 || plan.ColdMeetsShortfall {
+	if len(goProvider.HotnessEvidence.AgeBuckets) != 4 || plan.ColdEligibleBytes != 0 || plan.ColdMeetsShortfall {
 		t.Fatalf("unexpected cold evidence plan=%+v provider=%+v", plan, goProvider.HotnessEvidence)
 	}
 	if plan.RebuildTaxBytes < goProvider.HotnessEvidence.HotBytes {
 		t.Fatalf("plan rebuild tax %d missing go hot bytes %d", plan.RebuildTaxBytes, goProvider.HotnessEvidence.HotBytes)
 	}
 	reclaimable, tax := storagePlanReclaimableBytes(goProvider)
-	if reclaimable != goProvider.HotnessEvidence.ColdEligibleBytes || tax != goProvider.HotnessEvidence.HotBytes {
+	if reclaimable != 0 || tax != goProvider.HotnessEvidence.HotBytes {
 		t.Fatalf("go reclaimable=%d tax=%d hot=%d cold=%d", reclaimable, tax, goProvider.HotnessEvidence.HotBytes, goProvider.HotnessEvidence.ColdEligibleBytes)
+	}
+}
+
+func TestStoragePlanDoesNotCountUpperBoundsAsReclaim(t *testing.T) {
+	for _, kind := range []string{"upper_bound", "inventory", "allowlisted_directory", "brew_autoremove_cellar"} {
+		got, _ := storagePlanReclaimableBytes(storageProviderReport{EstimateKind: kind, EstimatedBytes: 1024})
+		if got != 0 {
+			t.Fatalf("%s counted %d unproven bytes", kind, got)
+		}
+	}
+	got, _ := storagePlanReclaimableBytes(storageProviderReport{EstimateKind: "exact_gc", EstimatedBytes: 1024})
+	if got != 1024 {
+		t.Fatalf("exact result = %d", got)
+	}
+}
+
+func TestSimulatorBulkReclaimFailsClosed(t *testing.T) {
+	if err := runIOSSimulatorReclaim(t.Context()); err == nil || !strings.Contains(err.Error(), "bulk deletion is disabled") {
+		t.Fatalf("bulk simulator deletion should be disabled, got %v", err)
 	}
 }
 
@@ -1078,7 +1101,7 @@ func TestIOSSimulatorRuntimeProviderUsesSimctlInventory(t *testing.T) {
 	}
 	storageSimctlDevicesJSON = func() ([]byte, error) { return []byte(`{"devices":{}}`), nil }
 	report := inspectIOSSimulatorRuntimeProvider(false)
-	if !report.Present || !report.MutationSupported || report.EstimatedBytes != 8000000000 {
+	if !report.Present || report.MutationSupported || report.Classification != storageProviderReportOnly || report.EstimatedBytes != 8000000000 || report.SimulatorEvidence.MutationAuthorized {
 		t.Fatalf("simulator provider = %+v", report)
 	}
 	if report.SimulatorEvidence == nil || report.SimulatorEvidence.RuntimeCount != 1 {

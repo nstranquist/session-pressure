@@ -17,7 +17,6 @@ import (
 
 const (
 	defaultSimulatorAssetRoot = "/System/Library/AssetsV2/com_apple_MobileAsset_iOSSimulatorRuntime"
-	simulatorReclaimPoll      = 2 * time.Second
 	sipProtectedOrphanCode    = "SIP_PROTECTED_MOBILEASSET_ORPHAN"
 )
 
@@ -43,8 +42,8 @@ var storageBrewCellarPrefix = brewCellarPrefix
 func inspectIOSSimulatorRuntimeProvider(measure bool) storageProviderReport {
 	report := storageProviderReport{
 		ID:             "ios-simulator-runtime",
-		Classification: storageProviderOperator,
-		Summary:        "Apple-deletable iOS Simulator runtimes and devices via simctl; SIP MobileAssets stay report-only",
+		Classification: storageProviderReportOnly,
+		Summary:        "Simulator runtime and device inventory; individual selection and recovery review required",
 		EstimateKind:   "simctl_runtime_list",
 		Overlaps:       []string{"xcode-developer-data"},
 	}
@@ -101,7 +100,14 @@ func inspectIOSSimulatorRuntimeProvider(measure bool) storageProviderReport {
 		ErrorCode:          evidence.ResidualCode,
 		ItemCount:          evidence.RuntimeCount + evidence.DeviceCount,
 		IdentityRedacted:   true,
-		MutationAuthorized: evidence.MutationAuthorized,
+		MutationAuthorized: false,
+	}
+	// Device state is user data. Never authorize a bulk simulator wipe based
+	// solely on the presence of a runtime or an inactive Xcode process.
+	report.MutationSupported = false
+	evidence.MutationAuthorized = false
+	if report.BlockedReason == "" {
+		report.BlockedReason = "bulk simulator deletion disabled; individual device and runtime selection required"
 	}
 	report.Paths = []string{storageSimulatorAssetRoot}
 	return report
@@ -213,49 +219,7 @@ func simctlDevicesJSON() ([]byte, error) {
 }
 
 func runIOSSimulatorReclaim(ctx context.Context) error {
-	steps := [][]string{
-		{"xcrun", "simctl", "shutdown", "all"},
-		{"xcrun", "simctl", "delete", "all"},
-		{"xcrun", "simctl", "runtime", "dyld_shared_cache", "remove", "--all"},
-		{"xcrun", "simctl", "runtime", "delete", "all"},
-	}
-	for _, args := range steps {
-		command := processtree.CommandContext(ctx, args[0], args[1:]...)
-		var output bytes.Buffer
-		command.Stdout = &output
-		command.Stderr = &output
-		if err := command.Run(); err != nil {
-			message := strings.TrimSpace(output.String())
-			if len(message) > 512 {
-				message = message[:512]
-			}
-			return fmt.Errorf("%s: %w: %s", strings.Join(args, " "), err, message)
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-	}
-	deadline := time.Now().Add(5 * time.Minute)
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		runtimes, err := decodeSimctlRuntimes()
-		if err != nil {
-			return err
-		}
-		if len(runtimes) == 0 {
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("simctl runtime delete still lists %d images", len(runtimes))
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(simulatorReclaimPoll):
-		}
-	}
+	return errors.New("simulator reclaim requires individual device and runtime selection; bulk deletion is disabled")
 }
 
 func inspectXcodeDerivedDataProvider(home string, measure bool) storageProviderReport {
