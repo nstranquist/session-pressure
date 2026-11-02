@@ -11,7 +11,8 @@ This is the extracted open-core product. `ndev session pressure` in nicos-tools 
 - Samples host CPU, memory, swap, and fail-open thermal or low-power signals.
 - Admits or defers agent work through a weighted queue.
 - Identifies Claude, Codex, Grok, and Kimi process trees.
-- Watches internal-SSD write pressure.
+- Watches internal-SSD write pressure and NVMe SMART lifetime wear.
+- Inspects live work and lets an operator cancel, reschedule, or hand it off.
 - Ships a resident helper, a local opt-in API, and a thin native macOS client.
 
 ## Quick Start
@@ -52,7 +53,7 @@ From source:
 make build
 ```
 
-That writes `bin/session-pressure`, `bin/session-pressure-helper`, and `bin/session-pressure-api`. Put `bin/` on `PATH`, or set `SESSION_PRESSURE_BIN`.
+That writes `bin/session-pressure`, `bin/session-pressure-helper`, `bin/session-pressure-api`, and `bin/gocache-lru`. Put `bin/` on `PATH`, or set `SESSION_PRESSURE_BIN`.
 
 Desktop client:
 
@@ -62,6 +63,16 @@ make -C apps/SessionPressure run
 ```
 
 The app still uses the on-disk brand NDev Pressure through this release.
+
+A second desktop client built on GPUI is in preview under
+[`apps/pressure-ui`](apps/pressure-ui/README.md). It is keyboard-first and
+adds a three-column work inspector. Like the Swift client, it is a thin shell
+over `session-pressure --json`. It needs a Rust toolchain; the first build
+compiles GPUI and takes several minutes.
+
+```bash
+make desktop-gpui
+```
 
 ## Configuration
 
@@ -73,6 +84,7 @@ Default state directory: `~/.nicos-dev/session-pressure`.
 | `SESSION_PRESSURE_HOME` | Alias of the primary override |
 | `SESSION_PRESSURE_BIN` | Exact product CLI path for the desktop client |
 | `NDEV_PRESSURE_BIN` | Compatibility alias for the same path |
+| `SESSION_PRESSURE_API_BIN` | Exact `session-pressure-api` path for `session-pressure api` |
 
 Policy lives at `$SESSION_PRESSURE_HOME/policy.json`. `policy init` writes observe-only defaults. `policy enable` is the first command that can block launches. `policy profile apply` accepts `balanced`, `throughput`, `interactive`, or `observe`.
 
@@ -121,6 +133,42 @@ The work coordinator recognizes package-scoped `go -C <dir> test/build` and
 `pnpm --dir <dir> test/build/typecheck` commands. It assigns the express class
 without a manual `--class` flag. Recursive and multi-package commands keep the
 full test or build weight.
+
+### Inspect live work
+
+Every lease has an operation ID, shown by `work status`. To see what a lease
+is doing:
+
+```bash
+./bin/session-pressure --json work inspect --operation-id ID
+```
+
+The brief names the live process, its origin, a stall class, runtime against
+the class p95, and recent output. Live argv and output are read for
+inspection only and are not written to work events. Follow-up actions:
+
+```bash
+./bin/session-pressure work cancel --operation-id ID --confirm
+./bin/session-pressure work reschedule --operation-id ID --confirm
+./bin/session-pressure work handoff --operation-id ID
+```
+
+`cancel` signals the lease's process tree and releases the lease. `reschedule`
+applies only to scheduled work and needs the optional scheduler integration.
+`handoff` writes a brief for an interactive agent. See
+[OPEN-CORE.md](OPEN-CORE.md) for the optional integrations.
+
+### Cap the Go build cache
+
+`gocache-lru` is a Go `GOCACHEPROG` helper. It keeps the build cache under a
+size cap and evicts the least recently used entries first:
+
+```bash
+export GOCACHEPROG="$PWD/bin/gocache-lru -max 16GiB"
+```
+
+The default cache directory is `~/Library/Caches/go-build-capped`. Set `-dir`
+to change it.
 
 ## License
 

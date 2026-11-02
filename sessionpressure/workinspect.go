@@ -116,6 +116,7 @@ var (
 	lookupScheduleName      = lookupScheduleNameFromRegistry
 	readScheduleSnippet     = readScheduleOutputSnippet
 	runScheduleNowFn        = runScheduleNow
+	scheduleRunnerReadyFn   = scheduleRunnerReady
 	readProcessEnv          = processEnvKeys
 	captureScratchpadAgents = captureScratchpadAgentsNote
 )
@@ -657,6 +658,11 @@ func RescheduleWork(ctx context.Context, coordinator *WorkCoordinator, operation
 	if report.Origin.ScheduleID == "" {
 		return nil, errors.New("work reschedule requires a scheduled origin (NDEV_SCHEDULE_ID)")
 	}
+	// Fail closed: never cancel a scheduled lease unless the optional ndev
+	// scheduler integration is present to run it again.
+	if err := scheduleRunnerReadyFn(); err != nil {
+		return nil, fmt.Errorf("work reschedule: scheduler unavailable, lease left running: %w", err)
+	}
 	cancel, err := CancelWork(ctx, coordinator, operationID)
 	if err != nil {
 		return nil, err
@@ -676,6 +682,13 @@ func RescheduleWork(ctx context.Context, coordinator *WorkCoordinator, operation
 		return result, runErr
 	}
 	return result, nil
+}
+
+func scheduleRunnerReady() error {
+	if _, err := exec.LookPath("ndev"); err != nil {
+		return fmt.Errorf("ndev not on PATH: %w", err)
+	}
+	return nil
 }
 
 func runScheduleNow(id string) error {

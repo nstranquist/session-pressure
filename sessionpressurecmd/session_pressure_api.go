@@ -51,12 +51,14 @@ Flags are forwarded to session-pressure-api. See session-pressure-api --help.
 }
 
 func resolvePressureAPI() (string, error) {
-	if path := os.Getenv("NDEV_PRESSURE_API_BIN"); executable(path) {
-		return path, nil
+	for _, key := range []string{"SESSION_PRESSURE_API_BIN", "NDEV_PRESSURE_API_BIN"} {
+		if path := os.Getenv(key); executable(path) {
+			return path, nil
+		}
 	}
 	if self, err := os.Executable(); err == nil {
 		dir := filepath.Dir(self)
-		for _, name := range []string{"ndev-pressure-api", "ndev-pressure-api-go"} {
+		for _, name := range []string{"session-pressure-api", "ndev-pressure-api", "ndev-pressure-api-go"} {
 			path := filepath.Join(dir, name)
 			if executable(path) {
 				return path, nil
@@ -70,8 +72,10 @@ func resolvePressureAPI() (string, error) {
 			}
 		}
 	}
-	if path, err := exec.LookPath("ndev-pressure-api"); err == nil && executable(path) {
-		return path, nil
+	for _, name := range []string{"session-pressure-api", "ndev-pressure-api"} {
+		if path, err := exec.LookPath(name); err == nil && executable(path) {
+			return path, nil
+		}
 	}
-	return "", errors.New("ndev-pressure-api not found; build/install it or set NDEV_PRESSURE_API_BIN")
+	return "", errors.New("session-pressure-api not found; build/install it or set SESSION_PRESSURE_API_BIN")
 }

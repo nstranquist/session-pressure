@@ -242,3 +242,35 @@ func TestInspectWorkUnknownOperation(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestRescheduleWorkFailsClosedWithoutScheduler(t *testing.T) {
+	t.Setenv("NDEV_SCHEDULE_ID", "docs-corpus-local-refresh")
+	origLookup := lookupScheduleName
+	origReady := scheduleRunnerReadyFn
+	origRun := runScheduleNowFn
+	t.Cleanup(func() {
+		lookupScheduleName = origLookup
+		scheduleRunnerReadyFn = origReady
+		runScheduleNowFn = origRun
+	})
+	lookupScheduleName = func(string, string) (string, string) { return "", "" }
+	scheduleRunnerReadyFn = func() error { return os.ErrNotExist }
+	runScheduleNowFn = func(string) error {
+		t.Fatal("run-now must not be called when the scheduler is unavailable")
+		return nil
+	}
+	dir := t.TempDir()
+	coordinator := NewWorkCoordinator(dir, DefaultPolicy(16<<10).WorkLimits)
+	lease, _, err := coordinator.Acquire(context.Background(), WorkClassExpressTest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lease.Release(context.Background()) }()
+	operationID := lease.Record().OperationID
+	if _, err := RescheduleWork(context.Background(), coordinator, operationID); err == nil || !strings.Contains(err.Error(), "lease left running") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := InspectWork(context.Background(), coordinator, operationID); err != nil {
+		t.Fatalf("lease should remain live after refused reschedule: %v", err)
+	}
+}
