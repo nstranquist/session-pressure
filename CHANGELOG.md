@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- `io health` on a Mac with no SMART-capable NVMe device (VMs, CI runners,
+  external boot) now reports `available: false` with
+  `reason: nvme_smart_not_found` instead of failing with
+  `IOReturn 0xe00002f0`.
+
 ## 0.5.0 — 2026-11-02
 
 ### Added
