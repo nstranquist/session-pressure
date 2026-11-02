@@ -1,0 +1,25 @@
+schema_version: 2
+id: context.session-pressure-ui
+name: Session Pressure GPUI
+kind: product
+lifecycle: active
+catalog_id: product.session-pressure
+owner_path: apps/pressure-ui
+summary: "Secondary GPUI desktop client for Session Pressure. Thin JSON shell, keyboard-first, three-column work inspect."
+source_roots:
+  - apps/pressure-ui
+public_contracts: []
+dependencies: []
+facets:
+  - id: desktop
+    kind: desktop-app
+    path: apps/pressure-ui
+    entrypoint: apps/pressure-ui/README.md
+    runtime_contract: none
+relationships:
+  - kind: tracks
+    target: product.session-pressure
+evidence:
+  - kind: docs
+    path: apps/pressure-ui/README.md
+tags: [ownership, product-cell, macos, observability, gpui]
