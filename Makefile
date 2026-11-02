@@ -7,10 +7,10 @@ fmt:
 	$(GO) fmt ./...
 
 vet:
-	$(GO) vet ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./sessionpressurecontrol ./cmd/session-pressure ./cmd/session-pressure-api ./cmd/session-pressure-helper
+	$(GO) vet ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./sessionpressurecontrol ./cmd/session-pressure ./cmd/session-pressure-api ./cmd/session-pressure-helper ./sessionpressure/gocachelru ./cmd/gocache-lru
 
 test:
-	$(GO) test ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./sessionpressurecontrol ./internal/hostcleanup ./cmd/session-pressure ./internal/filelock ./internal/jsonl ./internal/notifyinbox ./internal/operationcontract ./packages/processtree -count=1 -timeout 10m
+	$(GO) test ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./sessionpressurecontrol ./internal/hostcleanup ./cmd/session-pressure ./internal/filelock ./internal/jsonl ./internal/notifyinbox ./internal/operationcontract ./packages/processtree ./sessionpressure/gocachelru ./cmd/gocache-lru -count=1 -timeout 10m
 
 desktop-test:
 	$(MAKE) -C apps/SessionPressure test
@@ -24,6 +24,7 @@ build:
 	$(GO) build -o $(PREFIX)/session-pressure ./cmd/session-pressure
 	$(GO) build -o $(PREFIX)/session-pressure-api ./cmd/session-pressure-api
 	$(GO) build -o $(PREFIX)/session-pressure-helper ./cmd/session-pressure-helper
+	$(GO) build -o $(PREFIX)/gocache-lru ./cmd/gocache-lru
 
 secret-scan:
 	@if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --source . --no-git --redact; else echo "gitleaks not installed; skipped"; fi
