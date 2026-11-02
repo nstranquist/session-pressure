@@ -110,7 +110,10 @@ static int nvme_smart_scan_class(const char *class_name, nvme_smart_c_result *ou
     if (kr != KERN_SUCCESS) {
         return (int)kr;
     }
-    int rc = (int)kIOReturnNotFound;
+    // rc stays 0 when no SMART-capable service exists so the caller reports
+    // nvme_smart_not_found (VMs, CI runners, external boot) instead of failing;
+    // it only carries an IOReturn when a capable device's read actually failed.
+    int rc = 0;
     io_object_t svc;
     while ((svc = IOIteratorNext(iter)) != 0) {
         CFTypeRef capable = IORegistryEntryCreateCFProperty(svc, CFSTR(kIOPropertyNVMeSMARTCapableKey), kCFAllocatorDefault, 0);
@@ -141,11 +144,11 @@ int nvme_smart_read(nvme_smart_c_result *out) {
     if (out->available) {
         return 0;
     }
-    rc = nvme_smart_scan_class("IONVMeBlockStorageDevice", out);
+    int rc2 = nvme_smart_scan_class("IONVMeBlockStorageDevice", out);
     if (out->available) {
         return 0;
     }
-    return rc;
+    return rc != 0 ? rc : rc2;
 }
 */
 import "C"
