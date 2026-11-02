@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-Target version: `0.5.0`.
+## 0.5.0 — 2026-11-02
 
 ### Added
 
