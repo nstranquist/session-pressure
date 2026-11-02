@@ -136,6 +136,8 @@ public struct DiskWriteSummary: Codable, Sendable, Hashable {
     public var baselineRatio: Double
     public var baselineSamples: UInt64
     public var baselineAgeSeconds: Double?
+    public var swapOutBytes15m: UInt64
+    public var swapShare15m: Double
     public var deviceCount: Int
     public var totalPIDCount: Int
     public var accessiblePIDCount: Int
@@ -146,6 +148,11 @@ public struct DiskWriteSummary: Codable, Sendable, Hashable {
 
     public var rollingWindowIncomplete: Bool {
         reasonCodes.contains("rolling_window_incomplete")
+    }
+
+    /// Kernel swap-out owns at least half of the rolling device writes.
+    public var swapDominant: Bool {
+        reasonCodes.contains("swap_dominant")
     }
 
     enum CodingKeys: String, CodingKey {
@@ -164,6 +171,8 @@ public struct DiskWriteSummary: Codable, Sendable, Hashable {
         case baselineRatio = "baseline_ratio"
         case baselineSamples = "baseline_samples"
         case baselineAgeSeconds = "baseline_age_seconds"
+        case swapOutBytes15m = "swap_out_bytes_15m"
+        case swapShare15m = "swap_share_15m"
         case deviceCount = "device_count"
         case totalPIDCount = "total_pid_count"
         case accessiblePIDCount = "accessible_pid_count"
@@ -193,6 +202,8 @@ public struct DiskWriteSummary: Codable, Sendable, Hashable {
         baselineRatio = try c.decodeIfPresent(Double.self, forKey: .baselineRatio) ?? 0
         baselineSamples = try c.decodeIfPresent(UInt64.self, forKey: .baselineSamples) ?? 0
         baselineAgeSeconds = try c.decodeIfPresent(Double.self, forKey: .baselineAgeSeconds)
+        swapOutBytes15m = try c.decodeIfPresent(UInt64.self, forKey: .swapOutBytes15m) ?? 0
+        swapShare15m = try c.decodeIfPresent(Double.self, forKey: .swapShare15m) ?? 0
         deviceCount = try c.decodeIfPresent(Int.self, forKey: .deviceCount) ?? 0
         totalPIDCount = try c.decodeIfPresent(Int.self, forKey: .totalPIDCount) ?? 0
         accessiblePIDCount = try c.decodeIfPresent(Int.self, forKey: .accessiblePIDCount) ?? 0
@@ -248,6 +259,7 @@ public struct DiskWriteHistoryPoint: Codable, Sendable, Identifiable, Hashable {
     public var hour: Date
     public var state: DiskWriteState?
     public var bytesWritten: UInt64
+    public var swapOutBytes: UInt64
     public var unscoredGapBytes: UInt64
     public var baselineP99Bytes: UInt64
     public var sampleCount: UInt64
@@ -257,6 +269,7 @@ public struct DiskWriteHistoryPoint: Codable, Sendable, Identifiable, Hashable {
     enum CodingKeys: String, CodingKey {
         case hour, state
         case bytesWritten = "bytes_written"
+        case swapOutBytes = "swap_out_bytes"
         case unscoredGapBytes = "unscored_gap_bytes"
         case baselineP99Bytes = "baseline_p99_bytes"
         case sampleCount = "sample_count"
@@ -267,6 +280,7 @@ public struct DiskWriteHistoryPoint: Codable, Sendable, Identifiable, Hashable {
         hour = try c.decode(Date.self, forKey: .hour)
         state = try c.decodeIfPresent(DiskWriteState.self, forKey: .state)
         bytesWritten = try c.decodeIfPresent(UInt64.self, forKey: .bytesWritten) ?? 0
+        swapOutBytes = try c.decodeIfPresent(UInt64.self, forKey: .swapOutBytes) ?? 0
         unscoredGapBytes = try c.decodeIfPresent(UInt64.self, forKey: .unscoredGapBytes) ?? 0
         baselineP99Bytes = try c.decodeIfPresent(UInt64.self, forKey: .baselineP99Bytes) ?? 0
         sampleCount = try c.decodeIfPresent(UInt64.self, forKey: .sampleCount) ?? 0

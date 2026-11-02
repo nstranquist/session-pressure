@@ -545,7 +545,9 @@ struct CoreTests {
             "baseline_ratio": 9,
             "baseline_samples": 7000,
             "unscored_gap_bytes": 4096,
-            "reason_codes": ["rolling_window_incomplete"],
+            "swap_out_bytes_15m": 754974720,
+            "swap_share_15m": 0.8,
+            "reason_codes": ["rolling_window_incomplete", "swap_dominant", "baseline_excluded_swap"],
             "attribution_available": true,
             "writer_available_count": 1,
             "top_writer": {
@@ -600,6 +602,9 @@ struct CoreTests {
         #expect(status.summary?.topWriter?.executable == "sqlite3")
         #expect(status.summary?.rollingWindowIncomplete == true)
         #expect(status.summary?.unscoredGapBytes == 4_096)
+        #expect(status.summary?.swapOutBytes15m == 754_974_720)
+        #expect(status.summary?.swapShare15m == 0.8)
+        #expect(status.summary?.swapDominant == true)
         #expect(status.report?.writers.first?.pid == 123)
         #expect(status.diskWritePolicy?.notificationsEnabled == false)
 
@@ -624,6 +629,7 @@ struct CoreTests {
             "hour": "2026-07-22T21:00:00Z",
             "state": "normal",
             "bytes_written": 1073741824,
+            "swap_out_bytes": 536870912,
             "unscored_gap_bytes": 4096,
             "baseline_p99_bytes": 268435456,
             "sample_count": 240
@@ -636,6 +642,7 @@ struct CoreTests {
         let history = try PressureJSON.decode(DiskWriteHistoryEnvelope.self, from: Data(historyJSON.utf8))
         #expect(history.history.first?.bytesWritten == 1_073_741_824)
         #expect(history.history.first?.unscoredGapBytes == 4_096)
+        #expect(history.history.first?.swapOutBytes == 536_870_912)
         #expect(history.history.first?.sampleCount == 240)
     }
 

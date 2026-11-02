@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+## 0.6.0 — 2026-11-02
+
+### Added
+
+- **Live swap-out pressure.** The resident reads cumulative kernel swap
+  counters (`host_statistics64`, no subprocess) and reports
+  `swap_in_mb_per_s` / `swap_out_mb_per_s` on every snapshot, compact status,
+  and telemetry row. Swap-out at or above `swap_out_warning_mb_per_s`
+  (default 8) or `swap_out_red_mb_per_s` (default 32) raises a memory-dimension
+  warning or red. Unlike sticky swap use, this signal ends when thrash ends. It
+  caps at red and never corroborates sticky swap, so it cannot authorize
+  automatic relief. Existing policies default-fill both thresholds.
+- **Kernel swap attribution for disk writes.** Swap-out bytes have no owning
+  process counter, so the disk-write plane now reports them as the synthetic
+  `kernel_swap` writer (`category: system`, `owner_kind: kernel`), clamped to
+  the device delta. Summaries add `swap_out_bytes_15m` and `swap_share_15m`;
+  hourly history adds `swap_out_bytes`. The Disk Writes pane shows a Kernel
+  swap tile when swap is present.
+
+### Fixed
+
+- **The quiet baseline no longer learns memory thrash as normal.** Windows
+  where kernel swap is at least half of device writes are reported with
+  `swap_dominant` and `baseline_excluded_swap` and never train the baseline,
+  including during learning. Previously a sustained swap storm trained p99 up
+  to the 64 GiB/15m bucket, so the model labeled roughly 1 TB/hour as
+  `normal`.
+- Learned baselines move to epoch 2. Restore drops epoch-1 context and
+  executable histograms but keeps their hourly traffic, rolling totals, and
+  device rebase point, so history stays visible while the model relearns.
+
 ## 0.5.2 — 2026-11-02
 
 ### Fixed

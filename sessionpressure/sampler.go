@@ -52,6 +52,7 @@ type Sampler struct {
 	hostCPUSource      func() (hostCPUTicks, error)
 	physicalSource     func() (float64, error)
 	swapSource         func() (float64, error)
+	swapIOSource       func(context.Context) (swapIOCounter, error)
 	powerThermalSource func(context.Context) (PowerThermalStatus, error)
 	storageSource      func(string) (StorageCapacity, error)
 	workStatusSource   func(context.Context) (WorkStatus, error)
@@ -82,6 +83,9 @@ type Sampler struct {
 	hostCPULast              hostCPUTicks
 	hostCPULastAt            time.Time
 	hostCPULastWallAt        time.Time
+	swapIOMu                 sync.Mutex
+	swapIOLast               swapIOCounter
+	swapIOLastAt             time.Time
 }
 
 type hostCPUTicks struct {
@@ -105,11 +109,11 @@ const (
 const maxProjectedAgentTrees = 24
 
 func NewSampler() *Sampler {
-	return &Sampler{runner: execRunner{}, now: time.Now, pid: os.Getpid(), role: "operator", cpuNow: processCPUTime, peakRSS: processPeakRSSMB, logicalCPUCount: runtime.NumCPU, processSource: nativeProcesses, hostCPUSource: nativeHostCPUTicks, physicalSource: nativePhysicalMemoryMB, swapSource: nativeSwapUsedMB, powerThermalSource: func(ctx context.Context) (PowerThermalStatus, error) { return probePowerThermal(ctx, execRunner{}) }, storageSource: nativeStorageCapacity, sessionStateDir: defaultSessionStateDir()}
+	return &Sampler{runner: execRunner{}, now: time.Now, pid: os.Getpid(), role: "operator", cpuNow: processCPUTime, peakRSS: processPeakRSSMB, logicalCPUCount: runtime.NumCPU, processSource: nativeProcesses, hostCPUSource: nativeHostCPUTicks, physicalSource: nativePhysicalMemoryMB, swapSource: nativeSwapUsedMB, swapIOSource: defaultSwapIOSource, powerThermalSource: func(ctx context.Context) (PowerThermalStatus, error) { return probePowerThermal(ctx, execRunner{}) }, storageSource: nativeStorageCapacity, sessionStateDir: defaultSessionStateDir()}
 }
 
 func NewResidentSampler() *Sampler {
-	return &Sampler{runner: execRunner{}, now: time.Now, pid: os.Getpid(), role: "resident", cpuNow: processCPUTime, peakRSS: processPeakRSSMB, logicalCPUCount: runtime.NumCPU, processSource: nativeProcesses, hostCPUSource: nativeHostCPUTicks, physicalSource: nativePhysicalMemoryMB, swapSource: nativeSwapUsedMB, powerThermalSource: func(ctx context.Context) (PowerThermalStatus, error) { return probePowerThermal(ctx, execRunner{}) }, storageSource: nativeStorageCapacity, sessionStateDir: defaultSessionStateDir(), binarySHA256: currentExecutableSHA256()}
+	return &Sampler{runner: execRunner{}, now: time.Now, pid: os.Getpid(), role: "resident", cpuNow: processCPUTime, peakRSS: processPeakRSSMB, logicalCPUCount: runtime.NumCPU, processSource: nativeProcesses, hostCPUSource: nativeHostCPUTicks, physicalSource: nativePhysicalMemoryMB, swapSource: nativeSwapUsedMB, swapIOSource: defaultSwapIOSource, powerThermalSource: func(ctx context.Context) (PowerThermalStatus, error) { return probePowerThermal(ctx, execRunner{}) }, storageSource: nativeStorageCapacity, sessionStateDir: defaultSessionStateDir(), binarySHA256: currentExecutableSHA256()}
 }
 
 // SessionStateDir returns the hook session-state directory used for semantic
@@ -316,6 +320,7 @@ func (sampler *Sampler) Sample(ctx context.Context, policy Policy) (Snapshot, er
 	if err != nil {
 		return Snapshot{}, err
 	}
+	swapIO, swapIOOK := sampler.sampleSwapIO(ctx)
 	phases["swap"] = phase(&mark)
 	forcePowerThermal := sampler.role != "resident" || float64(freePercent) <= policy.Thresholds.FreeWarningPercent
 	powerThermal := sampler.samplePowerThermal(ctx, policy, forcePowerThermal)
@@ -444,7 +449,41 @@ func (sampler *Sampler) Sample(ctx context.Context, policy Policy) (Snapshot, er
 		snapshot.SampleCPUTimeMS = float64((cpuEnded - cpuStarted).Microseconds()) / 1000
 		snapshot.processCPUTotalMS = float64(cpuEnded.Microseconds()) / 1000
 	}
+	applySwapIORate(&snapshot, swapIO, swapIOOK)
 	return Evaluate(snapshot, policy), nil
+}
+
+// sampleSwapIO advances the cumulative swap counter. The first call only
+// establishes a baseline; later calls report the rate across the resident's
+// own sampling interval, which is already a sustained average.
+func (sampler *Sampler) sampleSwapIO(ctx context.Context) (swapIORate, bool) {
+	if sampler.swapIOSource == nil {
+		return swapIORate{}, false
+	}
+	current, err := sampler.swapIOSource(ctx)
+	sampler.swapIOMu.Lock()
+	defer sampler.swapIOMu.Unlock()
+	if err != nil {
+		sampler.swapIOLast, sampler.swapIOLastAt = swapIOCounter{}, time.Time{}
+		return swapIORate{}, false
+	}
+	at := time.Now()
+	if sampler.now != nil {
+		at = sampler.now()
+	}
+	rate, ok := swapIORateBetween(sampler.swapIOLast, current, at.Sub(sampler.swapIOLastAt))
+	sampler.swapIOLast, sampler.swapIOLastAt = current, at
+	return rate, ok
+}
+
+func applySwapIORate(snapshot *Snapshot, rate swapIORate, ok bool) {
+	if !ok {
+		return
+	}
+	snapshot.SwapIOAvailable = true
+	snapshot.SwapInMBPerSecond = math.Round(rate.InMBPerSecond*10) / 10
+	snapshot.SwapOutMBPerSecond = math.Round(rate.OutMBPerSecond*10) / 10
+	snapshot.SwapIOWindowMS = float64(rate.Window.Microseconds()) / 1000
 }
 
 func (sampler *Sampler) sampleHostCPU(ctx context.Context, waitForInitialWindow bool) (float64, time.Duration, error) {
@@ -970,6 +1009,17 @@ func (sampler *Sampler) SampleHost(ctx context.Context, policy Policy, latest *S
 		logicalCPUCount = sampler.logicalCPUCount()
 	}
 	snapshot.LogicalCPUCount = max(1, logicalCPUCount)
+	// Admission samplers are short-lived and cannot hold a counter baseline,
+	// so they project the resident's fresh swap rate instead of dropping it.
+	if latest != nil && latest.SwapIOAvailable {
+		age := started.Sub(latest.Timestamp)
+		if age >= -5*time.Second && age <= time.Duration(policy.SampleIntervalSeconds*2+15)*time.Second {
+			snapshot.SwapIOAvailable = true
+			snapshot.SwapInMBPerSecond = latest.SwapInMBPerSecond
+			snapshot.SwapOutMBPerSecond = latest.SwapOutMBPerSecond
+			snapshot.SwapIOWindowMS = latest.SwapIOWindowMS
+		}
+	}
 	if latest != nil && latest.ProcessInventoryAvailable {
 		capturedAt := latest.ProcessInventoryCapturedAt
 		if capturedAt.IsZero() {

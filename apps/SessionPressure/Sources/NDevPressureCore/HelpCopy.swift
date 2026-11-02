@@ -62,7 +62,9 @@ public enum PressureHelp {
     public static let diskWriterAttribution =
         "Best-effort libproc write deltas grouped by executable basename. Process counters cover all mounted volumes, so they correlate likely writers but cannot prove that one process wrote the exact internal-SSD device bytes."
     public static let diskWriteBaseline =
-        "A per-work-context quiet p99 baseline. Learning requires at least two elapsed hours; confident scoring requires seven elapsed days. Anomalous windows do not train the baseline upward."
+        "A per-work-context quiet p99 baseline. Learning requires at least two elapsed hours; confident scoring requires seven elapsed days. Anomalous windows and windows where kernel swap is at least half of device writes do not train the baseline upward."
+    public static let diskWriteSwap =
+        "Kernel swap-out bytes from the Mach VM counters, clamped to the device total. No process owns these writes, so they appear as the kernel_swap writer. A high share means memory thrash, not app I/O: reduce memory demand to stop it."
     public static let diskWriteTrace =
         "Interactive, bounded 5–30 second path tracing for one PID. It requires explicit administrator authorization, revalidates PID start identity, never runs in the background, and does not persist paths."
     public static let admissionAllowed =

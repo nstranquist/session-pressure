@@ -129,6 +129,7 @@ struct DiskWritesView: View {
             VStack(alignment: .leading, spacing: 7) {
                 Label("Device total: internal solid-state block devices", systemImage: "checkmark.seal")
                 Label("Writer ranking: all-volume process counters, best-effort correlation", systemImage: "exclamationmark.triangle")
+                Label("kernel_swap: kernel swap-out counter; memory thrash written to the SSD", systemImage: "memorychip")
                 Text("A writer row is a lead for diagnosis, not proof that every byte reached the internal SSD.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -161,6 +162,15 @@ struct DiskWritesView: View {
                         subtitle: coverageLabel(summary),
                         help: PressureHelp.diskWrites
                     )
+                    if summary.swapOutBytes15m > 0 {
+                        MetricCard(
+                            title: "Kernel swap / 15m",
+                            value: formatBytes(Double(summary.swapOutBytes15m)),
+                            subtitle: "\(Int((summary.swapShare15m * 100).rounded()))% of device writes",
+                            accent: summary.swapDominant ? stateColor : .secondary,
+                            help: PressureHelp.diskWriteSwap
+                        )
+                    }
                     MetricCard(
                         title: "Quiet p99 / 15m",
                         value: formatBytes(Double(summary.baselineP99Bytes15m)),

@@ -42,6 +42,8 @@ type TelemetrySnapshotSummary struct {
 	PrimaryReason              string         `json:"primary_reason,omitempty"`
 	FreePercent                int            `json:"free_percent"`
 	SwapUsedMB                 float64        `json:"swap_used_mb"`
+	SwapInMBPerSecond          float64        `json:"swap_in_mb_per_s,omitempty"`
+	SwapOutMBPerSecond         float64        `json:"swap_out_mb_per_s,omitempty"`
 	HostCPUPercent             float64        `json:"host_cpu_percent"`
 	AgentTreeCount             int            `json:"agent_tree_count"`
 	AgentRSSSumMB              float64        `json:"agent_rss_sum_mb"`
@@ -76,6 +78,7 @@ func compactTelemetrySummary(snapshot Snapshot) TelemetrySnapshotSummary {
 	return TelemetrySnapshotSummary{
 		SchemaVersion: SchemaVersion, Timestamp: snapshot.Timestamp, Level: snapshot.Level,
 		PrimaryReason: primaryReason, FreePercent: snapshot.FreePercent, SwapUsedMB: snapshot.SwapUsedMB,
+		SwapInMBPerSecond: snapshot.SwapInMBPerSecond, SwapOutMBPerSecond: snapshot.SwapOutMBPerSecond,
 		HostCPUPercent: snapshot.HostCPUPercent, AgentTreeCount: snapshot.AgentTreeCount, AgentRSSSumMB: snapshot.AgentRSSSumMB,
 		MemoryMomentum: snapshot.MemoryMomentum, FreePercentSlopePerMinute: snapshot.FreePercentSlopePerMinute,
 		MinutesToMemoryRed: snapshot.MinutesToMemoryRed,
