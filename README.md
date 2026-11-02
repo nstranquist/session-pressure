@@ -96,6 +96,9 @@ Do not copy a live `~/.nicos-dev/session-pressure` tree into issues, fixtures, o
 - **`ndev session pressure` exits 127.** The nicos-tools wrapper cannot find the product CLI. Install `session-pressure` or `ndev-pressure` on `PATH`.
 - **Desktop says the binary is missing.** Set `SESSION_PRESSURE_BIN` to the built `bin/session-pressure`. The client prefers that name over nicos-tools paths.
 - **`storage apply` refuses a provider.** Extract pageskein reclaim is closed. Factory-only providers stay visible and non-actionable. See [OPEN-CORE.md](OPEN-CORE.md).
+
+For storage plan limits, provider effects, and archive checks, see
+[Storage reclaim](docs/storage-reclaim.md).
 - **`--auto-safe --force` is rejected.** Force skips cooldown on one named `--provider` only. Ownership, `report_only`, and `--apply` still fail closed.
 
 ## Architecture
