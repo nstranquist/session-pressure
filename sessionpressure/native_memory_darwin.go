@@ -9,8 +9,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const bytesPerMiB = 1024 * 1024
-
 func nativePhysicalMemoryMB() (float64, error) {
 	bytes, err := unix.SysctlUint64("hw.memsize")
 	if err != nil {

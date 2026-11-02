@@ -43,12 +43,15 @@ type Thresholds struct {
 	SwapWarningMB         float64 `json:"swap_warning_mb"`
 	SwapRedMB             float64 `json:"swap_red_mb"`
 	SwapCriticalMB        float64 `json:"swap_critical_mb"`
-	TreeWarningMB         float64 `json:"tree_warning_mb"`
-	TreeRedMB             float64 `json:"tree_red_mb"`
-	TreeCriticalMB        float64 `json:"tree_critical_mb"`
-	AgentTotalWarningMB   float64 `json:"agent_total_warning_mb"`
-	AgentTotalRedMB       float64 `json:"agent_total_red_mb"`
-	AgentTotalCriticalMB  float64 `json:"agent_total_critical_mb"`
+	// Swap-out rate thresholds cap at red; see evaluate.
+	SwapOutWarningMBPerSecond float64 `json:"swap_out_warning_mb_per_s"`
+	SwapOutRedMBPerSecond     float64 `json:"swap_out_red_mb_per_s"`
+	TreeWarningMB             float64 `json:"tree_warning_mb"`
+	TreeRedMB                 float64 `json:"tree_red_mb"`
+	TreeCriticalMB            float64 `json:"tree_critical_mb"`
+	AgentTotalWarningMB       float64 `json:"agent_total_warning_mb"`
+	AgentTotalRedMB           float64 `json:"agent_total_red_mb"`
+	AgentTotalCriticalMB      float64 `json:"agent_total_critical_mb"`
 }
 
 // StoragePolicy is independent from memory-oriented admission and shedding.
@@ -437,12 +440,16 @@ func DefaultPolicy(physicalMemoryMB float64) Policy {
 			SwapWarningMB:         physicalMemoryMB * 0.25,
 			SwapRedMB:             physicalMemoryMB * 0.50,
 			SwapCriticalMB:        physicalMemoryMB * 0.75,
-			TreeWarningMB:         physicalMemoryMB * 0.1875,
-			TreeRedMB:             physicalMemoryMB * 0.3125,
-			TreeCriticalMB:        physicalMemoryMB * 0.4375,
-			AgentTotalWarningMB:   physicalMemoryMB * 0.50,
-			AgentTotalRedMB:       physicalMemoryMB * 0.6875,
-			AgentTotalCriticalMB:  physicalMemoryMB * 0.8125,
+			// 8 MB/s sustained is ~0.7 TB/day of SSD writes; 32 MB/s is
+			// ~115 GB/hour, the thrash rate observed on 2026-11-02.
+			SwapOutWarningMBPerSecond: 8,
+			SwapOutRedMBPerSecond:     32,
+			TreeWarningMB:             physicalMemoryMB * 0.1875,
+			TreeRedMB:                 physicalMemoryMB * 0.3125,
+			TreeCriticalMB:            physicalMemoryMB * 0.4375,
+			AgentTotalWarningMB:       physicalMemoryMB * 0.50,
+			AgentTotalRedMB:           physicalMemoryMB * 0.6875,
+			AgentTotalCriticalMB:      physicalMemoryMB * 0.8125,
 		},
 		ResourceBudgets: ResourceBudgets{
 			MaxSelfRSSMB:          30,
@@ -571,6 +578,9 @@ func (policy Policy) Validate() error {
 	}
 	if !(t.SwapWarningMB < t.SwapRedMB && t.SwapRedMB < t.SwapCriticalMB) {
 		return errors.New("swap thresholds must satisfy warning < red < critical")
+	}
+	if !(0 < t.SwapOutWarningMBPerSecond && t.SwapOutWarningMBPerSecond < t.SwapOutRedMBPerSecond) {
+		return errors.New("swap-out rate thresholds must satisfy 0 < warning < red")
 	}
 	if !(t.TreeWarningMB < t.TreeRedMB && t.TreeRedMB < t.TreeCriticalMB) {
 		return errors.New("tree thresholds must satisfy warning < red < critical")
@@ -727,6 +737,10 @@ func LoadPolicy(path string, physicalMemoryMB float64) (Policy, bool, error) {
 	}
 	if policy.Thresholds.HostCPURedPercent == 0 {
 		policy.Thresholds.HostCPURedPercent = defaults.Thresholds.HostCPURedPercent
+	}
+	if policy.Thresholds.SwapOutWarningMBPerSecond == 0 && policy.Thresholds.SwapOutRedMBPerSecond == 0 {
+		policy.Thresholds.SwapOutWarningMBPerSecond = defaults.Thresholds.SwapOutWarningMBPerSecond
+		policy.Thresholds.SwapOutRedMBPerSecond = defaults.Thresholds.SwapOutRedMBPerSecond
 	}
 	if policy.ResourceBudgets.MaxSampleCPUTimeMS == 0 {
 		policy.ResourceBudgets.MaxSampleCPUTimeMS = defaults.ResourceBudgets.MaxSampleCPUTimeMS

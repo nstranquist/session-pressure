@@ -32,6 +32,15 @@ const (
 	diskWriteAlertLimitPerDay     = 4
 	diskWriteMaxWriters           = 20
 	diskWriteMaxExecutableModels  = 32
+	// diskWriteBaselineEpoch invalidates learned baselines without hiding
+	// hourly history. Epoch 2 excludes kernel swap-dominated windows from the
+	// quiet histogram; epoch-1 baselines trained on swap thrash as "quiet" and
+	// saturated p99 near the 64 GiB/15m bucket, so they are never merged.
+	diskWriteBaselineEpoch = 2
+	// diskWriteSwapExecutable is the synthetic writer for kernel swap-out
+	// traffic. No process rusage counter owns these bytes.
+	diskWriteSwapExecutable    = "kernel_swap"
+	diskWriteSwapDominantShare = 0.5
 )
 
 // DiskWriteState is diagnostic and never contributes to host pressure level,
@@ -96,6 +105,8 @@ type DiskWriteSummary struct {
 	BaselineRatio            float64             `json:"baseline_ratio,omitempty"`
 	BaselineSamples          uint64              `json:"baseline_samples,omitempty"`
 	BaselineAgeSeconds       float64             `json:"baseline_age_seconds,omitempty"`
+	SwapOutBytes15m          uint64              `json:"swap_out_bytes_15m,omitempty"`
+	SwapShare15m             float64             `json:"swap_share_15m,omitempty"`
 	DeviceCount              int                 `json:"device_count,omitempty"`
 	TotalPIDCount            int                 `json:"total_pid_count,omitempty"`
 	AccessiblePIDCount       int                 `json:"accessible_pid_count,omitempty"`
@@ -166,10 +177,11 @@ type diskProcessDelta struct {
 }
 
 type diskVolumePoint struct {
-	At     time.Time
-	Bytes  uint64
-	Scored bool
-	Gap    bool
+	At        time.Time
+	Bytes     uint64
+	SwapBytes uint64
+	Scored    bool
+	Gap       bool
 }
 
 type diskWriterPoint struct {
@@ -263,10 +275,12 @@ type DiskWriteObserver struct {
 	store         *DiskWriteStore
 	deviceSource  func(context.Context) (diskDeviceCounter, error)
 	processSource func(context.Context) (diskProcessSnapshot, error)
+	swapSource    func(context.Context) (swapIOCounter, error)
 	now           func() time.Time
 	allowShort    bool
 
 	previousDevice    diskDeviceCounter
+	previousSwap      swapIOCounter
 	previousProcesses map[diskProcessKey]diskProcessCounter
 	previousAt        time.Time
 	volumePoints      []diskVolumePoint
@@ -293,7 +307,7 @@ type DiskWriteObserver struct {
 func NewDiskWriteObserver(dir string, policy DiskWritePolicy) *DiskWriteObserver {
 	observer := &DiskWriteObserver{
 		policy: policy, store: NewDiskWriteStore(dir), deviceSource: nativeDiskDeviceCounter,
-		processSource: nativeDiskProcessCounters, now: time.Now,
+		processSource: nativeDiskProcessCounters, swapSource: defaultSwapIOSource, now: time.Now,
 		previousProcesses: make(map[diskProcessKey]diskProcessCounter), baselines: make(map[string]*diskHistogram),
 		executableModels: make(map[string]*diskHistogram), executableBytes: make(map[string]uint64),
 		ownership: make(map[diskProcessKey]diskOwnership), context: "uncoordinated", lastState: DiskWriteStateLearning,
@@ -329,6 +343,12 @@ func (observer *DiskWriteObserver) restore() {
 	var newest *diskWriteHistoryRecord
 	for index := range records {
 		record := records[index]
+		if record.BaselineEpoch < diskWriteBaselineEpoch {
+			// Older epochs keep contributing traffic totals and the device
+			// rebase point below, but their learned histograms are discarded.
+			record.Contexts = nil
+			record.Executables = nil
+		}
 		for contextName, saved := range record.Contexts {
 			histogram := observer.baselines[contextName]
 			if histogram == nil {
@@ -373,13 +393,20 @@ func (observer *DiskWriteObserver) restore() {
 		}
 	}
 	if checkpoint != nil {
-		current := *checkpoint
-		current.Contexts = make(map[string]diskHistogramRecord, len(checkpoint.Contexts))
-		for contextName, histogram := range checkpoint.Contexts {
+		source := *checkpoint
+		if source.BaselineEpoch < diskWriteBaselineEpoch {
+			// Keep the partial hour's traffic; drop its stale-epoch histograms.
+			source.Contexts = nil
+			source.Executables = nil
+		}
+		current := source
+		current.BaselineEpoch = diskWriteBaselineEpoch
+		current.Contexts = make(map[string]diskHistogramRecord, len(source.Contexts))
+		for contextName, histogram := range source.Contexts {
 			current.Contexts[contextName] = histogram
 		}
-		current.executableHistograms = make(map[string]*diskHistogram, len(checkpoint.Executables))
-		for _, executable := range checkpoint.Executables {
+		current.executableHistograms = make(map[string]*diskHistogram, len(source.Executables))
+		for _, executable := range source.Executables {
 			histogram := diskHistogramFromRecord(executable.Histogram)
 			current.executableHistograms[executable.Executable] = &histogram
 		}
@@ -501,10 +528,12 @@ func MergeLiveDiskWriteReport(live DiskWriteReport, resident DiskWriteSummary) D
 	summary.BaselineRatio = resident.BaselineRatio
 	summary.BaselineSamples = resident.BaselineSamples
 	summary.BaselineAgeSeconds = resident.BaselineAgeSeconds
+	summary.SwapOutBytes15m = resident.SwapOutBytes15m
+	summary.SwapShare15m = resident.SwapShare15m
 	summary.Reasons = append([]string(nil), resident.Reasons...)
 	for _, reason := range live.Summary.Reasons {
 		switch reason {
-		case "process_attribution_unavailable", "process_attribution_partial":
+		case "process_attribution_unavailable", "process_attribution_partial", "swap_counter_unavailable":
 			if !diskWriteReasonsContain(summary.Reasons, reason) {
 				summary.Reasons = append(summary.Reasons, reason)
 			}
@@ -566,6 +595,10 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	}
 	device, deviceErr := observer.deviceSource(ctx)
 	processes, processErr := observer.processSource(ctx)
+	swap, swapErr := swapIOCounter{}, errors.New("swap I/O source unavailable")
+	if observer.swapSource != nil {
+		swap, swapErr = observer.swapSource(ctx)
+	}
 
 	observer.mu.Lock()
 	defer observer.mu.Unlock()
@@ -591,7 +624,22 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	deviceDelta := uint64(0)
 	if hasPrevious {
 		deviceDelta = device.BytesWritten - observer.previousDevice.BytesWritten
-		observer.volumePoints = append(observer.volumePoints, diskVolumePoint{At: at, Bytes: deviceDelta, Scored: validWindow, Gap: !validWindow})
+	}
+	// Kernel swap-out is block traffic to the internal SSD with no owning
+	// process counter. Clamp it to the device delta so the swap share stays a
+	// true fraction even when the two kernel counters tick at different times.
+	swapDelta := uint64(0)
+	if swapErr == nil {
+		previousSwap := observer.previousSwap
+		if validWindow && previousSwap != (swapIOCounter{}) && swap.SwapOutBytes >= previousSwap.SwapOutBytes {
+			swapDelta = min(swap.SwapOutBytes-previousSwap.SwapOutBytes, deviceDelta)
+		}
+		observer.previousSwap = swap
+	} else {
+		observer.previousSwap = swapIOCounter{}
+	}
+	if hasPrevious {
+		observer.volumePoints = append(observer.volumePoints, diskVolumePoint{At: at, Bytes: deviceDelta, SwapBytes: swapDelta, Scored: validWindow, Gap: !validWindow})
 	}
 
 	processDeltas := make([]diskProcessDelta, 0, len(processes.Counters))
@@ -616,6 +664,9 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 		}
 		processDeltas = append(processDeltas, diskProcessDelta{Key: key, Executable: process.Executable, Bytes: delta, AgentOwned: process.AgentOwned})
 	}
+	if swapDelta > 0 {
+		processDeltas = append(processDeltas, diskProcessDelta{Key: diskProcessKey{}, Executable: diskWriteSwapExecutable, Bytes: swapDelta})
+	}
 	if hasPrevious {
 		observer.writerPoints = append(observer.writerPoints, diskWriterPoint{At: at, Duration: elapsed, Deltas: processDeltas})
 	}
@@ -625,6 +676,12 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	observer.prunePointsLocked(at)
 
 	window15 := observer.windowBytesLocked(at.Add(-diskWriteWindow), true)
+	swap15 := observer.windowSwapBytesLocked(at.Add(-diskWriteWindow))
+	swapShare := 0.0
+	if window15 > 0 {
+		swapShare = min(1, float64(swap15)/float64(window15))
+	}
+	swapDominant := swapShare >= diskWriteSwapDominantShare
 	bytes24h := observer.windowBytesLocked(at.Add(-diskWriteHistoryWindow), false)
 	writers, writerTotal, writerAvailable := observer.aggregateWritersLocked(elapsed)
 	contextName := observer.context
@@ -643,12 +700,17 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	}
 	confidence := diskWriteConfidenceFor(*histogram, at)
 	state, accepted := observer.classifyLocked(at, confidence, ratio, p99, writers, writerTotal)
+	// Memory thrash is not a quiet workload. Training on it is exactly how the
+	// epoch-1 model learned a 1 TB/hour swap storm as its normal baseline.
+	if swapDominant {
+		accepted = false
+	}
 	if !observer.windowCoveredLocked(at) {
 		state = DiskWriteStateLearning
 		confidence = DiskWriteConfidenceLearning
 		accepted = false
 	}
-	observer.recordHourLocked(at, state, p99, deviceDelta, device, hasPrevious, validWindow)
+	observer.recordHourLocked(at, state, p99, deviceDelta, swapDelta, device, hasPrevious, validWindow)
 	if accepted {
 		histogram.add(window15, at)
 		observer.recordBaselineLocked(at, contextName, window15, writers)
@@ -661,6 +723,7 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 		Window15mBytes: window15, Bytes24h: bytes24h,
 		UnscoredGapBytes: observer.windowGapBytesLocked(at.Add(-diskWriteHistoryWindow)), BaselineP99Bytes15m: p99, BaselineRatio: roundRatio(ratio),
 		BaselineSamples: histogram.Count, DeviceCount: device.DeviceCount,
+		SwapOutBytes15m: swap15, SwapShare15m: roundRatio(swapShare),
 		TotalPIDCount: processes.TotalPIDCount, AccessiblePIDCount: processes.AccessibleCount,
 		AttributionAvailable: processErr == nil, WriterAvailableCount: writerAvailable,
 	}
@@ -691,6 +754,12 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	}
 	if processErr != nil {
 		summary.Reasons = append(summary.Reasons, "process_attribution_unavailable")
+	}
+	if swapErr != nil {
+		summary.Reasons = append(summary.Reasons, "swap_counter_unavailable")
+	}
+	if swapDominant {
+		summary.Reasons = append(summary.Reasons, "swap_dominant", "baseline_excluded_swap")
 	}
 	if processes.AccessibleCount < processes.TotalPIDCount {
 		summary.Reasons = append(summary.Reasons, "process_attribution_partial")
@@ -728,6 +797,17 @@ func (observer *DiskWriteObserver) windowBytesLocked(cutoff time.Time, scoredOnl
 		} else {
 			return ^uint64(0)
 		}
+	}
+	return total
+}
+
+func (observer *DiskWriteObserver) windowSwapBytesLocked(cutoff time.Time) uint64 {
+	total := uint64(0)
+	for _, point := range observer.volumePoints {
+		if point.At.Before(cutoff) || !point.Scored {
+			continue
+		}
+		total = saturatingAddUint64(total, point.SwapBytes)
 	}
 	return total
 }
@@ -792,6 +872,11 @@ func (observer *DiskWriteObserver) aggregateWritersLocked(latestDuration time.Du
 		}, PID: item.pid, ProcessStartID: item.start, WorkClass: observer.context}
 		if len(item.agents) > 0 {
 			writer.OwnerKind = "agent"
+		}
+		if executable == diskWriteSwapExecutable {
+			writer.Category = "system"
+			writer.OwnerKind = "kernel"
+			writer.PID, writer.ProcessStartID = 0, 0
 		}
 		if latestDuration > 0 {
 			writer.BytesPerSecond = float64(item.current) / latestDuration.Seconds()
@@ -968,17 +1053,18 @@ func (observer *DiskWriteObserver) ensureCurrentHourLocked(at time.Time) {
 	if observer.currentHour == nil || !observer.currentHour.Hour.Equal(hour) {
 		observer.flushHourLocked()
 		observer.currentHour = &diskWriteHistoryRecord{
-			SchemaVersion: 1, ModelVersion: diskWriteModelVersion, Hour: hour,
+			SchemaVersion: 1, ModelVersion: diskWriteModelVersion, BaselineEpoch: diskWriteBaselineEpoch, Hour: hour,
 			Contexts: make(map[string]diskHistogramRecord), executableHistograms: make(map[string]*diskHistogram),
 		}
 	}
 }
 
-func (observer *DiskWriteObserver) recordHourLocked(at time.Time, state DiskWriteState, p99 uint64, deviceDelta uint64, device diskDeviceCounter, hasPrevious, validWindow bool) {
+func (observer *DiskWriteObserver) recordHourLocked(at time.Time, state DiskWriteState, p99 uint64, deviceDelta, swapDelta uint64, device diskDeviceCounter, hasPrevious, validWindow bool) {
 	observer.ensureCurrentHourLocked(at)
 	observer.currentHour.State = state
 	if validWindow {
 		observer.currentHour.BytesWritten = saturatingAddUint64(observer.currentHour.BytesWritten, deviceDelta)
+		observer.currentHour.SwapOutBytes = saturatingAddUint64(observer.currentHour.SwapOutBytes, swapDelta)
 		observer.currentHour.SampleCount++
 	} else if hasPrevious {
 		observer.currentHour.UnscoredGapBytes = saturatingAddUint64(observer.currentHour.UnscoredGapBytes, deviceDelta)

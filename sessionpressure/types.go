@@ -190,13 +190,19 @@ const (
 
 // Snapshot is the bounded public and telemetry projection for one sample.
 type Snapshot struct {
-	SchemaVersion              int                     `json:"schema_version"`
-	Timestamp                  time.Time               `json:"timestamp"`
-	Level                      Level                   `json:"level"`
-	Reasons                    []string                `json:"reasons,omitempty"`
-	FreePercent                int                     `json:"free_percent"`
-	PhysicalMemoryMB           float64                 `json:"physical_memory_mb"`
-	SwapUsedMB                 float64                 `json:"swap_used_mb"`
+	SchemaVersion    int       `json:"schema_version"`
+	Timestamp        time.Time `json:"timestamp"`
+	Level            Level     `json:"level"`
+	Reasons          []string  `json:"reasons,omitempty"`
+	FreePercent      int       `json:"free_percent"`
+	PhysicalMemoryMB float64   `json:"physical_memory_mb"`
+	SwapUsedMB       float64   `json:"swap_used_mb"`
+	// Swap I/O is a live rate from cumulative kernel counters, unlike sticky
+	// swap use. Swap-out is current eviction and the SSD write cost of thrash.
+	SwapIOAvailable            bool                    `json:"swap_io_available,omitempty"`
+	SwapInMBPerSecond          float64                 `json:"swap_in_mb_per_s,omitempty"`
+	SwapOutMBPerSecond         float64                 `json:"swap_out_mb_per_s,omitempty"`
+	SwapIOWindowMS             float64                 `json:"swap_io_window_ms,omitempty"`
 	LogicalCPUCount            int                     `json:"logical_cpu_count"`
 	HostCPUPercent             float64                 `json:"host_cpu_percent"`
 	HostCPUAvailable           bool                    `json:"host_cpu_available"`
@@ -573,6 +579,19 @@ func evaluate(snapshot Snapshot, policy Policy, includeCPU bool) Snapshot {
 		add(LevelWarning, "swap %.0f MB >= warning %.0f MB with live %s pressure", snapshot.SwapUsedMB, policy.Thresholds.SwapWarningMB, liveMemoryLevel)
 	}
 
+	// Live swap-out is current eviction, not historical residue, so it stands
+	// alone. It is computed after liveMemoryLevel so it never corroborates
+	// sticky swap use, and it caps at red: it can warn and gate admission but
+	// never authorizes automatic relief.
+	if snapshot.SwapIOAvailable {
+		switch {
+		case policy.Thresholds.SwapOutRedMBPerSecond > 0 && snapshot.SwapOutMBPerSecond >= policy.Thresholds.SwapOutRedMBPerSecond:
+			add(LevelRed, "swap-out %.1f MB/s >= red %.1f MB/s (memory thrash)", snapshot.SwapOutMBPerSecond, policy.Thresholds.SwapOutRedMBPerSecond)
+		case policy.Thresholds.SwapOutWarningMBPerSecond > 0 && snapshot.SwapOutMBPerSecond >= policy.Thresholds.SwapOutWarningMBPerSecond:
+			add(LevelWarning, "swap-out %.1f MB/s >= warning %.1f MB/s", snapshot.SwapOutMBPerSecond, policy.Thresholds.SwapOutWarningMBPerSecond)
+		}
+	}
+
 	// Host CPU is normalized across logical cores. It can warn or block heavy
 	// work admission, but it never reaches critical on its own: automatic
 	// relief is intentionally reserved for corroborated memory pressure.
@@ -724,6 +743,7 @@ func (snapshot Snapshot) Summary() string {
 		fmt.Sprintf("level=%s", snapshot.Level),
 		fmt.Sprintf("free=%d%%", snapshot.FreePercent),
 		fmt.Sprintf("swap=%.0fMB", snapshot.SwapUsedMB),
+		fmt.Sprintf("swap_out=%.1fMB/s", snapshot.SwapOutMBPerSecond),
 		fmt.Sprintf("cpu=%.1f%%", snapshot.HostCPUPercent),
 		fmt.Sprintf("agents=%d/%.0fMB", snapshot.AgentTreeCount, snapshot.AgentRSSSumMB),
 		"top=" + top,

@@ -68,9 +68,11 @@ type diskExecutableHistory struct {
 type diskWriteHistoryRecord struct {
 	SchemaVersion    int                            `json:"schema_version"`
 	ModelVersion     string                         `json:"model_version"`
+	BaselineEpoch    int                            `json:"baseline_epoch,omitempty"`
 	Hour             time.Time                      `json:"hour"`
 	State            DiskWriteState                 `json:"state,omitempty"`
 	BytesWritten     uint64                         `json:"bytes_written,omitempty"`
+	SwapOutBytes     uint64                         `json:"swap_out_bytes,omitempty"`
 	UnscoredGapBytes uint64                         `json:"unscored_gap_bytes,omitempty"`
 	SampleCount      uint64                         `json:"sample_count,omitempty"`
 	BaselineP99Bytes uint64                         `json:"baseline_p99_bytes,omitempty"`
@@ -94,6 +96,7 @@ type DiskWriteHistoryPoint struct {
 	Hour             time.Time                    `json:"hour"`
 	State            DiskWriteState               `json:"state,omitempty"`
 	BytesWritten     uint64                       `json:"bytes_written,omitempty"`
+	SwapOutBytes     uint64                       `json:"swap_out_bytes,omitempty"`
 	UnscoredGapBytes uint64                       `json:"unscored_gap_bytes,omitempty"`
 	BaselineP99Bytes uint64                       `json:"baseline_p99_bytes,omitempty"`
 	SampleCount      uint64                       `json:"sample_count"`
@@ -374,6 +377,7 @@ func (store *DiskWriteStore) readHistory(limit int, since time.Time, maxExecutab
 			}
 		}
 		point.BytesWritten = saturatingAddUint64(point.BytesWritten, record.BytesWritten)
+		point.SwapOutBytes = saturatingAddUint64(point.SwapOutBytes, record.SwapOutBytes)
 		point.UnscoredGapBytes = saturatingAddUint64(point.UnscoredGapBytes, record.UnscoredGapBytes)
 		count := record.SampleCount
 		if count == 0 {
