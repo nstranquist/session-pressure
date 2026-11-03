@@ -36,11 +36,13 @@ func cmdSessionPressureDoctor(g *Flags, args []string) int {
 		"work":                 doc.Work,
 		"launch_soft_pressure": doc.LaunchSoftPressure,
 		"coverage_status":      doc.CoverageStatus,
-		"fixes":                doc.Fixes,
-		"warnings":             doc.Warnings,
-		"swap_derate":          doc.SwapDerate,
+		"fixes":                nonNilStrings(doc.Fixes),
+		"warnings":             nonNilStrings(doc.Warnings),
 		"health":               doc.Health,
 		"doctor":               doc,
+	}
+	if doc.SwapDerate != nil {
+		payload["swap_derate"] = *doc.SwapDerate
 	}
 	text := fmt.Sprintf(
 		"doctor ok=%v protection=%s monitor_healthy=%v host=%s queue=%d/%d depth=%d express_green=%v soft_block=%v noise_suppressed=%v enforce=%v auto_shed=%v\n",
@@ -57,4 +59,13 @@ func cmdSessionPressureDoctor(g *Flags, args []string) int {
 	}
 	// Prefer agent-parseable exit 0; hard failures above already return non-zero.
 	return emitPressure(g, payload, text, 0)
+}
+
+// nonNilStrings keeps an empty list as [] in JSON. A nil slice encodes as
+// null, which the closed output contract rejects for an array.
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
