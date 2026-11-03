@@ -410,8 +410,13 @@ type workAdmissionGate struct {
 	classRuntimeP95MS     func() (int64, bool)
 	freeWeightedCapacity  func() (int, bool)
 	warningCapacityStatus func() (WorkStatus, bool)
-	fastLaneAdmitted      bool
-	fastLaneRefusal       fastLaneRefusal
+	// swapThrashEnforced is true only under an enforcing profile; observe
+	// profiles report thrash without changing admission.
+	swapThrashEnforced bool
+	swapThrashAdmitted bool
+	swapThrashDeferred bool
+	fastLaneAdmitted   bool
+	fastLaneRefusal    fastLaneRefusal
 	// Warning derating keeps the coordinator resident while lowering only the
 	// ceiling seen by new admissions. These fields make the decision measurable.
 	warningCapacityAdmitted bool
@@ -569,6 +574,9 @@ func (gate *workAdmissionGate) ObserveOwned(admission Admission, immediate bool)
 }
 
 func (gate *workAdmissionGate) observe(admission Admission, immediate, ownsLease bool) workAdmissionDecision {
+	if decision, ok := gate.swapThrashDecision(admission, ownsLease); ok {
+		return decision
+	}
 	if decision, ok := gate.warningCapacityDecision(admission, ownsLease); ok {
 		return decision
 	}
@@ -710,8 +718,17 @@ type workProgressReporter struct {
 	startedAt    time.Time
 	lastKey      string
 	lastReported time.Time
+	heartbeat    time.Duration
 	now          func() time.Time
 }
+
+// Progress lines land in an agent's context window. Repeat an unchanged wait
+// at 30s, doubling to a 2m cap; any change in what the agent is waiting on
+// prints immediately and resets the cadence.
+const (
+	workProgressHeartbeatInitial = 30 * time.Second
+	workProgressHeartbeatMax     = 2 * time.Minute
+)
 
 func newWorkProgressReporter(mode WorkProgressMode, stderr io.Writer, operationID string, class WorkClass, weight int, startedAt time.Time) *workProgressReporter {
 	return &workProgressReporter{mode: mode, stderr: stderr, operationID: operationID, class: class, weight: weight, startedAt: startedAt, now: time.Now}
@@ -732,9 +749,20 @@ func (reporter *workProgressReporter) emit(progress WorkProgress) {
 	progress.Class = reporter.class
 	progress.Weight = reporter.weight
 	progress.ElapsedMS = max(int64(0), current.Sub(reporter.startedAt).Milliseconds())
-	key := fmt.Sprintf("%s/%s/%d/%d/%s/%s", progress.Stage, progress.Blocker, progress.QueuePosition, progress.Used, progress.PressureLevel, progress.Reason)
-	if key == reporter.lastKey && current.Sub(reporter.lastReported) < 30*time.Second {
-		return
+	// Key only on what changes the agent's situation. Used capacity churns on
+	// every poll and reasons embed running durations ("lease has run 15m18s"),
+	// so keying on them defeated deduplication and printed every 2s.
+	key := fmt.Sprintf("%s/%s/%d/%s/%s", progress.Stage, progress.Blocker, progress.QueuePosition, progress.PressureLevel, progress.PressureDimension)
+	if key == reporter.lastKey {
+		if reporter.heartbeat <= 0 {
+			reporter.heartbeat = workProgressHeartbeatInitial
+		}
+		if current.Sub(reporter.lastReported) < reporter.heartbeat {
+			return
+		}
+		reporter.heartbeat = min(reporter.heartbeat*2, workProgressHeartbeatMax)
+	} else {
+		reporter.heartbeat = workProgressHeartbeatInitial
 	}
 	reporter.lastKey = key
 	reporter.lastReported = current
@@ -974,9 +1002,10 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		return lease.Release(releaseCtx)
 	}
 	admissionGate = &workAdmissionGate{
-		limits:        coordinator.Limits,
-		storageGrace:  configuredWorkStorageGrace(coordinator.Dir),
-		cpuRedPercent: configuredWorkCPURedPercent(coordinator.Dir),
+		limits:             coordinator.Limits,
+		storageGrace:       configuredWorkStorageGrace(coordinator.Dir),
+		cpuRedPercent:      configuredWorkCPURedPercent(coordinator.Dir),
+		swapThrashEnforced: configuredWorkSwapThrashEnforced(coordinator.Dir),
 		storageReclaimActive: func() bool {
 			statusCtx, statusCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 			defer statusCancel()
@@ -1050,6 +1079,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 				WorkBlockerFairness:    "another waiter is the oldest feasible operation",
 				WorkBlockerReservation: "a protected waiter owns the next reservation",
 				WorkBlockerUpgrade:     "a legacy coordinator lease must finish before the state upgrade",
+				WorkBlockerStateLock:   "coordinator state lock is busy under host contention; retrying within --wait",
 			}[blocker],
 			SchedulingPolicy: status.SchedulingPolicy, SelectorSchemaVersion: status.SelectorSchemaVersion,
 			SelectedOperationID: status.SelectedOperationID, ProtectedOperationID: status.ProtectedOperationID,
@@ -1667,6 +1697,13 @@ func configuredWorkStorageGrace(dir string) time.Duration {
 		grace = time.Duration(policy.Storage.WorkWaitGraceSeconds) * time.Second
 	}
 	return grace
+}
+
+// configuredWorkSwapThrashEnforced follows EnforceAdmission: observe-style
+// profiles promise no admission changes, so thrash stays report-only there.
+func configuredWorkSwapThrashEnforced(dir string) bool {
+	policy, persisted, err := LoadPolicy(PolicyPath(dir), 0)
+	return err == nil && persisted && policy.Enabled && policy.EnforceAdmission
 }
 
 func configuredWorkCPURedPercent(dir string) float64 {

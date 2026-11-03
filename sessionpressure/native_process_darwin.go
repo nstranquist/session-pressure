@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,6 +68,36 @@ var darwinLibproc struct {
 	pidRusageV2 func(int32, int32, *darwinRusageInfoV2) int32
 	pidPath     func(int32, *byte, uint32) int32
 	sysctl      func(*int32, uint32, unsafe.Pointer, *uintptr, unsafe.Pointer, uintptr) int32
+	// rusage CPU times are mach absolute-time ticks, not nanoseconds. On
+	// Apple Silicon one tick is 125/3 ns (24 MHz); treating ticks as ns
+	// understated every per-process CPU percent by ~41.7x.
+	timebaseNumer, timebaseDenom uint32
+}
+
+type darwinMachTimebaseInfo struct {
+	Numer, Denom uint32
+}
+
+// darwinMachTicksToNS converts rusage CPU ticks with the host timebase. The
+// 128-bit product cannot overflow for any real CPU total.
+func darwinMachTicksToNS(ticks uint64, numer, denom uint32) uint64 {
+	if numer == 0 || denom == 0 || numer == denom {
+		return ticks
+	}
+	hi, lo := bits.Mul64(ticks, uint64(numer))
+	if hi >= uint64(denom) {
+		return ^uint64(0)
+	}
+	quotient, _ := bits.Div64(hi, lo, uint64(denom))
+	return quotient
+}
+
+// darwinRusageCPUTimeNS is the one conversion point for rusage CPU totals.
+func darwinRusageCPUTimeNS(user, system uint64) (uint64, bool) {
+	if user > ^uint64(0)-system {
+		return 0, false
+	}
+	return darwinMachTicksToNS(user+system, darwinLibproc.timebaseNumer, darwinLibproc.timebaseDenom), true
 }
 
 var darwinNativeProcessScan struct {
@@ -90,6 +121,15 @@ func loadDarwinLibproc() error {
 			return
 		}
 		purego.RegisterLibFunc(&darwinLibproc.sysctl, systemHandle, "sysctl")
+		var timebaseInfo func(*darwinMachTimebaseInfo) int32
+		purego.RegisterLibFunc(&timebaseInfo, systemHandle, "mach_timebase_info")
+		var info darwinMachTimebaseInfo
+		if timebaseInfo(&info) != 0 || info.Numer == 0 || info.Denom == 0 {
+			// A CPU percent off by the timebase ratio is worse than none.
+			darwinLibproc.err = fmt.Errorf("mach_timebase_info unavailable")
+			return
+		}
+		darwinLibproc.timebaseNumer, darwinLibproc.timebaseDenom = info.Numer, info.Denom
 	})
 	return darwinLibproc.err
 }
@@ -140,8 +180,8 @@ func nativeProcesses(ctx context.Context) ([]Process, string, error) {
 		diskWriteBytes := uint64(0)
 		if darwinLibproc.pidRusageV2(int32(pid), darwinRusageInfoVersion2, &usage) == 0 {
 			rssKB = int64(usage.ResidentSize / 1024)
-			if usage.UserTime <= ^uint64(0)-usage.SystemTime {
-				cpuTotalNS = usage.UserTime + usage.SystemTime
+			if total, ok := darwinRusageCPUTimeNS(usage.UserTime, usage.SystemTime); ok {
+				cpuTotalNS = total
 				cpuTotalValid = true
 				cpuStartID = usage.ProcessStart
 			}
@@ -194,10 +234,14 @@ func refreshNativeProcessCPUTotals(ctx context.Context, processes []Process) []P
 			continue
 		}
 		var usage darwinRusageInfoV0
-		if darwinLibproc.pidRusage(int32(process.PID), darwinRusageInfoVersion0, &usage) != 0 || usage.ProcessStart != process.CPUStartID || usage.UserTime > ^uint64(0)-usage.SystemTime {
+		if darwinLibproc.pidRusage(int32(process.PID), darwinRusageInfoVersion0, &usage) != 0 || usage.ProcessStart != process.CPUStartID {
 			continue
 		}
-		process.CPUTotalNS = usage.UserTime + usage.SystemTime
+		total, ok := darwinRusageCPUTimeNS(usage.UserTime, usage.SystemTime)
+		if !ok {
+			continue
+		}
+		process.CPUTotalNS = total
 		process.CPUTotalValid = true
 	}
 	return refreshed

@@ -175,8 +175,14 @@ func (gate *workAdmissionGate) decisionLabel() string {
 	if gate == nil {
 		return ""
 	}
+	if gate.swapThrashDeferred {
+		return SwapThrashDeferredDecision
+	}
 	if gate.warningCapacityDeferred {
 		return WarningCapacityDeferredDecision
+	}
+	if gate.swapThrashAdmitted {
+		return SwapThrashAdmittedDecision
 	}
 	if gate.warningCapacityAdmitted {
 		return WarningCapacityAdmittedDecision

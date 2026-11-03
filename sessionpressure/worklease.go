@@ -1321,7 +1321,23 @@ func (coordinator *WorkCoordinator) status(state workState, prunedLeases, pruned
 	}
 }
 
-const workStateLockFallback = 5 * time.Second
+// Vars only so tests can shorten them; production never reassigns them.
+var (
+	workStateLockFallback = 5 * time.Second
+	// workStateLockRetryInterval is short because the lock acquire itself
+	// already waited; a capacity-style 2s sleep would only add dead time.
+	workStateLockRetryInterval = 250 * time.Millisecond
+)
+
+// transientWorkStateLock reports a coordinator state-lock wait that timed out.
+// The lock is only ever held for a short read-modify-write, so a timeout means
+// a holder was descheduled or paged out under host pressure. No state was
+// mutated, so retrying is safe; failing a 25-minute --wait on one 5s stall
+// made agents re-run the whole command. The caller's retry select owns the
+// deadline, so an exhausted budget still surfaces context.DeadlineExceeded.
+func transientWorkStateLock(err error) bool {
+	return err != nil && errors.Is(err, filelock.ErrTimeout)
+}
 
 // workStateLockTimeout follows the caller deadline. Sample attribution uses a
 // 500ms ctx; a hard 5s lock wait was turning that into a 5s wall stall.
@@ -1839,17 +1855,29 @@ func (coordinator *WorkCoordinator) waitAcquireOperation(ctx context.Context, cl
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, ErrWorkUpgradePending) {
+		blocker := WorkBlockerUpgrade
+		switch {
+		case errors.Is(err, ErrWorkUpgradePending):
+		case transientWorkStateLock(err):
+			blocker = WorkBlockerStateLock
+		default:
 			return nil, status, err
 		}
 		if progress != nil {
-			progress(status, WorkBlockerUpgrade)
+			progress(status, blocker)
 		}
-		timer := time.NewTimer(workCapacityRetryInterval)
+		retry := workCapacityRetryInterval
+		if blocker == WorkBlockerStateLock {
+			retry = workStateLockRetryInterval
+		}
+		timer := time.NewTimer(retry)
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
 				<-timer.C
+			}
+			if blocker == WorkBlockerStateLock {
+				return nil, status, fmt.Errorf("wait for coordinator state lock: %w: %w", ctx.Err(), err)
 			}
 			return nil, status, fmt.Errorf("wait for legacy heavy-work state upgrade: %w", ctx.Err())
 		case <-timer.C:
@@ -1903,7 +1931,8 @@ func (waiter *WorkWaiter) WaitAcquireWithCapacity(ctx context.Context, effective
 		if err == nil {
 			return lease, status, err
 		}
-		if !errors.Is(err, ErrWorkCapacity) && !errors.Is(err, ErrWorkFairness) && !errors.Is(err, ErrWorkReservation) {
+		stateLock := transientWorkStateLock(err)
+		if !errors.Is(err, ErrWorkCapacity) && !errors.Is(err, ErrWorkFairness) && !errors.Is(err, ErrWorkReservation) && !stateLock {
 			return nil, status, errors.Join(err, cancelWaiter())
 		}
 		if progress != nil {
@@ -1914,16 +1943,27 @@ func (waiter *WorkWaiter) WaitAcquireWithCapacity(ctx context.Context, effective
 			if errors.Is(err, ErrWorkReservation) {
 				blocker = WorkBlockerReservation
 			}
+			if stateLock {
+				blocker = WorkBlockerStateLock
+			}
 			progress(status, blocker)
 		}
-		timer := time.NewTimer(workCapacityRetryInterval)
+		retry := workCapacityRetryInterval
+		if stateLock {
+			retry = workStateLockRetryInterval
+		}
+		timer := time.NewTimer(retry)
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
 				<-timer.C
 			}
 			cancelErr := cancelWaiter()
-			return nil, status, errors.Join(fmt.Errorf("wait for heavy-work queue: %w", ctx.Err()), cancelErr)
+			waitErr := fmt.Errorf("wait for heavy-work queue: %w", ctx.Err())
+			if stateLock {
+				waitErr = fmt.Errorf("wait for heavy-work queue: %w: %w", ctx.Err(), err)
+			}
+			return nil, status, errors.Join(waitErr, cancelErr)
 		case <-timer.C:
 		}
 	}

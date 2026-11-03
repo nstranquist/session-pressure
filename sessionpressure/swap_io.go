@@ -12,6 +12,10 @@ const bytesPerMiB = 1024 * 1024
 // deterministic fixtures.
 var defaultSwapIOSource = nativeSwapIOCounter
 
+// defaultFreePercentSource follows the same rule: tests set it to nil so the
+// fake memory_pressure runner stays authoritative.
+var defaultFreePercentSource = nativeFreePercent
+
 // swapIOCounter is the cumulative kernel swap traffic since boot. Swap-out is
 // physical write traffic to the internal SSD that no process rusage counter
 // owns, so it is both the live memory-thrash signal and the missing
@@ -56,4 +60,48 @@ func saturatingMulUint64(left, right uint64) uint64 {
 		return ^uint64(0)
 	}
 	return low
+}
+
+// Two consecutive resident samples enter and two release. At the economy
+// cadence (30s while warning) that is roughly one minute either way: long
+// enough to ignore a single page-in burst, short enough to stop a storm.
+const (
+	swapThrashEnterSamples   = 2
+	swapThrashReleaseSamples = 2
+)
+
+// swapThrashLatch is resident-only state. Values between Release and Thrash
+// hold the current verdict, so a storm oscillating around one threshold cannot
+// flap heavy-work admission.
+type swapThrashLatch struct {
+	latched   bool
+	hot, calm int
+}
+
+func (latch *swapThrashLatch) observe(snapshot *Snapshot, thresholds Thresholds) {
+	if latch == nil || snapshot == nil {
+		return
+	}
+	if !snapshot.SwapIOAvailable || thresholds.SwapOutThrashMBPerSecond <= 0 {
+		// A derate must never outlive its evidence. Unavailable counters fail
+		// open for throughput; the memory floors remain independent.
+		*latch = swapThrashLatch{}
+		snapshot.SwapThrashLatched = false
+		return
+	}
+	switch rate := snapshot.SwapOutMBPerSecond; {
+	case rate >= thresholds.SwapOutThrashMBPerSecond:
+		latch.hot, latch.calm = latch.hot+1, 0
+	case rate <= thresholds.SwapOutReleaseMBPerSecond:
+		latch.hot, latch.calm = 0, latch.calm+1
+	default:
+		latch.hot, latch.calm = 0, 0
+	}
+	if !latch.latched && latch.hot >= swapThrashEnterSamples {
+		latch.latched = true
+	}
+	if latch.latched && latch.calm >= swapThrashReleaseSamples {
+		latch.latched = false
+	}
+	snapshot.SwapThrashLatched = latch.latched
 }

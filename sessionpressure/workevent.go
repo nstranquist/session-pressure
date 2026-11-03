@@ -60,6 +60,7 @@ const (
 	WorkBlockerFairness    WorkBlocker = "fairness"
 	WorkBlockerReservation WorkBlocker = "reservation"
 	WorkBlockerUpgrade     WorkBlocker = "upgrade"
+	WorkBlockerStateLock   WorkBlocker = "state_lock"
 )
 
 type ExpressReuseDecision string
@@ -221,12 +222,14 @@ func (event WorkEvent) Validate() error {
 	}
 	if event.Blocker != "" {
 		switch event.Blocker {
-		case WorkBlockerNone, WorkBlockerPressure, WorkBlockerCapacity, WorkBlockerFairness, WorkBlockerReservation, WorkBlockerUpgrade:
+		case WorkBlockerNone, WorkBlockerPressure, WorkBlockerCapacity, WorkBlockerFairness, WorkBlockerReservation, WorkBlockerUpgrade, WorkBlockerStateLock:
 		default:
 			return fmt.Errorf("unknown work blocker %q", event.Blocker)
 		}
 	}
-	if event.PressureDimension != "" && event.PressureDimension != "cpu" && event.PressureDimension != "memory" && event.PressureDimension != "storage" && event.PressureDimension != "unknown" {
+	switch event.PressureDimension {
+	case "", "cpu", "memory", "storage", "swap", "thermal", "unknown":
+	default:
 		return fmt.Errorf("unknown work pressure_dimension %q", event.PressureDimension)
 	}
 	if (event.Event == WorkEventAcquired || event.Event == WorkEventReserved || event.Event == WorkEventReacquired || event.Event == WorkEventStarted || event.Event == WorkEventCompleted) && event.LeaseID == "" {
@@ -996,6 +999,8 @@ type WorkReviewSignals struct {
 	ExpressToFullAdjustments   int `json:"express_to_full_adjustments"`
 	WarningCapacityAdmissions  int `json:"warning_capacity_admissions"`
 	WarningCapacityDeferrals   int `json:"warning_capacity_deferrals"`
+	SwapThrashAdmissions       int `json:"swap_thrash_admissions"`
+	SwapThrashDeferrals        int `json:"swap_thrash_deferrals"`
 }
 
 // Closed outcomes that classify a cancelled operation as wrapper/agent interrupt.
@@ -1292,6 +1297,12 @@ func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkS
 				state.warningDecisionSeen = true
 			case WarningCapacityDeferredDecision:
 				signals.WarningCapacityDeferrals++
+				state.warningDecisionSeen = true
+			case SwapThrashAdmittedDecision:
+				signals.SwapThrashAdmissions++
+				state.warningDecisionSeen = true
+			case SwapThrashDeferredDecision:
+				signals.SwapThrashDeferrals++
 				state.warningDecisionSeen = true
 			}
 		}

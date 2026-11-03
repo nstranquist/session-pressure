@@ -121,7 +121,7 @@ func enqueue(ctx context.Context, key string, timeout time.Duration) (release fu
 			<-prev
 			releaseFn()
 		}()
-		return func() {}, fmt.Errorf("filelock: in-process queue timeout after %s", timeout)
+		return func() {}, &timeoutError{path: key, timeout: timeout, queued: true}
 	}
 }
 
@@ -259,6 +259,28 @@ func Acquire(path string, timeout time.Duration) (unlock func(), err error) {
 	return AcquireContext(context.Background(), path, timeout)
 }
 
+// ErrTimeout matches a lock wait that exhausted its own timeout while the
+// caller's context was still live. Callers with a longer wait budget treat it
+// as transient contention (for example a holder paged out during swap thrash)
+// rather than as a terminal failure.
+var ErrTimeout = errors.New("filelock: acquire timed out")
+
+type timeoutError struct {
+	path    string
+	timeout time.Duration
+	// queued marks expiry in the in-process FIFO before the file was tried.
+	queued bool
+}
+
+func (err *timeoutError) Error() string {
+	if err.queued {
+		return fmt.Sprintf("filelock: in-process queue timeout after %s", err.timeout)
+	}
+	return fmt.Sprintf("filelock: failed to acquire %s within %s", err.path, err.timeout)
+}
+
+func (err *timeoutError) Is(target error) bool { return target == ErrTimeout }
+
 // AcquireContext is like Acquire but honors ctx cancellation in addition to
 // the timeout.
 func AcquireContext(ctx context.Context, path string, timeout time.Duration) (unlock func(), err error) {
@@ -311,7 +333,7 @@ func AcquireContext(ctx context.Context, path string, timeout time.Duration) (un
 		}
 		if time.Now().After(deadline) {
 			releaseQueue()
-			return nil, fmt.Errorf("filelock: failed to acquire %s within %s", path, timeout)
+			return nil, &timeoutError{path: path, timeout: timeout}
 		}
 		select {
 		case <-ctx.Done():

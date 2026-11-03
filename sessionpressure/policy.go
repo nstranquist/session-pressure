@@ -43,9 +43,12 @@ type Thresholds struct {
 	SwapWarningMB         float64 `json:"swap_warning_mb"`
 	SwapRedMB             float64 `json:"swap_red_mb"`
 	SwapCriticalMB        float64 `json:"swap_critical_mb"`
-	// Swap-out rate thresholds cap at red; see evaluate.
+	// Swap-out rate is a throughput signal, never a blocking level. Warning
+	// reports it; the resident latches thrash after sustained samples at or
+	// above Thrash and releases after sustained samples at or below Release.
 	SwapOutWarningMBPerSecond float64 `json:"swap_out_warning_mb_per_s"`
-	SwapOutRedMBPerSecond     float64 `json:"swap_out_red_mb_per_s"`
+	SwapOutThrashMBPerSecond  float64 `json:"swap_out_thrash_mb_per_s"`
+	SwapOutReleaseMBPerSecond float64 `json:"swap_out_release_mb_per_s"`
 	TreeWarningMB             float64 `json:"tree_warning_mb"`
 	TreeRedMB                 float64 `json:"tree_red_mb"`
 	TreeCriticalMB            float64 `json:"tree_critical_mb"`
@@ -145,20 +148,25 @@ type WorkLimits struct {
 	// for an interactive workstation, but making it a default gate turns a
 	// recoverable host signal into avoidable agent wait. Balanced and Throughput
 	// leave the normal weighted ceiling in place until true red pressure.
-	WarningCapacityEnabled bool    `json:"warning_capacity_enabled"`
-	TestWeight             int     `json:"test_weight"`
-	BuildWeight            int     `json:"build_weight"`
-	ExpressTestWeight      int     `json:"express_test_weight"`
-	ExpressBuildWeight     int     `json:"express_build_weight"`
-	EmulatorWeight         int     `json:"emulator_weight"`
-	BrowserWeight          int     `json:"browser_weight"`
-	HeavyWeight            int     `json:"heavy_weight"`
-	BenchmarkWeight        int     `json:"benchmark_weight"`
-	InstallWeight          int     `json:"install_weight"`
-	ReclaimWeight          int     `json:"reclaim_weight"`
-	CPUBlockSamples        int     `json:"cpu_block_samples"`
-	CPUReleaseSamples      int     `json:"cpu_release_samples"`
-	CPUReleasePercent      float64 `json:"cpu_release_percent"`
+	WarningCapacityEnabled bool `json:"warning_capacity_enabled"`
+	// SwapThrashCapacity is the weighted ceiling for new heavy work while the
+	// resident's swap-thrash latch is set under an enforcing profile. Thrash
+	// slows every process super-linearly, so serializing memory-heavy work
+	// finishes the same queue sooner. A lone operation is always admitted.
+	SwapThrashCapacity int     `json:"swap_thrash_capacity"`
+	TestWeight         int     `json:"test_weight"`
+	BuildWeight        int     `json:"build_weight"`
+	ExpressTestWeight  int     `json:"express_test_weight"`
+	ExpressBuildWeight int     `json:"express_build_weight"`
+	EmulatorWeight     int     `json:"emulator_weight"`
+	BrowserWeight      int     `json:"browser_weight"`
+	HeavyWeight        int     `json:"heavy_weight"`
+	BenchmarkWeight    int     `json:"benchmark_weight"`
+	InstallWeight      int     `json:"install_weight"`
+	ReclaimWeight      int     `json:"reclaim_weight"`
+	CPUBlockSamples    int     `json:"cpu_block_samples"`
+	CPUReleaseSamples  int     `json:"cpu_release_samples"`
+	CPUReleasePercent  float64 `json:"cpu_release_percent"`
 	// The fast lane lets light, short work through the CPU-only admission gate
 	// when the weighted ceiling — the instrument that actually governs
 	// coordinated work — still has room. It never widens that ceiling, and it
@@ -228,6 +236,7 @@ func defaultWorkLimits(logicalCPUCount int) WorkLimits {
 		// A strict majority keeps two compiler waves from overlapping while
 		// allowing one focused test to share the target 8-unit host capacity.
 		BuildWeight:        buildWeight,
+		SwapThrashCapacity: min(capacity, buildWeight),
 		ExpressTestWeight:  expressTest,
 		ExpressBuildWeight: expressBuild,
 		EmulatorWeight:     max(1, (capacity*5+7)/8),
@@ -356,6 +365,10 @@ func normalizeWorkLimits(limits WorkLimits) WorkLimits {
 	if limits.ReclaimWeight == 0 {
 		limits.ReclaimWeight = 1
 	}
+	if limits.SwapThrashCapacity == 0 {
+		// One full build at a time, or a test beside light express work.
+		limits.SwapThrashCapacity = min(limits.Capacity, limits.BuildWeight)
+	}
 	limits = reconcileFastLaneDefaults(limits, defaultWorkLimits(runtime.NumCPU()))
 	return limits
 }
@@ -441,9 +454,10 @@ func DefaultPolicy(physicalMemoryMB float64) Policy {
 			SwapRedMB:             physicalMemoryMB * 0.50,
 			SwapCriticalMB:        physicalMemoryMB * 0.75,
 			// 8 MB/s sustained is ~0.7 TB/day of SSD writes; 32 MB/s is
-			// ~115 GB/hour, the thrash rate observed on 2026-11-02.
+			// ~115 GB/hour. The observed 2026-11-02 storm ran 69-607 MB/s.
 			SwapOutWarningMBPerSecond: 8,
-			SwapOutRedMBPerSecond:     32,
+			SwapOutThrashMBPerSecond:  32,
+			SwapOutReleaseMBPerSecond: 16,
 			TreeWarningMB:             physicalMemoryMB * 0.1875,
 			TreeRedMB:                 physicalMemoryMB * 0.3125,
 			TreeCriticalMB:            physicalMemoryMB * 0.4375,
@@ -537,6 +551,9 @@ func (policy Policy) Validate() error {
 	if w.Capacity < 1 || w.TestWeight < 1 || w.BuildWeight < 1 || w.ExpressTestWeight < 1 || w.ExpressBuildWeight < 1 || w.EmulatorWeight < 1 || w.BrowserWeight < 1 || w.HeavyWeight < 1 || w.BenchmarkWeight < 1 || w.ReclaimWeight < 1 {
 		return errors.New("work capacity and weights must be positive")
 	}
+	if w.SwapThrashCapacity < 1 || w.SwapThrashCapacity > w.Capacity {
+		return errors.New("work swap_thrash_capacity must be between 1 and capacity")
+	}
 	if w.WarningCapacity < 1 || w.WarningCapacity > w.Capacity {
 		return errors.New("work warning_capacity must be positive and no greater than capacity")
 	}
@@ -579,8 +596,11 @@ func (policy Policy) Validate() error {
 	if !(t.SwapWarningMB < t.SwapRedMB && t.SwapRedMB < t.SwapCriticalMB) {
 		return errors.New("swap thresholds must satisfy warning < red < critical")
 	}
-	if !(0 < t.SwapOutWarningMBPerSecond && t.SwapOutWarningMBPerSecond < t.SwapOutRedMBPerSecond) {
-		return errors.New("swap-out rate thresholds must satisfy 0 < warning < red")
+	if !(0 < t.SwapOutWarningMBPerSecond && t.SwapOutWarningMBPerSecond < t.SwapOutThrashMBPerSecond) {
+		return errors.New("swap-out rate thresholds must satisfy 0 < warning < thrash")
+	}
+	if !(0 < t.SwapOutReleaseMBPerSecond && t.SwapOutReleaseMBPerSecond < t.SwapOutThrashMBPerSecond) {
+		return errors.New("swap-out rate thresholds must satisfy 0 < release < thrash")
 	}
 	if !(t.TreeWarningMB < t.TreeRedMB && t.TreeRedMB < t.TreeCriticalMB) {
 		return errors.New("tree thresholds must satisfy warning < red < critical")
@@ -709,6 +729,11 @@ func LoadPolicy(path string, physicalMemoryMB float64) (Policy, bool, error) {
 	if policy.WorkLimits.WarningCapacity == 0 {
 		policy.WorkLimits.WarningCapacity = defaults.WorkLimits.WarningCapacity
 	}
+	if policy.WorkLimits.SwapThrashCapacity == 0 {
+		// Derive from this policy's own ceiling, not the host default: an
+		// operator-tuned capacity must not inherit a mismatched derate.
+		policy.WorkLimits.SwapThrashCapacity = min(policy.WorkLimits.Capacity, policy.WorkLimits.BuildWeight)
+	}
 	if policy.WorkLimits.CPUBlockSamples == 0 {
 		policy.WorkLimits.CPUBlockSamples = defaults.WorkLimits.CPUBlockSamples
 	}
@@ -738,9 +763,14 @@ func LoadPolicy(path string, physicalMemoryMB float64) (Policy, bool, error) {
 	if policy.Thresholds.HostCPURedPercent == 0 {
 		policy.Thresholds.HostCPURedPercent = defaults.Thresholds.HostCPURedPercent
 	}
-	if policy.Thresholds.SwapOutWarningMBPerSecond == 0 && policy.Thresholds.SwapOutRedMBPerSecond == 0 {
+	if policy.Thresholds.SwapOutWarningMBPerSecond == 0 {
 		policy.Thresholds.SwapOutWarningMBPerSecond = defaults.Thresholds.SwapOutWarningMBPerSecond
-		policy.Thresholds.SwapOutRedMBPerSecond = defaults.Thresholds.SwapOutRedMBPerSecond
+	}
+	if policy.Thresholds.SwapOutThrashMBPerSecond == 0 {
+		policy.Thresholds.SwapOutThrashMBPerSecond = defaults.Thresholds.SwapOutThrashMBPerSecond
+	}
+	if policy.Thresholds.SwapOutReleaseMBPerSecond == 0 {
+		policy.Thresholds.SwapOutReleaseMBPerSecond = defaults.Thresholds.SwapOutReleaseMBPerSecond
 	}
 	if policy.ResourceBudgets.MaxSampleCPUTimeMS == 0 {
 		policy.ResourceBudgets.MaxSampleCPUTimeMS = defaults.ResourceBudgets.MaxSampleCPUTimeMS

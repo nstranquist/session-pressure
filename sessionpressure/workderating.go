@@ -7,7 +7,49 @@ import (
 const (
 	WarningCapacityAdmittedDecision = "warning_capacity_admitted"
 	WarningCapacityDeferredDecision = "warning_capacity_deferred"
+	SwapThrashAdmittedDecision      = "swap_thrash_admitted"
+	SwapThrashDeferredDecision      = "swap_thrash_deferred"
 )
+
+// swapThrashDecision serializes new heavy work while the resident's swap
+// thrash latch is set under an enforcing profile. It can only defer: work that
+// fits falls through to the CPU, memory, and storage gates unchanged, so the
+// derate never weakens another safety floor. A lone operation is always
+// admitted, so a thrash caused outside the queue (browser, editor) can slow
+// agents but never starve them.
+func (gate *workAdmissionGate) swapThrashDecision(admission Admission, ownsLease bool) (workAdmissionDecision, bool) {
+	if gate == nil || !gate.swapThrashEnforced || gate.class == "" || !admission.Allowed ||
+		admission.Snapshot == nil || !admission.Snapshot.SwapIOAvailable || !admission.Snapshot.SwapThrashLatched ||
+		gate.warningCapacityStatus == nil {
+		return workAdmissionDecision{}, false
+	}
+	limits := normalizeWorkLimits(gate.limits)
+	weight, err := limits.Weight(gate.class)
+	if err != nil {
+		return workAdmissionDecision{}, false
+	}
+	status, known := gate.warningCapacityStatus()
+	if !known {
+		// Observability failure must not become an availability failure.
+		return workAdmissionDecision{}, false
+	}
+	used := max(0, status.Used)
+	projectedUsed, alone := used+weight, used == 0
+	if ownsLease {
+		// Coordinator status already counts this operation after acquisition.
+		projectedUsed, alone = used, used <= weight
+	}
+	reason := fmt.Sprintf(
+		"swap thrash (%.1f MB/s swap-out) serializes new heavy work: class=%s weight=%d used=%d projected_used=%d thrash_capacity=%d",
+		admission.Snapshot.SwapOutMBPerSecond, gate.class, weight, used, projectedUsed, limits.SwapThrashCapacity,
+	)
+	if projectedUsed <= limits.SwapThrashCapacity || alone {
+		gate.swapThrashAdmitted = true
+		return workAdmissionDecision{}, false
+	}
+	gate.swapThrashDeferred = true
+	return workAdmissionDecision{Allowed: false, Dimension: "swap", Reason: reason, RetryInterval: WorkAdmissionRetryInterval}, true
+}
 
 // warningPressureDimension recognizes typed host warning evidence. Storage
 // pressure retains its independent class-aware admission policy: reducing CPU

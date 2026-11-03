@@ -53,6 +53,7 @@ type Sampler struct {
 	physicalSource     func() (float64, error)
 	swapSource         func() (float64, error)
 	swapIOSource       func(context.Context) (swapIOCounter, error)
+	freePercentSource  func() (int, error)
 	powerThermalSource func(context.Context) (PowerThermalStatus, error)
 	storageSource      func(string) (StorageCapacity, error)
 	workStatusSource   func(context.Context) (WorkStatus, error)
@@ -109,11 +110,11 @@ const (
 const maxProjectedAgentTrees = 24
 
 func NewSampler() *Sampler {
-	return &Sampler{runner: execRunner{}, now: time.Now, pid: os.Getpid(), role: "operator", cpuNow: processCPUTime, peakRSS: processPeakRSSMB, logicalCPUCount: runtime.NumCPU, processSource: nativeProcesses, hostCPUSource: nativeHostCPUTicks, physicalSource: nativePhysicalMemoryMB, swapSource: nativeSwapUsedMB, swapIOSource: defaultSwapIOSource, powerThermalSource: func(ctx context.Context) (PowerThermalStatus, error) { return probePowerThermal(ctx, execRunner{}) }, storageSource: nativeStorageCapacity, sessionStateDir: defaultSessionStateDir()}
+	return &Sampler{runner: execRunner{}, now: time.Now, pid: os.Getpid(), role: "operator", cpuNow: processCPUTime, peakRSS: processPeakRSSMB, logicalCPUCount: runtime.NumCPU, processSource: nativeProcesses, hostCPUSource: nativeHostCPUTicks, physicalSource: nativePhysicalMemoryMB, swapSource: nativeSwapUsedMB, swapIOSource: defaultSwapIOSource, freePercentSource: defaultFreePercentSource, powerThermalSource: func(ctx context.Context) (PowerThermalStatus, error) { return probePowerThermal(ctx, execRunner{}) }, storageSource: nativeStorageCapacity, sessionStateDir: defaultSessionStateDir()}
 }
 
 func NewResidentSampler() *Sampler {
-	return &Sampler{runner: execRunner{}, now: time.Now, pid: os.Getpid(), role: "resident", cpuNow: processCPUTime, peakRSS: processPeakRSSMB, logicalCPUCount: runtime.NumCPU, processSource: nativeProcesses, hostCPUSource: nativeHostCPUTicks, physicalSource: nativePhysicalMemoryMB, swapSource: nativeSwapUsedMB, swapIOSource: defaultSwapIOSource, powerThermalSource: func(ctx context.Context) (PowerThermalStatus, error) { return probePowerThermal(ctx, execRunner{}) }, storageSource: nativeStorageCapacity, sessionStateDir: defaultSessionStateDir(), binarySHA256: currentExecutableSHA256()}
+	return &Sampler{runner: execRunner{}, now: time.Now, pid: os.Getpid(), role: "resident", cpuNow: processCPUTime, peakRSS: processPeakRSSMB, logicalCPUCount: runtime.NumCPU, processSource: nativeProcesses, hostCPUSource: nativeHostCPUTicks, physicalSource: nativePhysicalMemoryMB, swapSource: nativeSwapUsedMB, swapIOSource: defaultSwapIOSource, freePercentSource: defaultFreePercentSource, powerThermalSource: func(ctx context.Context) (PowerThermalStatus, error) { return probePowerThermal(ctx, execRunner{}) }, storageSource: nativeStorageCapacity, sessionStateDir: defaultSessionStateDir(), binarySHA256: currentExecutableSHA256()}
 }
 
 // SessionStateDir returns the hook session-state directory used for semantic
@@ -307,15 +308,11 @@ func (sampler *Sampler) Sample(ctx context.Context, policy Policy) (Snapshot, er
 		return Snapshot{}, err
 	}
 	phases["physical"] = phase(&mark)
-	pressureOutput, err := sampler.runner.Run(ctx, "/usr/bin/memory_pressure", "-Q")
+	freePercent, err := sampler.freePercent(ctx)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	phases["memory_pressure"] = phase(&mark)
-	freePercent, err := parseFreePercent(string(pressureOutput))
-	if err != nil {
-		return Snapshot{}, err
-	}
 	swapUsedMB, err := sampler.swapUsedMB(ctx)
 	if err != nil {
 		return Snapshot{}, err
@@ -945,11 +942,7 @@ func (sampler *Sampler) SampleHost(ctx context.Context, policy Policy, latest *S
 	if err != nil {
 		return Snapshot{}, err
 	}
-	pressureOutput, err := sampler.runner.Run(ctx, "/usr/bin/memory_pressure", "-Q")
-	if err != nil {
-		return Snapshot{}, err
-	}
-	freePercent, err := parseFreePercent(string(pressureOutput))
+	freePercent, err := sampler.freePercent(ctx)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -1018,6 +1011,7 @@ func (sampler *Sampler) SampleHost(ctx context.Context, policy Policy, latest *S
 			snapshot.SwapInMBPerSecond = latest.SwapInMBPerSecond
 			snapshot.SwapOutMBPerSecond = latest.SwapOutMBPerSecond
 			snapshot.SwapIOWindowMS = latest.SwapIOWindowMS
+			snapshot.SwapThrashLatched = latest.SwapThrashLatched
 		}
 	}
 	if latest != nil && latest.ProcessInventoryAvailable {
@@ -1111,6 +1105,23 @@ func parseProcesses(body string) ([]Process, error) {
 }
 
 var freePercentPattern = regexp.MustCompile(`(?i)system-wide memory free percentage:\s*([0-9]+)%`)
+
+// freePercent reads the kernel memorystatus level natively. It is the exact
+// value `memory_pressure -Q` prints, without forking a process on every
+// resident sample and every admission poll; under swap thrash that fork was
+// ~90% of resident sample wall time. The subprocess remains the fallback.
+func (sampler *Sampler) freePercent(ctx context.Context) (int, error) {
+	if sampler.freePercentSource != nil {
+		if value, err := sampler.freePercentSource(); err == nil && value >= 0 && value <= 100 {
+			return value, nil
+		}
+	}
+	output, err := sampler.runner.Run(ctx, "/usr/bin/memory_pressure", "-Q")
+	if err != nil {
+		return 0, err
+	}
+	return parseFreePercent(string(output))
+}
 
 func parseFreePercent(body string) (int, error) {
 	match := freePercentPattern.FindStringSubmatch(body)
