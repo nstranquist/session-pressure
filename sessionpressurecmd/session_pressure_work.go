@@ -539,7 +539,27 @@ func cmdSessionPressureWorkStats(g *Flags, dir string, policy sessionpressure.Po
 	fmt.Printf("calibration express_test_share=%.2f express_build_share=%.2f reuse_hits=%d wrapper_interrupts=%d retune=%s\n", calibration.ExpressTestShare, calibration.ExpressBuildShare, calibration.ReuseHits, calibration.WrapperInterruptOperations, calibration.ThresholdRetuneHint)
 	printWaitAttribution(stats.WaitAttribution)
 	printSwapDerateCost(stats.SwapDerate)
+	printLeaseCPU(stats.LeaseCPU)
 	return 0
+}
+
+// printLeaseCPU shows, per class, the cores leased commands kept busy against
+// the cores their weight reserves. utilization well under 1 means the weight
+// holds back other work that the host could run.
+func printLeaseCPU(leaseCPU sessionpressure.WorkLeaseCPU) {
+	if leaseCPU.Operations == 0 {
+		fmt.Println("lease_cpu operations=0 (no terminal event with command CPU yet)")
+		return
+	}
+	fmt.Printf("lease_cpu operations=%d\n", leaseCPU.Operations)
+	for _, class := range leaseCPU.ByClass {
+		utilization := "unknown"
+		if class.ReservedCores > 0 {
+			utilization = fmt.Sprintf("%.0f%%", class.Utilization*100)
+		}
+		fmt.Printf("  %-13s runs=%d weight=%d avg_cores=%.2f p50=%.2f p90=%.2f reserved_cores=%.2f utilization=%s peak_rss_p90=%.0fMB\n",
+			class.Class, class.Operations, class.Weight, class.AvgCores, class.P50Cores, class.P90Cores, class.ReservedCores, utilization, class.PeakRSSMBP90)
+	}
 }
 
 func printWaitAttribution(attribution sessionpressure.WorkWaitAttribution) {

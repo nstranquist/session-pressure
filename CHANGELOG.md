@@ -4,6 +4,18 @@
 
 ### Added
 
+- **Lease CPU: measured cores against the cores a weight reserves.** When a
+  leased command exits, its terminal event records its own `wait4` rusage:
+  CPU time of the command and every descendant it waited for
+  (`command_cpu_ms`), the largest RSS among them (`command_peak_rss_mb`), and
+  the cores its weight reserves at nominal capacity (`lease_reserved_cores` =
+  weight / capacity x logical CPUs). It needs no sampling. The work report adds
+  `lease_cpu`, per class: average, p50, and p90 cores, reserved cores, and
+  utilization. The idle-host retune hint names each class with 10 or more runs
+  that used under half of its reserved cores. The `acquired` event also records
+  `queue_coordinated_inventory_age_seconds`, because the resident's leased-work
+  figure can predate the queue block by a full sample interval.
+
 - **Queue waits carry host CPU evidence.** A `work run` that queues behind
   weighted capacity records the host CPU and the leased-work CPU of its first
   block on its `acquired` event (`queue_host_cpu_*`,

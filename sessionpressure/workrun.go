@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -511,6 +512,9 @@ type queueCPUEvidence struct {
 	hostPercent   float64
 	workAvailable bool
 	workPercent   float64
+	// workInventoryAgeSeconds is the age of the process inventory behind
+	// workPercent; the resident refreshes it once per sample interval.
+	workInventoryAgeSeconds float64
 }
 
 // queueCPUEvidenceFrom reads the admission sample taken just before the
@@ -530,6 +534,9 @@ func queueCPUEvidenceFrom(admission Admission) queueCPUEvidence {
 	}
 	if work := snapshot.CoordinatedWork; work.Available && work.CPUAvailable && validPercent(work.CPUPercent) {
 		evidence.workAvailable, evidence.workPercent = true, work.CPUPercent
+		if age := work.InventoryAgeSeconds; !math.IsNaN(age) && !math.IsInf(age, 0) && age >= 0 {
+			evidence.workInventoryAgeSeconds = age
+		}
 	}
 	return evidence
 }
@@ -992,6 +999,8 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	var pressureWaitMS int64
 	terminalRecorded := false
 	var idleParking *workIdleParking
+	// commandUsage is the leased command's wait4 rusage, set once it is reaped.
+	var commandUsage workCommandUsage
 	recordTerminal := func(eventType WorkEventType, outcome string, exitCode *int) error {
 		if terminalRecorded {
 			return nil
@@ -1040,6 +1049,9 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 			PressureWaitMilliseconds: pressureWaitMS, PrestartMilliseconds: max(int64(0), waitMS),
 			BatchCompletedSteps:    completedSteps,
 			IdleParkedMilliseconds: parkedFor.Milliseconds(), IdleParkCount: parkCount,
+			CommandCPUAvailable: commandUsage.available, CommandCPUMilliseconds: commandUsage.cpuMS,
+			CommandPeakRSSMB:   commandUsage.peakRSSMB,
+			LeaseReservedCores: commandUsage.reservedCores(weight, coordinator.Limits.Capacity, runtime.NumCPU()),
 		})
 		if err == nil {
 			terminalRecorded = true
@@ -1189,6 +1201,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		QueueHostCPUPercent:                 firstQueueCPU.hostPercent,
 		QueueCoordinatedCPUAvailable:        firstQueueCPU.workAvailable,
 		QueueCoordinatedCPUPercent:          firstQueueCPU.workPercent,
+		QueueCoordinatedInventoryAgeSeconds: firstQueueCPU.workInventoryAgeSeconds,
 		WaitMilliseconds:                    max(int64(0), acquiredAt.Sub(startedAt).Milliseconds()), Outcome: "lease_acquired",
 		AdmissionWaitMilliseconds: admissionWaitMS, QueueWaitMilliseconds: queueWaitMS,
 		PrestartMilliseconds: max(int64(0), acquiredAt.Sub(startedAt).Milliseconds()),
@@ -1494,6 +1507,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 				}
 			}
 		case waitErr := <-done:
+			commandUsage = commandResourceUsage(command.ProcessState)
 			if waitErr == nil && cancellationSignal == 0 && options.reuseFinalizer != nil {
 				if finalReason := options.reuseFinalizer(); finalReason != "" {
 					options.ReuseRefusalReason = finalReason

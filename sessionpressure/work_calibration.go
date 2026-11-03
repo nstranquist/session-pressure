@@ -2,6 +2,7 @@ package sessionpressure
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -106,6 +107,7 @@ func BuildWorkCalibrationReport(events []WorkEvent, since, generatedAt time.Time
 	totalTest := report.ExpressTestOps + report.FullTestOps
 	if idle := stats.ReviewSignals.QueueWaitsIdleHost; idle >= queueIdleHostHintMinimum {
 		report.ThresholdRetuneHint = fmt.Sprintf("%d of %d measured queue waits (>=30s) ran while the host was under %.0f%% CPU; leased work under-uses its reserved weight, so review class weights or work capacity before CPU thresholds", idle, stats.ReviewSignals.QueueWaitsWithCPUEvidence, queueIdleHostCPUPercent)
+		report.ThresholdRetuneHint += underusedLeaseClasses(stats.LeaseCPU)
 	} else if totalTest >= 20 && report.ExpressTestShare < 0.2 {
 		report.ThresholdRetuneHint = "low express-test share with adequate samples; prefer express-test for package-scoped go test before considering threshold changes"
 	} else if stats.OperationCount < 10 {
@@ -142,6 +144,29 @@ func BuildWorkCalibrationReport(events []WorkEvent, since, generatedAt time.Time
 
 // queueIdleHostHintMinimum keeps one stray wait from steering a retune.
 const queueIdleHostHintMinimum = 3
+
+// Lease CPU evidence names a class in the retune hint only with enough runs
+// and when its commands kept less than half of their reserved cores busy.
+const (
+	leaseCPUHintMinimumRuns = 10
+	leaseCPUHintUtilization = 0.5
+)
+
+// underusedLeaseClasses names the classes whose measured command CPU stays
+// well under the cores their weight reserves, the direct evidence for a
+// weight retune.
+func underusedLeaseClasses(leaseCPU WorkLeaseCPU) string {
+	var named []string
+	for _, class := range leaseCPU.ByClass {
+		if class.Operations >= leaseCPUHintMinimumRuns && class.ReservedCores > 0 && class.Utilization < leaseCPUHintUtilization {
+			named = append(named, fmt.Sprintf("%s used %.0f%% of %.1f reserved cores over %d runs", class.Class, class.Utilization*100, class.ReservedCores, class.Operations))
+		}
+	}
+	if len(named) == 0 {
+		return ""
+	}
+	return "; measured: " + strings.Join(named, ", ")
+}
 
 // SuppressIfAlreadyApplied clears the advisory suggestion when the live policy
 // already has multi-agent-soft effects. Suggestion remains read-only.
