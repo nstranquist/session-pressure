@@ -43,6 +43,18 @@
   Text `doctor` now prints its warnings as `warn:` lines; before, only JSON
   showed them. JSON also has a top-level `swap_derate`.
 
+- **Wait attribution.** `work stats` has a `wait_attribution` block. It splits
+  all pre-start wait by cause: `queue_capacity`, `queue_fairness`,
+  `queue_reservation`, `pressure_cpu`, `pressure_memory`, `pressure_storage`,
+  `pressure_swap`, `singleflight`, and `other`. It gives each share, the
+  dominant cause, `swap_share`, and up to five `long_wait_bursts` (waits of 2
+  minutes or more within 15 minutes of each other). `swap_derate` adds
+  `all_wait_total_ms`, `share_of_all_wait`, and a `note` when long waits had
+  another cause. On 2026-11-02, builds waited up to 9 minutes while the
+  derate held nothing: 98% of 2 h 18 m of wait in 3 hours was queue capacity,
+  in two bursts during a 12-session spike. Loosening the derate for that
+  wait would keep the wait and drop the protection.
+
 ### Fixed
 
 - **Swap deferrals were counted as memory deferrals.** The review now counts
