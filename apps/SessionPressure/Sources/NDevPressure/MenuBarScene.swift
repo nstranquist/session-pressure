@@ -160,7 +160,7 @@ struct MenuBarContent: View {
             row("Used mem", PressureFormat.percentInt(snap.utilization.memoryUsedPercent))
             row("Free mem", PressureFormat.percentInt(snap.freePercent))
             row("Host CPU", PressureFormat.percent(snap.hostCPUPercent))
-            row("Swap", PressureFormat.mb(snap.swapUsedMB))
+            row("Swap", swapRow)
             row("Agent RSS", PressureFormat.mb(snap.agentRSSSumMB))
             row("Trees", "\(snap.agentTreeCount)")
             if let writes = store.diskWriteSummary ?? snap.diskWrite {
@@ -176,6 +176,14 @@ struct MenuBarContent: View {
             }
         }
         .font(PressureTheme.monoCaption)
+    }
+
+    private var swapRow: String {
+        var value = PressureFormat.mb(snap.swapUsedMB)
+        if snap.swapOutMBPerSecond != nil {
+            value += " · \(PressureFormat.swapOutRate(snap.swapOutMBPerSecond)) out"
+        }
+        return snap.swapThrashLatched ? value + " · thrash" : value
     }
 
     private func row(_ title: String, _ value: String) -> some View {

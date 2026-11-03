@@ -264,6 +264,10 @@ public struct PressureSnapshot: Codable, Sendable, Hashable {
     public var freePercent: Int
     public var physicalMemoryMB: Double
     public var swapUsedMB: Double
+    /// Live kernel swap-out rate; absent until the resident has two counter reads.
+    public var swapOutMBPerSecond: Double?
+    /// Resident hysteretic thrash verdict; derates heavy work under enforcement.
+    public var swapThrashLatched: Bool
     public var logicalCPUCount: Int
     public var hostCPUPercent: Double
     public var hostCPUAvailable: Bool
@@ -323,6 +327,8 @@ public struct PressureSnapshot: Codable, Sendable, Hashable {
         case freePercent = "free_percent"
         case physicalMemoryMB = "physical_memory_mb"
         case swapUsedMB = "swap_used_mb"
+        case swapOutMBPerSecond = "swap_out_mb_per_s"
+        case swapThrashLatched = "swap_thrash_latched"
         case logicalCPUCount = "logical_cpu_count"
         case hostCPUPercent = "host_cpu_percent"
         case hostCPUAvailable = "host_cpu_available"
@@ -375,6 +381,11 @@ public struct PressureSnapshot: Codable, Sendable, Hashable {
         case diskWrite = "disk_write"
     }
 
+    /// Read but not re-encoded: availability folds into `swapOutMBPerSecond`.
+    private enum DecodeOnlyKeys: String, CodingKey {
+        case swapIOAvailable = "swap_io_available"
+    }
+
     private enum CompactCodingKeys: String, CodingKey {
         case sampleRole = "sample_role"
         case selfRSSMB = "self_rss_mb"
@@ -392,6 +403,13 @@ public struct PressureSnapshot: Codable, Sendable, Hashable {
         freePercent = try c.decodeIfPresent(Int.self, forKey: .freePercent) ?? 0
         physicalMemoryMB = try c.decodeIfPresent(Double.self, forKey: .physicalMemoryMB) ?? 0
         swapUsedMB = try c.decodeIfPresent(Double.self, forKey: .swapUsedMB) ?? 0
+        // Go omits a zero rate, so present availability means 0 MB/s. Compact
+        // status carries only the rate, so its presence also proves a reading.
+        let swapOut = try c.decodeIfPresent(Double.self, forKey: .swapOutMBPerSecond)
+        let swapIOAvailable = try decoder.container(keyedBy: DecodeOnlyKeys.self)
+            .decodeIfPresent(Bool.self, forKey: .swapIOAvailable) ?? false
+        swapOutMBPerSecond = swapOut ?? (swapIOAvailable ? 0 : nil)
+        swapThrashLatched = try c.decodeIfPresent(Bool.self, forKey: .swapThrashLatched) ?? false
         logicalCPUCount = try c.decodeIfPresent(Int.self, forKey: .logicalCPUCount) ?? 0
         hostCPUPercent = try c.decodeIfPresent(Double.self, forKey: .hostCPUPercent) ?? 0
         hostCPUAvailable = try c.decodeIfPresent(Bool.self, forKey: .hostCPUAvailable) ?? false
@@ -461,6 +479,8 @@ public struct PressureSnapshot: Codable, Sendable, Hashable {
         self.freePercent = freePercent
         self.physicalMemoryMB = physicalMemoryMB
         self.swapUsedMB = swapUsedMB
+        self.swapOutMBPerSecond = nil
+        self.swapThrashLatched = false
         self.logicalCPUCount = 0
         self.hostCPUPercent = hostCPUPercent
         self.hostCPUAvailable = true
@@ -505,6 +525,8 @@ public extension PressureSnapshot {
         result.reasons = compact.reasons
         result.freePercent = compact.freePercent
         result.swapUsedMB = compact.swapUsedMB
+        result.swapOutMBPerSecond = compact.swapOutMBPerSecond
+        result.swapThrashLatched = compact.swapThrashLatched
         result.hostCPUPercent = compact.hostCPUPercent
         result.agentTreeCount = compact.agentTreeCount
         result.agentRSSSumMB = compact.agentRSSSumMB

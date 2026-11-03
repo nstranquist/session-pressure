@@ -249,8 +249,8 @@ struct OverviewView: View {
             MetricCard(
                 title: "Swap used",
                 value: PressureFormat.mb(snap.swapUsedMB),
-                subtitle: "corroborating signal",
-                accent: PressureTheme.levelColor(snap.swapUsedMB >= 8192 ? .red : snap.swapUsedMB >= 4096 ? .warning : .normal),
+                subtitle: swapSubtitle,
+                accent: PressureTheme.levelColor(swapLevel),
                 help: PressureHelp.swap
             )
             MetricCard(
@@ -626,6 +626,19 @@ struct OverviewView: View {
         if snap.hostCPUPercent >= 95 { return PressureTheme.levelColor(.red) }
         if snap.hostCPUPercent >= 85 { return PressureTheme.levelColor(.warning) }
         return PressureTheme.levelColor(.normal)
+    }
+
+    /// Live swap-out, not swap used, is what wears the SSD and slows agents.
+    private var swapSubtitle: String {
+        guard snap.swapOutMBPerSecond != nil else { return "swap-out rate pending" }
+        let out = "\(PressureFormat.swapOutRate(snap.swapOutMBPerSecond)) out"
+        return snap.swapThrashLatched ? "\(out) · thrash: heavy work serialized" : out
+    }
+
+    private var swapLevel: PressureLevel {
+        if snap.swapThrashLatched { return .red }
+        if let rate = snap.swapOutMBPerSecond, rate >= 8 { return .warning }
+        return snap.swapUsedMB >= 8192 ? .red : snap.swapUsedMB >= 4096 ? .warning : .normal
     }
 
     private var memoryMomentumSubtitle: String {

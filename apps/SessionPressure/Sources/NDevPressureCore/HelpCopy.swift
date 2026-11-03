@@ -34,7 +34,7 @@ public enum PressureHelp {
     public static let memoryMomentum =
         "Diagnostic trend from up to five recent resident free-memory samples. Declining begins at −1 percentage point/min and rapid decline at −4. It estimates time to the red threshold but never raises pressure or authorizes relief."
     public static let swap =
-        "Swap used is a corroborating signal only. Sticky swap after prior pressure does not keep the host critical without a current free-memory or agent-tree breach."
+        "Swap used is a corroborating signal only. Sticky swap after prior pressure does not keep the host critical without a current free-memory or agent-tree breach. Swap-out rate is the live signal: at 8 MB/s it warns, and after two samples at 32 MB/s the resident latches thrash. While latched, enforcing profiles admit new heavy work only up to one full build, and agent launches are never blocked by swap."
     public static let agentRSS =
         "Sum of resident-set sizes across complete agent process trees (Codex/Claude/Grok/Kimi). Shared pages can be double-counted; the name is intentional."
     public static let guardRSS =

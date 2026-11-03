@@ -9,7 +9,7 @@ This is the extracted open-core product. `ndev session pressure` in nicos-tools 
 ## What it does
 
 - Samples host CPU, memory, swap use, live swap-out rate, and fail-open thermal or low-power signals.
-- Admits or defers agent work through a weighted queue.
+- Admits or defers agent work through a weighted queue, and serializes heavy work while memory thrashes.
 - Identifies Claude, Codex, Grok, and Kimi process trees.
 - Watches internal-SSD write pressure and NVMe SMART lifetime wear.
 - Inspects live work and lets an operator cancel, reschedule, or hand it off.

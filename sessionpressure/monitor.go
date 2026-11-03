@@ -471,6 +471,7 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 	consecutive := 0
 	lastMemoryLevel := Level("")
 	memoryConsecutive := 0
+	var swapLatch swapThrashLatch
 	lastPersist := time.Time{}
 	lastTransitionPersist := time.Time{}
 	lastAttempt := time.Time{}
@@ -570,6 +571,7 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 			}
 			snapshot.ConsecutiveSamples = consecutive
 			snapshot.MemoryConsecutiveSamples = memoryConsecutive
+			swapLatch.observe(&snapshot, monitor.Policy.Thresholds)
 			snapshot.TelemetryBytesToday = monitor.Store.BytesForDay(snapshot.Timestamp)
 			stats.apply(&snapshot, monitor.Policy)
 			snapshot = Evaluate(snapshot, monitor.Policy)

@@ -9,11 +9,27 @@
 - **Live swap-out pressure.** The resident reads cumulative kernel swap
   counters (`host_statistics64`, no subprocess) and reports
   `swap_in_mb_per_s` / `swap_out_mb_per_s` on every snapshot, compact status,
-  and telemetry row. Swap-out at or above `swap_out_warning_mb_per_s`
-  (default 8) or `swap_out_red_mb_per_s` (default 32) raises a memory-dimension
-  warning or red. Unlike sticky swap use, this signal ends when thrash ends. It
-  caps at red and never corroborates sticky swap, so it cannot authorize
-  automatic relief. Existing policies default-fill both thresholds.
+  and telemetry row. Swap-out is a throughput signal, not a memory level: at
+  or above `swap_out_warning_mb_per_s` (default 8) it raises a `swap`
+  dimension warning. It caps at warning, stays out of the memory-only ladder
+  used for agent launches and automatic relief, and never corroborates sticky
+  swap use. Existing policies default-fill all swap thresholds.
+- **Swap-thrash latch and heavy-work derate.** The resident latches thrash
+  after two consecutive samples at or above `swap_out_thrash_mb_per_s`
+  (default 32) and releases after two at or below `swap_out_release_mb_per_s`
+  (default 16); rates between the two hold the verdict. Snapshots, admission
+  samplers (`swap_thrash_latched`), and the controller (`swap_thrash`) project
+  it. Under an enforcing profile, new heavy work is then admitted only up to
+  `work_limits.swap_thrash_capacity` (default: one full build). A lone
+  operation always runs, an unknown coordinator status fails open, and other
+  gates still apply. Observe profiles stay report-only. Work events record
+  `swap_thrash_admitted` / `swap_thrash_deferred`, and the work review counts
+  both.
+- **`state_lock` wait blocker.** A coordinator state-lock timeout inside a
+  `--wait` budget now retries (250 ms) instead of failing the command; nothing
+  was mutated, so the retry is safe. `filelock.ErrTimeout` types both the file
+  and in-process queue timeouts. An exhausted budget still returns
+  `context.DeadlineExceeded` with the lock cause attached.
 - **Kernel swap attribution for disk writes.** Swap-out bytes have no owning
   process counter, so the disk-write plane now reports them as the synthetic
   `kernel_swap` writer (`category: system`, `owner_kind: kernel`), clamped to
@@ -21,8 +37,32 @@
   hourly history adds `swap_out_bytes`. The Disk Writes pane shows a Kernel
   swap tile when swap is present.
 
+### Changed
+
+- **Native free-memory read.** The sampler reads `kern.memorystatus_level`
+  (the value `memory_pressure -Q` prints) through sysctl instead of forking
+  `memory_pressure` on every resident sample and admission poll; under swap
+  thrash that fork was most of the sample wall time. The subprocess remains
+  the fallback.
+- **Quieter wait progress.** Human and JSONL wait lines key only on stage,
+  blocker, queue position, and pressure. Used capacity and running-duration
+  reasons no longer defeat deduplication, and an unchanged wait repeats at
+  30 s, doubling to a 2 min cap. Any change still prints at once.
+
 ### Fixed
 
+- **Per-process CPU on Apple Silicon.** libproc rusage CPU totals are mach
+  absolute-time ticks, not nanoseconds. The native sampler now converts them
+  with `mach_timebase_info` (125/3 on Apple Silicon). Before this fix,
+  per-process, agent-tree, host-consumer, and coordinated-work CPU percentages
+  read about 41.7x low on Apple Silicon. Relief and resource-cleanup idle
+  checks could treat a tree that used a full core as idle, and the fast-lane
+  coordinated-CPU ceiling could not engage. Host CPU and the resident's
+  self-budget use other counters and were not affected. Intel hosts (timebase
+  1/1) are unchanged. Telemetry rows from before this release keep the low
+  values.
+- `pressure_dimension` validation accepts `thermal` (already emitted by the
+  controller) and the new `swap`.
 - **The quiet baseline no longer learns memory thrash as normal.** Windows
   where kernel swap is at least half of device writes are reported with
   `swap_dominant` and `baseline_excluded_swap` and never train the baseline,

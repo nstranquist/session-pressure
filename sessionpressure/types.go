@@ -199,10 +199,14 @@ type Snapshot struct {
 	SwapUsedMB       float64   `json:"swap_used_mb"`
 	// Swap I/O is a live rate from cumulative kernel counters, unlike sticky
 	// swap use. Swap-out is current eviction and the SSD write cost of thrash.
-	SwapIOAvailable            bool                    `json:"swap_io_available,omitempty"`
-	SwapInMBPerSecond          float64                 `json:"swap_in_mb_per_s,omitempty"`
-	SwapOutMBPerSecond         float64                 `json:"swap_out_mb_per_s,omitempty"`
-	SwapIOWindowMS             float64                 `json:"swap_io_window_ms,omitempty"`
+	SwapIOAvailable    bool    `json:"swap_io_available,omitempty"`
+	SwapInMBPerSecond  float64 `json:"swap_in_mb_per_s,omitempty"`
+	SwapOutMBPerSecond float64 `json:"swap_out_mb_per_s,omitempty"`
+	SwapIOWindowMS     float64 `json:"swap_io_window_ms,omitempty"`
+	// SwapThrashLatched is the resident's hysteretic thrash verdict. Admission
+	// samplers project it from fresh resident evidence; it derates new heavy
+	// work under enforcing profiles and never blocks agent launches.
+	SwapThrashLatched          bool                    `json:"swap_thrash_latched,omitempty"`
 	LogicalCPUCount            int                     `json:"logical_cpu_count"`
 	HostCPUPercent             float64                 `json:"host_cpu_percent"`
 	HostCPUAvailable           bool                    `json:"host_cpu_available"`
@@ -347,9 +351,12 @@ func AdmissionForSnapshot(snapshot Snapshot, policy Policy, source string) Admis
 	dimension := ""
 	if snapshot.Level.AtLeast(LevelWarning) {
 		memory := EvaluateMemoryPressure(snapshot, policy)
-		if memory.Level.AtLeast(LevelWarning) {
+		switch {
+		case memory.Level.AtLeast(LevelWarning):
 			dimension = "memory"
-		} else {
+		case swapOnlyWarning(snapshot, policy):
+			dimension = "swap"
+		default:
 			dimension = "cpu"
 		}
 	}
@@ -369,6 +376,20 @@ func AdmissionForSnapshot(snapshot Snapshot, policy Policy, source string) Admis
 		admission.Warning = "host CPU sampling unavailable; CPU admission failed open while memory admission remained active: " + snapshot.HostCPUError
 	}
 	return admission
+}
+
+// swapOnlyWarning reports a warning carried by swap I/O alone. Any CPU breach
+// keeps the "cpu" dimension so the CPU latch keeps its own evidence stream.
+func swapOnlyWarning(snapshot Snapshot, policy Policy) bool {
+	if !snapshot.SwapIOAvailable {
+		return false
+	}
+	if (snapshot.HostCPUAvailable || snapshot.HostCPUPercent > 0) && policy.Thresholds.HostCPUWarningPercent > 0 &&
+		snapshot.HostCPUPercent >= policy.Thresholds.HostCPUWarningPercent {
+		return false
+	}
+	warning := policy.Thresholds.SwapOutWarningMBPerSecond
+	return snapshot.SwapThrashLatched || (warning > 0 && snapshot.SwapOutMBPerSecond >= warning)
 }
 
 // AdmissionForWorkSnapshot keeps transient CPU-red evidence advisory for
@@ -416,8 +437,11 @@ func AdmissionForAgentLaunchSnapshot(snapshot Snapshot, policy Policy, source st
 			"host CPU sampling unavailable; agent launch uses memory gates only: "+full.HostCPUError)
 	}
 	if allowed && full.Level.AtLeast(LevelWarning) && levelRank(full.Level) > levelRank(memory.Level) {
-		admission.Warning = joinAdmissionWarning(admission.Warning,
-			"CPU pressure observed; agent launch allowed (memory gates only); heavy work remains CPU-gated")
+		message := "CPU pressure observed; agent launch allowed (memory gates only); heavy work remains CPU-gated"
+		if swapOnlyWarning(full, policy) {
+			message = "swap-out pressure observed; agent launch allowed (memory gates only); heavy work derates while swap thrash is latched"
+		}
+		admission.Warning = joinAdmissionWarning(admission.Warning, message)
 	}
 	if !allowed {
 		admission.Reasons = append([]string(nil), memory.Reasons...)
@@ -579,14 +603,18 @@ func evaluate(snapshot Snapshot, policy Policy, includeCPU bool) Snapshot {
 		add(LevelWarning, "swap %.0f MB >= warning %.0f MB with live %s pressure", snapshot.SwapUsedMB, policy.Thresholds.SwapWarningMB, liveMemoryLevel)
 	}
 
-	// Live swap-out is current eviction, not historical residue, so it stands
-	// alone. It is computed after liveMemoryLevel so it never corroborates
-	// sticky swap use, and it caps at red: it can warn and gate admission but
-	// never authorizes automatic relief.
-	if snapshot.SwapIOAvailable {
+	// Live swap-out is a throughput signal like CPU, not a kernel-panic risk:
+	// the 2026-11-02 storm wrote 300-600 MB/s with 33-45% memory free. It is
+	// excluded from the memory-only ladder (agent launches never see it), never
+	// corroborates sticky swap use, and caps at warning. Its only actuator is the
+	// resident thrash latch derating new heavy work under enforcing profiles.
+	if includeCPU && snapshot.SwapIOAvailable {
+		thrash := policy.Thresholds.SwapOutThrashMBPerSecond
 		switch {
-		case policy.Thresholds.SwapOutRedMBPerSecond > 0 && snapshot.SwapOutMBPerSecond >= policy.Thresholds.SwapOutRedMBPerSecond:
-			add(LevelRed, "swap-out %.1f MB/s >= red %.1f MB/s (memory thrash)", snapshot.SwapOutMBPerSecond, policy.Thresholds.SwapOutRedMBPerSecond)
+		case thrash > 0 && snapshot.SwapOutMBPerSecond >= thrash:
+			add(LevelWarning, "swap-out %.1f MB/s >= thrash %.1f MB/s (memory thrash)", snapshot.SwapOutMBPerSecond, thrash)
+		case snapshot.SwapThrashLatched:
+			add(LevelWarning, "swap thrash latched until swap-out <= %.1f MB/s (now %.1f MB/s)", policy.Thresholds.SwapOutReleaseMBPerSecond, snapshot.SwapOutMBPerSecond)
 		case policy.Thresholds.SwapOutWarningMBPerSecond > 0 && snapshot.SwapOutMBPerSecond >= policy.Thresholds.SwapOutWarningMBPerSecond:
 			add(LevelWarning, "swap-out %.1f MB/s >= warning %.1f MB/s", snapshot.SwapOutMBPerSecond, policy.Thresholds.SwapOutWarningMBPerSecond)
 		}

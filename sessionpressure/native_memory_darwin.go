@@ -20,6 +20,19 @@ func nativePhysicalMemoryMB() (float64, error) {
 	return float64(bytes) / bytesPerMiB, nil
 }
 
+// nativeFreePercent is kern.memorystatus_level, the source of the
+// "System-wide memory free percentage" line printed by memory_pressure -Q.
+func nativeFreePercent() (int, error) {
+	value, err := unix.SysctlUint32("kern.memorystatus_level")
+	if err != nil {
+		return 0, err
+	}
+	if value > 100 {
+		return 0, fmt.Errorf("kern.memorystatus_level out of range: %d", value)
+	}
+	return int(value), nil
+}
+
 func nativeSwapUsedMB() (float64, error) {
 	body, err := unix.SysctlRaw("vm.swapusage")
 	if err != nil {

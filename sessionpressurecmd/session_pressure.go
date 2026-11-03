@@ -520,6 +520,8 @@ type pressureCompactStatusSnapshot struct {
 	FreePercent                int                               `json:"free_percent"`
 	SwapUsedMB                 float64                           `json:"swap_used_mb"`
 	SwapOutMBPerSecond         float64                           `json:"swap_out_mb_per_s,omitempty"`
+	SwapIOAvailable bool `json:"swap_io_available,omitempty"`
+	SwapThrashLatched bool `json:"swap_thrash_latched,omitempty"`
 	HostCPUPercent             float64                           `json:"host_cpu_percent"`
 	AgentTreeCount             int                               `json:"agent_tree_count"`
 	AgentRSSSumMB              float64                           `json:"agent_rss_sum_mb"`
@@ -585,7 +587,7 @@ func compactPressureDiskWriteSummary(summary *sessionpressure.DiskWriteSummary) 
 func compactPressureStatusSnapshot(snapshot sessionpressure.Snapshot) pressureCompactStatusSnapshot {
 	return pressureCompactStatusSnapshot{
 		Timestamp: snapshot.Timestamp, Level: snapshot.Level, Reasons: append([]string(nil), snapshot.Reasons...),
-		FreePercent: snapshot.FreePercent, SwapUsedMB: snapshot.SwapUsedMB, SwapOutMBPerSecond: snapshot.SwapOutMBPerSecond, HostCPUPercent: snapshot.HostCPUPercent,
+		FreePercent: snapshot.FreePercent, SwapUsedMB: snapshot.SwapUsedMB, SwapOutMBPerSecond: snapshot.SwapOutMBPerSecond, SwapIOAvailable: snapshot.SwapIOAvailable, SwapThrashLatched: snapshot.SwapThrashLatched, HostCPUPercent: snapshot.HostCPUPercent,
 		AgentTreeCount: snapshot.AgentTreeCount, AgentRSSSumMB: snapshot.AgentRSSSumMB, MemoryMomentum: snapshot.MemoryMomentum,
 		SampleRole: snapshot.GuardRole, SelfRSSMB: snapshot.GuardRSSMB, SelfCPUPercent: snapshot.GuardCPUPercent,
 		SelfBudgetApplicable: snapshot.GuardBudgetApplicable,

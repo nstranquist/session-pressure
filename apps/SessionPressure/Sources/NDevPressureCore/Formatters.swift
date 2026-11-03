@@ -16,6 +16,12 @@ public enum PressureFormat {
         return String(format: "%.1f%%", value)
     }
 
+    /// Swap-out throughput, e.g. "4.1 MB/s"; nil before two counter reads.
+    public static func swapOutRate(_ value: Double?) -> String {
+        guard let value else { return "—" }
+        return String(format: "%.1f MB/s", value)
+    }
+
     public static func percentInt(_ value: Int) -> String {
         "\(value)%"
     }

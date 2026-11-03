@@ -57,6 +57,10 @@ func TestAcquireBlocksConcurrent(t *testing.T) {
 	if secondErr == nil {
 		t.Fatal("expected timeout error from second acquire, got nil")
 	}
+	// Callers with a longer budget retry on this typed timeout.
+	if !errors.Is(secondErr, ErrTimeout) {
+		t.Fatalf("timeout is not typed: %v", secondErr)
+	}
 	first()
 }
 
@@ -240,9 +244,13 @@ func TestAgedLockOwnedByLivePIDIsNotReclaimed(t *testing.T) {
 		t.Fatalf("plant: %v", err)
 	}
 
-	if unlock, err := Acquire(target, 100*time.Millisecond); err == nil {
+	unlock, err := Acquire(target, 100*time.Millisecond)
+	if err == nil {
 		unlock()
 		t.Fatal("aged lock owned by a live PID must not be reclaimed")
+	}
+	if !errors.Is(err, ErrTimeout) || !strings.Contains(err.Error(), "failed to acquire") {
+		t.Fatalf("file-lock timeout is not typed: %v", err)
 	}
 }
 

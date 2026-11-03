@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ func init() {
 	// forms a baseline, so live host swap cannot leak into any fixture; tests
 	// that exercise swap install an explicit source.
 	defaultSwapIOSource = func(context.Context) (swapIOCounter, error) { return swapIOCounter{}, nil }
+	defaultFreePercentSource = nil
 }
 
 func TestSwapIORateBetweenFailsClosedAndConvertsUnits(t *testing.T) {
@@ -79,23 +81,25 @@ func TestSamplerSwapIORequiresBaselineAndResetsOnError(t *testing.T) {
 	}
 }
 
-func TestEvaluateSwapOutRateIsLiveAndCappedAtRed(t *testing.T) {
+func TestEvaluateSwapOutIsAThroughputWarningNeverAMemoryLevel(t *testing.T) {
 	policy := DefaultPolicy(16 * 1024)
 	quiet := Snapshot{FreePercent: 40}
 	for _, test := range []struct {
-		name   string
-		rate   float64
-		avail  bool
-		level  Level
-		reason string
+		name    string
+		rate    float64
+		avail   bool
+		latched bool
+		level   Level
+		reason  string
 	}{
-		{"unavailable is silent", 500, false, LevelNormal, ""},
-		{"below warning", 7.9, true, LevelNormal, ""},
-		{"warning", 8, true, LevelWarning, "swap-out 8.0 MB/s >= warning"},
-		{"red thrash", 69, true, LevelRed, "memory thrash"},
+		{"unavailable is silent", 500, false, true, LevelNormal, ""},
+		{"below warning", 7.9, true, false, LevelNormal, ""},
+		{"warning", 8, true, false, LevelWarning, "swap-out 8.0 MB/s >= warning"},
+		{"thrash caps at warning", 607, true, false, LevelWarning, "memory thrash"},
+		{"latched below thrash", 20, true, true, LevelWarning, "swap thrash latched"},
 	} {
 		snapshot := quiet
-		snapshot.SwapIOAvailable, snapshot.SwapOutMBPerSecond = test.avail, test.rate
+		snapshot.SwapIOAvailable, snapshot.SwapOutMBPerSecond, snapshot.SwapThrashLatched = test.avail, test.rate, test.latched
 		got := Evaluate(snapshot, policy)
 		if got.Level != test.level {
 			t.Fatalf("%s: level=%s want=%s reasons=%v", test.name, got.Level, test.level, got.Reasons)
@@ -103,21 +107,156 @@ func TestEvaluateSwapOutRateIsLiveAndCappedAtRed(t *testing.T) {
 		if test.reason != "" && (len(got.Reasons) == 0 || !strings.Contains(got.Reasons[0], test.reason)) {
 			t.Fatalf("%s: reasons=%v", test.name, got.Reasons)
 		}
+		// The memory-only ladder (agent launch, automatic relief) never sees it.
+		if memory := EvaluateMemoryPressure(snapshot, policy); memory.Level != LevelNormal {
+			t.Fatalf("%s: memory ladder level=%s reasons=%v", test.name, memory.Level, memory.Reasons)
+		}
 	}
 	// Live thrash must not corroborate sticky swap use into critical: only
 	// free-memory/agent evidence may authorize automatic relief.
 	sticky := quiet
 	sticky.SwapUsedMB = policy.Thresholds.SwapCriticalMB + 1
 	sticky.SwapIOAvailable, sticky.SwapOutMBPerSecond = true, 500
-	if got := Evaluate(sticky, policy); got.Level != LevelRed {
-		t.Fatalf("thrash plus sticky swap level=%s reasons=%v; want red cap", got.Level, got.Reasons)
+	if got := Evaluate(sticky, policy); got.Level.AtLeast(LevelCritical) {
+		t.Fatalf("thrash plus sticky swap level=%s reasons=%v; must not reach critical", got.Level, got.Reasons)
+	}
+}
+
+func TestSwapThrashLatchIsHystereticAndFailsOpen(t *testing.T) {
+	thresholds := DefaultPolicy(16 * 1024).Thresholds
+	var latch swapThrashLatch
+	step := func(rate float64, avail bool) bool {
+		snapshot := Snapshot{SwapIOAvailable: avail, SwapOutMBPerSecond: rate}
+		latch.observe(&snapshot, thresholds)
+		return snapshot.SwapThrashLatched
+	}
+	for i, test := range []struct {
+		rate  float64
+		avail bool
+		want  bool
+	}{
+		{69, true, false},   // one hot sample is a burst, not thrash
+		{20, true, false},   // the band resets the hot streak
+		{69, true, false},   // hot 1
+		{607, true, true},   // hot 2 enters
+		{20, true, true},    // the band holds the verdict
+		{10, true, true},    // calm 1
+		{40, true, true},    // hot resets calm
+		{10, true, true},    // calm 1
+		{16, true, false},   // calm 2 (release is inclusive) leaves
+		{500, false, false}, // unavailable evidence clears state
+		{500, true, false},  // and the streak restarts from zero
+	} {
+		if got := step(test.rate, test.avail); got != test.want {
+			t.Fatalf("step %d rate=%.0f avail=%v latched=%v want=%v", i, test.rate, test.avail, got, test.want)
+		}
+	}
+}
+
+func TestSwapThrashDimensionNeverBlocksAgentsOrHeavyWorkByLevel(t *testing.T) {
+	policy := DefaultPolicy(16 * 1024)
+	policy.EnforceAdmission = true
+	snapshot := Snapshot{FreePercent: 40, HostCPUAvailable: true, HostCPUPercent: 30, SwapIOAvailable: true, SwapOutMBPerSecond: 607, SwapThrashLatched: true}
+	work := AdmissionForWorkSnapshot(snapshot, policy, "test")
+	if !work.Allowed || work.Dimension != "swap" || work.Level != LevelWarning {
+		t.Fatalf("work admission=%+v", work)
+	}
+	if work.Controller == nil || !work.Controller.SwapThrash || work.Controller.BlockWork || work.Controller.BlockAgentLaunch {
+		t.Fatalf("controller=%+v", work.Controller)
+	}
+	launch := AdmissionForAgentLaunchSnapshot(snapshot, policy, "test")
+	if !launch.Allowed || !strings.Contains(launch.Warning, "swap-out pressure observed") {
+		t.Fatalf("agent launch admission=%+v", launch)
+	}
+	// A concurrent CPU breach keeps the CPU dimension and its latch evidence.
+	snapshot.HostCPUPercent = policy.Thresholds.HostCPUWarningPercent
+	if cpu := AdmissionForSnapshot(snapshot, policy, "test"); cpu.Dimension != "cpu" {
+		t.Fatalf("CPU+swap dimension=%q", cpu.Dimension)
+	}
+}
+
+func swapThrashAdmission(latched bool) Admission {
+	snapshot := Snapshot{Level: LevelWarning, FreePercent: 40, SwapIOAvailable: true, SwapOutMBPerSecond: 300, SwapThrashLatched: latched}
+	return Admission{Allowed: true, Level: LevelWarning, Dimension: "swap", Reasons: []string{"swap-out 300.0 MB/s >= thrash 32.0 MB/s (memory thrash)"}, Snapshot: &snapshot}
+}
+
+func TestSwapThrashDeratesNewHeavyWorkWithProgressGuarantee(t *testing.T) {
+	limits := defaultWorkLimits(10) // capacity 8, build 5, test 3, thrash capacity 5
+	if limits.SwapThrashCapacity != 5 {
+		t.Fatalf("default thrash capacity=%d", limits.SwapThrashCapacity)
+	}
+	for _, test := range []struct {
+		name      string
+		class     WorkClass
+		used      int
+		ownsLease bool
+		enforced  bool
+		latched   bool
+		thrashCap int
+		allowed   bool
+		label     string
+	}{
+		{"lone build fits", WorkClassBuild, 0, false, true, true, 0, true, SwapThrashAdmittedDecision},
+		{"second build serializes", WorkClassBuild, 3, false, true, true, 0, false, SwapThrashDeferredDecision},
+		{"test beside light work fits", WorkClassTest, 2, false, true, true, 0, true, SwapThrashAdmittedDecision},
+		{"test behind a build waits", WorkClassTest, 5, false, true, true, 0, false, SwapThrashDeferredDecision},
+		{"owned lease is not double counted", WorkClassBuild, 5, true, true, true, 0, true, SwapThrashAdmittedDecision},
+		{"lone heavy op always runs", WorkClassBuild, 0, false, true, true, 2, true, SwapThrashAdmittedDecision},
+		{"observe profile is report-only", WorkClassBuild, 3, false, false, true, 0, true, ""},
+		{"released latch does not derate", WorkClassBuild, 3, false, true, false, 0, true, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			gateLimits := limits
+			if test.thrashCap > 0 {
+				gateLimits.SwapThrashCapacity = test.thrashCap
+			}
+			gate := &workAdmissionGate{
+				limits: gateLimits, class: test.class, swapThrashEnforced: test.enforced,
+				warningCapacityStatus: func() (WorkStatus, bool) {
+					return WorkStatus{Used: test.used, Capacity: gateLimits.Capacity}, true
+				},
+			}
+			decision := gate.observe(swapThrashAdmission(test.latched), false, test.ownsLease)
+			if decision.Allowed != test.allowed {
+				t.Fatalf("allowed=%v want=%v decision=%+v", decision.Allowed, test.allowed, decision)
+			}
+			if label := gate.decisionLabel(); label != test.label {
+				t.Fatalf("label=%q want=%q", label, test.label)
+			}
+			if !decision.Allowed && (decision.Dimension != "swap" || !strings.Contains(decision.Reason, "thrash_capacity=5")) {
+				t.Fatalf("deferral lacks typed evidence: %+v", decision)
+			}
+		})
+	}
+	// Unknown coordinator status must fail open, never into a deferral.
+	gate := &workAdmissionGate{limits: limits, class: WorkClassBuild, swapThrashEnforced: true,
+		warningCapacityStatus: func() (WorkStatus, bool) { return WorkStatus{}, false }}
+	if decision := gate.observe(swapThrashAdmission(true), false, false); !decision.Allowed {
+		t.Fatalf("status outage deferred work: %+v", decision)
+	}
+}
+
+func TestSwapThrashPolicyValidationAndLegacyFill(t *testing.T) {
+	policy := DefaultPolicy(16 * 1024)
+	policy.WorkLimits.SwapThrashCapacity = policy.WorkLimits.Capacity + 1
+	if err := policy.Validate(); err == nil || !strings.Contains(err.Error(), "swap_thrash_capacity") {
+		t.Fatalf("oversized thrash capacity validated: %v", err)
+	}
+	policy = DefaultPolicy(16 * 1024)
+	policy.Thresholds.SwapOutReleaseMBPerSecond = policy.Thresholds.SwapOutThrashMBPerSecond
+	if err := policy.Validate(); err == nil || !strings.Contains(err.Error(), "release < thrash") {
+		t.Fatalf("release >= thrash validated: %v", err)
+	}
+	legacy := normalizeWorkLimits(WorkLimits{Capacity: 8, BuildWeight: 5})
+	if legacy.SwapThrashCapacity != 5 {
+		t.Fatalf("legacy limits thrash capacity=%d", legacy.SwapThrashCapacity)
 	}
 }
 
 func TestLegacyPolicyFillsSwapOutThresholdsAndValidatesOrder(t *testing.T) {
 	dir := t.TempDir()
 	policy := DefaultPolicy(16 * 1024)
-	policy.Thresholds.SwapOutWarningMBPerSecond, policy.Thresholds.SwapOutRedMBPerSecond = 0, 0
+	policy.Thresholds.SwapOutWarningMBPerSecond, policy.Thresholds.SwapOutThrashMBPerSecond, policy.Thresholds.SwapOutReleaseMBPerSecond = 0, 0, 0
 	body, err := json.Marshal(policy)
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +269,7 @@ func TestLegacyPolicyFillsSwapOutThresholdsAndValidatesOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Thresholds.SwapOutWarningMBPerSecond != 8 || loaded.Thresholds.SwapOutRedMBPerSecond != 32 {
+	if loaded.Thresholds.SwapOutWarningMBPerSecond != 8 || loaded.Thresholds.SwapOutThrashMBPerSecond != 32 || loaded.Thresholds.SwapOutReleaseMBPerSecond != 16 {
 		t.Fatalf("legacy swap-out thresholds=%+v", loaded.Thresholds)
 	}
 	loaded.Thresholds.SwapOutWarningMBPerSecond = 32
@@ -288,5 +427,101 @@ func TestDiskWriteRestoreDropsPreEpochBaselinesButKeepsTraffic(t *testing.T) {
 	}
 	if swapTotal != 1_000 {
 		t.Fatalf("history swap total=%d", swapTotal)
+	}
+}
+
+func TestSamplerFreePercentPrefersNativeAndFallsBackToMemoryPressure(t *testing.T) {
+	runner := fixtureRunner{pressure: "System-wide memory free percentage: 37%\n"}
+	sampler := &Sampler{runner: runner, freePercentSource: func() (int, error) { return 41, nil }}
+	if got, err := sampler.freePercent(context.Background()); err != nil || got != 41 {
+		t.Fatalf("native free=%d err=%v", got, err)
+	}
+	for name, source := range map[string]func() (int, error){
+		"error":        func() (int, error) { return 0, errors.New("sysctl failed") },
+		"out of range": func() (int, error) { return 101, nil },
+		"absent":       nil,
+	} {
+		sampler.freePercentSource = source
+		if got, err := sampler.freePercent(context.Background()); err != nil || got != 37 {
+			t.Fatalf("%s: fallback free=%d err=%v", name, got, err)
+		}
+	}
+}
+
+func TestWorkProgressDeduplicatesVolatileFieldsAndBacksOff(t *testing.T) {
+	now := time.Date(2026, 11, 2, 23, 0, 0, 0, time.UTC)
+	var out strings.Builder
+	reporter := newWorkProgressReporter(WorkProgressHuman, &out, "op", WorkClassTest, 3, now)
+	reporter.now = func() time.Time { return now }
+	lines := func() int { return strings.Count(out.String(), "\n") }
+	// 5 minutes of 2s polls whose used capacity and reason duration churn.
+	for second := 0; second < 300; second += 2 {
+		now = time.Date(2026, 11, 2, 23, 0, second, 0, time.UTC)
+		reporter.emit(WorkProgress{Stage: "waiting", Blocker: WorkBlockerCapacity, QueuePosition: 1, QueueDepth: 4,
+			Used: 5 + second%3, Capacity: 8, Reason: fmt.Sprintf("finite express-build lease has run %ds", 900+second)})
+	}
+	// first line + heartbeats at 30s, 90s, 210s (30, 60, 120 cadence).
+	if got := lines(); got != 4 {
+		t.Fatalf("unchanged wait printed %d lines; want 4:\n%s", got, out.String())
+	}
+	now = now.Add(2 * time.Second)
+	reporter.emit(WorkProgress{Stage: "waiting", Blocker: WorkBlockerReservation, QueuePosition: 1, QueueDepth: 4})
+	if got := lines(); got != 5 {
+		t.Fatalf("blocker change must print immediately; lines=%d", got)
+	}
+}
+
+// A coordinator state-lock timeout inside a long --wait budget is contention
+// (a holder paged out under thrash), not a failure: nothing was mutated, so
+// the wait loop retries and reports the typed state_lock blocker.
+func TestWaitAcquireRetriesStateLockTimeoutWithinBudget(t *testing.T) {
+	previousFallback, previousRetry := workStateLockFallback, workStateLockRetryInterval
+	workStateLockFallback, workStateLockRetryInterval = 100*time.Millisecond, 20*time.Millisecond
+	defer func() { workStateLockFallback, workStateLockRetryInterval = previousFallback, previousRetry }()
+
+	coordinator := NewWorkCoordinator(t.TempDir(), testWorkLimits())
+	if _, err := coordinator.Status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := coordinator.statePath() + ".lock"
+	held := fmt.Sprintf(`{"pid":%d,"timestamp":%d,"token":"foreign-holder"}`, os.Getpid(), time.Now().UnixMilli())
+	if err := os.WriteFile(lockPath, []byte(held), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(450 * time.Millisecond)
+		_ = os.Remove(lockPath)
+	}()
+	var blockers []WorkBlocker
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	operationID, err := NewWorkOperationID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, _, err := coordinator.WaitAcquireOperation(ctx, WorkClassTest, operationID, func(_ WorkStatus, blocker WorkBlocker) {
+		blockers = append(blockers, blocker)
+	})
+	if err != nil {
+		t.Fatalf("lock stall inside wait budget failed the operation: %v", err)
+	}
+	defer func() { _ = lease.Release(context.Background()) }()
+	if len(blockers) == 0 || blockers[0] != WorkBlockerStateLock {
+		t.Fatalf("blockers=%v; want state_lock first", blockers)
+	}
+
+	// An exhausted budget still fails, and the cause stays inspectable.
+	if err := os.WriteFile(lockPath, []byte(held), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(lockPath)
+	short, shortCancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer shortCancel()
+	other, err := NewWorkOperationID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := coordinator.WaitAcquireOperation(short, WorkClassTest, other, nil); err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("exhausted budget err=%v; want deadline exceeded", err)
 	}
 }

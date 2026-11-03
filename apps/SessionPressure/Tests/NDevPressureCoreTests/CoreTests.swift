@@ -692,6 +692,30 @@ struct CoreTests {
         #expect(merged.freePercent == 42)
         #expect(merged.topAgentTrees.first?.rootPID == 7)
         #expect(merged.diskWrite?.state == .learning)
+        #expect(merged.swapOutMBPerSecond == nil)
+        #expect(merged.swapThrashLatched == false)
+    }
+
+    @Test("swap-out rate and thrash latch decode, including Go's omitted zero rate")
+    func decodeSwapThrashFields() throws {
+        let latched = try PressureJSON.decode(PressureSnapshot.self, from: Data("""
+        {"level": "warning", "free_percent": 38, "swap_used_mb": 30000,
+         "swap_io_available": true, "swap_out_mb_per_s": 412.5, "swap_thrash_latched": true}
+        """.utf8))
+        #expect(latched.swapOutMBPerSecond == 412.5)
+        #expect(latched.swapThrashLatched)
+        let quiet = try PressureJSON.decode(PressureSnapshot.self, from: Data("""
+        {"level": "normal", "free_percent": 41, "swap_used_mb": 9000, "swap_io_available": true}
+        """.utf8))
+        #expect(quiet.swapOutMBPerSecond == 0)
+        #expect(!quiet.swapThrashLatched)
+        let unknown = try PressureJSON.decode(PressureSnapshot.self, from: Data(#"{"level": "normal", "free_percent": 41}"#.utf8))
+        #expect(unknown.swapOutMBPerSecond == nil)
+        let merged = unknown.applyingCompact(latched)
+        #expect(merged.swapOutMBPerSecond == 412.5)
+        #expect(merged.swapThrashLatched)
+        #expect(PressureFormat.swapOutRate(412.5) == "412.5 MB/s")
+        #expect(PressureFormat.swapOutRate(nil) == "—")
     }
 
     @Test("fs_usage path parsing is unique and bounded")
