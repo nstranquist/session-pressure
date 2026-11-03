@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- **Queue waits carry host CPU evidence.** A `work run` that queues behind
+  weighted capacity records the host CPU and the leased-work CPU of its first
+  block on its `acquired` event (`queue_host_cpu_*`,
+  `queue_coordinated_cpu_*`). The work report counts queue waits of 30 s or
+  more with that evidence (`queue_waits_with_cpu_evidence`) and the ones that
+  ran while the host was under 50% CPU (`queue_waits_idle_host`). From three
+  idle-host waits, the retune hint says that reserved weight, not CPU, held
+  agents back, and names class weights and work capacity as the levers.
+
 ## 0.6.0 — 2026-11-02
 
 ### Added

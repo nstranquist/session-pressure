@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -501,6 +502,39 @@ func (gate *workAdmissionGate) uncorroboratedCPURed(admission Admission) bool {
 		return false
 	}
 	return !(snapshot.HostCPURollingAvailable && snapshot.HostCPURollingPercent >= redPercent) && snapshot.ConsecutiveSamples < blockSamples
+}
+
+// queueCPUEvidence is the host and leased-work CPU at the first queue block.
+type queueCPUEvidence struct {
+	hostAvailable bool
+	hostPercent   float64
+	workAvailable bool
+	workPercent   float64
+}
+
+// queueCPUEvidenceFrom reads the admission sample taken just before the
+// lease request, so recording it costs no extra sampling. The rolling host
+// figure is preferred: one instantaneous sample can catch a burst.
+func queueCPUEvidenceFrom(admission Admission) queueCPUEvidence {
+	snapshot := admission.Snapshot
+	if snapshot == nil {
+		return queueCPUEvidence{}
+	}
+	var evidence queueCPUEvidence
+	switch {
+	case snapshot.HostCPURollingAvailable && validPercent(snapshot.HostCPURollingPercent):
+		evidence.hostAvailable, evidence.hostPercent = true, snapshot.HostCPURollingPercent
+	case snapshot.HostCPUAvailable && validPercent(snapshot.HostCPUPercent):
+		evidence.hostAvailable, evidence.hostPercent = true, snapshot.HostCPUPercent
+	}
+	if work := snapshot.CoordinatedWork; work.Available && work.CPUAvailable && validPercent(work.CPUPercent) {
+		evidence.workAvailable, evidence.workPercent = true, work.CPUPercent
+	}
+	return evidence
+}
+
+func validPercent(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 100
 }
 
 func coordinatedWorkEvidence(admission Admission) (available, cpuAvailable bool, cpuPercent float64, leaseCount, processCount int, inventoryAgeSeconds float64) {
@@ -1076,10 +1110,12 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	var status WorkStatus
 	var firstQueueBlocker WorkBlocker
 	var firstQueueStatus WorkStatus
+	var firstQueueCPU queueCPUEvidence
 	emitQueueProgress := func(status WorkStatus, blocker WorkBlocker) {
 		if firstQueueBlocker == "" {
 			firstQueueBlocker = blocker
 			firstQueueStatus = status
+			firstQueueCPU = queueCPUEvidenceFrom(admissionAfterWait)
 		}
 		reporter.emit(WorkProgress{
 			Stage: "waiting", Blocker: blocker, QueuePosition: waiterPosition(status, operationID), QueueDepth: status.QueueDepth,
@@ -1140,6 +1176,10 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		CoordinatedWorkLeaseCount:           admissionGate.coordinatedWorkLeaseCount,
 		CoordinatedWorkProcessCount:         admissionGate.coordinatedWorkProcessCount,
 		CoordinatedWorkInventoryAgeSeconds:  admissionGate.coordinatedWorkInventoryAgeSeconds,
+		QueueHostCPUAvailable:               firstQueueCPU.hostAvailable,
+		QueueHostCPUPercent:                 firstQueueCPU.hostPercent,
+		QueueCoordinatedCPUAvailable:        firstQueueCPU.workAvailable,
+		QueueCoordinatedCPUPercent:          firstQueueCPU.workPercent,
 		WaitMilliseconds:                    max(int64(0), acquiredAt.Sub(startedAt).Milliseconds()), Outcome: "lease_acquired",
 		AdmissionWaitMilliseconds: admissionWaitMS, QueueWaitMilliseconds: queueWaitMS,
 		PrestartMilliseconds: max(int64(0), acquiredAt.Sub(startedAt).Milliseconds()),
