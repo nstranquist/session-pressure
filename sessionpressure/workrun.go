@@ -1025,9 +1025,17 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 			}
 			terminalQueueMS = max(int64(0), queueEnd.Sub(admissionReadyAt).Milliseconds())
 		}
+		// Work that gave up while a pressure gate held it never wrote an
+		// acquired event, so the terminal event must name the gate itself.
+		var deferredLevel Level
+		var deferredDimension, deferredReason string
+		if admissionGate != nil {
+			deferredLevel, deferredDimension, deferredReason = admissionGate.deferredLevel, admissionGate.deferredDimension, admissionGate.deferredReason
+		}
 		err := appendEvent(WorkEvent{
 			Event: eventType, LeaseID: leaseRecordID(lease), PID: leaseRecordPID(lease),
 			WaitMilliseconds: max(int64(0), waitMS), RuntimeMillis: max(int64(0), runtimeMS), ExitCode: exitCode, Outcome: outcome,
+			PressureLevel: deferredLevel, PressureDimension: deferredDimension, PressureReason: deferredReason,
 			AdmissionWaitMilliseconds: terminalAdmissionMS, QueueWaitMilliseconds: terminalQueueMS,
 			PressureWaitMilliseconds: pressureWaitMS, PrestartMilliseconds: max(int64(0), waitMS),
 			BatchCompletedSteps:    completedSteps,

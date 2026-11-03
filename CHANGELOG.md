@@ -46,6 +46,12 @@
 - **Swap deferrals were counted as memory deferrals.** The review now counts
   them as `swap_deferrals`, and `swap_thrash_external_bypasses` counts work
   admitted through an external storm.
+- **Work that gave up at a pressure gate lost the gate.** An operation whose
+  `--wait` ran out before its lease wrote no `acquired` event, and its
+  terminal event had no `pressure_level`, `pressure_dimension`, or
+  `pressure_reason`. Terminal events now carry the first deferral, so the
+  review counts these operations by dimension. The swap derate cost also
+  counts pre-lease admission wait; before, a 12 s derate hold read as 0 s.
 
 ## 0.6.0 — 2026-11-02
 

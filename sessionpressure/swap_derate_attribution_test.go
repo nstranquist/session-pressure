@@ -1,6 +1,7 @@
 package sessionpressure
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -434,5 +435,45 @@ func TestSwapThrashEpisodeResumesAcrossResidentRestart(t *testing.T) {
 	summary = summarizeSwapThrashEpisodes(rows, now.Add(10*time.Minute))
 	if summary.Count != 2 || summary.Interrupted != 1 || summary.LatchedSeconds != 18*60+5*60 {
 		t.Fatalf("split summary=%+v", summary)
+	}
+}
+
+// Seen in dogfood: the derate held a test before its lease and the agent's
+// --wait ran out. The terminal event carried the label but no dimension, and
+// all wait sat in admission_wait_ms, so the cost read zero.
+func TestSwapDerateCostCountsPreLeaseAdmissionWait(t *testing.T) {
+	base := time.Date(2026, 11, 3, 2, 0, 0, 0, time.UTC)
+	stats := SummarizeWorkEvents([]WorkEvent{
+		{SchemaVersion: WorkEventSchemaVersion, OperationID: "held", Event: WorkEventQueued, Class: WorkClassTest, Weight: 3, Timestamp: base, Blocker: WorkBlockerNone},
+		{SchemaVersion: WorkEventSchemaVersion, OperationID: "held", Event: WorkEventCancelled, Class: WorkClassTest, Weight: 3, Timestamp: base.Add(12 * time.Second),
+			AdmissionDecision: SwapThrashDeferredDecision, WaitMilliseconds: 12048, AdmissionWaitMilliseconds: 12048, Outcome: "interrupted"},
+	}, base.Add(-time.Hour), base.Add(time.Minute))
+	if cost := stats.SwapDerate; cost.DeferredOperations != 1 || cost.WaitTotalMS != 12048 || cost.Verdict != SwapDerateWithinBudget {
+		t.Fatalf("pre-lease derate cost=%+v", cost)
+	}
+}
+
+func TestPressureTimeoutTerminalEventNamesTheGate(t *testing.T) {
+	dir := t.TempDir()
+	coordinator := NewWorkCoordinator(dir, testWorkLimits())
+	admissionCheck := func() Admission {
+		return Admission{Allowed: false, Level: LevelRed, Reasons: []string{"host free memory 10% <= red 15%"}}
+	}
+	code, err := RunWorkCommand(coordinator,
+		WorkRunOptions{Class: WorkClassBuild, Wait: 50 * time.Millisecond, Progress: WorkProgressQuiet, Command: []string{"/usr/bin/true"}},
+		admissionCheck, time.Millisecond, WorkRunStreams{Stdout: io.Discard, Stderr: io.Discard})
+	if err == nil || code == 0 {
+		t.Fatalf("held work ran: code=%d err=%v", code, err)
+	}
+	events, readErr := NewWorkEventStore(dir).Read(WorkEventFilter{})
+	if readErr != nil || len(events) == 0 {
+		t.Fatalf("events=%+v err=%v", events, readErr)
+	}
+	terminal := events[len(events)-1]
+	if (terminal.Event != WorkEventCancelled && terminal.Event != WorkEventFailed) || terminal.PressureDimension != "memory" || terminal.PressureLevel != LevelRed || terminal.PressureReason == "" {
+		t.Fatalf("terminal event lost the gate: %+v", terminal)
+	}
+	if stats := SummarizeWorkEvents(events, time.Time{}, time.Now()); stats.ReviewSignals.MemoryDeferrals != 1 {
+		t.Fatalf("memory deferrals=%d", stats.ReviewSignals.MemoryDeferrals)
 	}
 }
