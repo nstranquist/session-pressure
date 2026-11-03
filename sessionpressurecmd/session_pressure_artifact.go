@@ -48,7 +48,7 @@ func cmdSessionPressureArtifact(g *Flags, args []string) int {
 				sessionpressure.ShortRevision(revisions.CLI), sessionpressure.ShortRevision(revisions.FrontDoor),
 				sessionpressure.ShortRevision(revisions.InstalledHelper), sessionpressure.PromoteCommand())
 		} else if revisions.Checked {
-			text += "artifact source revision: " + sessionpressure.ShortRevision(revisions.CLI) + " (cli, front door, and helper agree)\n"
+			text += "artifact source revision: " + sessionpressure.ShortRevision(revisions.CLI) + " (" + revisions.AgreementSummary() + ")\n"
 		}
 		return emitPressure(g, payload, text, 0)
 	case "prune":

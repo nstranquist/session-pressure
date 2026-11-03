@@ -192,3 +192,12 @@ func TestResidentHelperFollowsCLISymlinkChainToPublishedHelper(t *testing.T) {
 		t.Fatalf("helper invoked directly got %q", got)
 	}
 }
+
+func TestAgreementSummaryNamesOnlyComparedBinaries(t *testing.T) {
+	if got := inspectSourceRevisions("a", "", "a", "").AgreementSummary(); got != "cli, helper agree; front door unknown" {
+		t.Fatalf("summary=%q", got)
+	}
+	if got := inspectSourceRevisions("a", "a", "a", "").AgreementSummary(); got != "cli, front door, helper agree" {
+		t.Fatalf("summary=%q", got)
+	}
+}
