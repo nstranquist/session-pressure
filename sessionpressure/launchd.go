@@ -94,10 +94,7 @@ func NewLaunchdManager(binary, dataDir string) (*LaunchdManager, error) {
 		if err != nil {
 			return nil, err
 		}
-		if resolved, resolveErr := filepath.EvalSymlinks(executable); resolveErr == nil {
-			executable = resolved
-		}
-		binary = sessionPressureBinaryForExecutable(executable)
+		binary = residentHelperForExecutable(executable)
 	}
 	binary, err = filepath.Abs(binary)
 	if err != nil {
@@ -125,6 +122,36 @@ const residentHelperName = "session-pressure-helper"
 
 func isResidentHelperName(name string) bool {
 	return name == residentHelperName || name == "ndev-session-pressure"
+}
+
+// residentHelperForExecutable finds the helper published beside the running
+// CLI. Publishers install the CLI as a stable symlink next to the helper and
+// point it into a revision store (`bin/ndev-pressure ->
+// bin/.ndev-pressure.revisions/current -> .../sha256-…`), so the fully resolved
+// path has no helper beside it. Walk the symlink chain from the invoked path
+// and take the first hop whose sibling helper exists; otherwise keep the old
+// resolved-path answer so errors name the same path as before.
+func residentHelperForExecutable(executable string) string {
+	const maxHops = 16
+	current := executable
+	for hop := 0; hop < maxHops; hop++ {
+		candidate := sessionPressureBinaryForExecutable(current)
+		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
+			return candidate
+		}
+		target, err := os.Readlink(current)
+		if err != nil {
+			break
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(current), target)
+		}
+		current = filepath.Clean(target)
+	}
+	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+		executable = resolved
+	}
+	return sessionPressureBinaryForExecutable(executable)
 }
 
 func sessionPressureBinaryForExecutable(executable string) string {
