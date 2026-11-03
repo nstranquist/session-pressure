@@ -161,6 +161,22 @@ type WorkEvent struct {
 	QueueHostCPUPercent          float64 `json:"queue_host_cpu_percent,omitempty"`
 	QueueCoordinatedCPUAvailable bool    `json:"queue_coordinated_cpu_available,omitempty"`
 	QueueCoordinatedCPUPercent   float64 `json:"queue_coordinated_cpu_percent,omitempty"`
+	// QueueCoordinatedInventoryAgeSeconds is the age of the process inventory
+	// behind QueueCoordinatedCPUPercent. The resident refreshes it once per
+	// sample interval, so the figure can describe leased work minutes before
+	// the block. Read the percent together with this age.
+	QueueCoordinatedInventoryAgeSeconds float64 `json:"queue_coordinated_inventory_age_seconds,omitempty"`
+
+	// Command* is the leased command's own resource use from wait4: user plus
+	// system CPU of the command and every descendant it waited for, and the
+	// largest RSS among them. Descendants still running after the command
+	// exits are not included. LeaseReservedCores is the host share that the
+	// lease's weight reserves at nominal capacity (weight / capacity x logical
+	// CPUs). Command CPU over runtime, against it, says whether the weight fits.
+	CommandCPUAvailable    bool    `json:"command_cpu_available,omitempty"`
+	CommandCPUMilliseconds int64   `json:"command_cpu_ms,omitempty"`
+	CommandPeakRSSMB       float64 `json:"command_peak_rss_mb,omitempty"`
+	LeaseReservedCores     float64 `json:"lease_reserved_cores,omitempty"`
 }
 
 func (event WorkEvent) Validate() error {
@@ -229,6 +245,14 @@ func (event WorkEvent) Validate() error {
 	}
 	if (event.QueueHostCPUPercent > 0 && !event.QueueHostCPUAvailable) || (event.QueueCoordinatedCPUPercent > 0 && !event.QueueCoordinatedCPUAvailable) {
 		return errors.New("work event queue CPU percent requires available evidence")
+	}
+	for _, value := range []float64{event.QueueCoordinatedInventoryAgeSeconds, event.CommandPeakRSSMB, event.LeaseReservedCores} {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+			return errors.New("work event resource evidence must be finite and non-negative")
+		}
+	}
+	if event.CommandCPUMilliseconds < 0 || (event.CommandCPUMilliseconds > 0 && !event.CommandCPUAvailable) {
+		return errors.New("work event command CPU must be non-negative and requires available evidence")
 	}
 	if math.IsNaN(event.CoordinatedWorkInventoryAgeSeconds) || math.IsInf(event.CoordinatedWorkInventoryAgeSeconds, 0) || event.CoordinatedWorkInventoryAgeSeconds < 0 {
 		return errors.New("work event coordinated inventory age cannot be negative or non-finite")
@@ -1176,6 +1200,7 @@ type WorkStats struct {
 	CalibrationCohorts              []WorkCalibrationCohort             `json:"calibration_cohorts"`
 	SwapDerate                      WorkSwapDerateCost                  `json:"swap_derate"`
 	WaitAttribution                 WorkWaitAttribution                 `json:"wait_attribution"`
+	LeaseCPU                        WorkLeaseCPU                        `json:"lease_cpu"`
 }
 
 func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkStats {
@@ -1617,6 +1642,7 @@ func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkS
 		ReviewSignals: signals, ServiceLevel: serviceLevel,
 		PressureConditionedServiceLevel: conditioned, CalibrationCohorts: cohorts,
 		SwapDerate: swapDerate, WaitAttribution: waitAttribution,
+		LeaseCPU: summarizeLeaseCPU(events),
 	}
 }
 

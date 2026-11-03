@@ -14,10 +14,12 @@ func TestQueueCPUEvidencePrefersRollingHostCPU(t *testing.T) {
 	snapshot := &Snapshot{
 		HostCPUAvailable: true, HostCPUPercent: 91,
 		HostCPURollingAvailable: true, HostCPURollingPercent: 22,
-		CoordinatedWork: CoordinatedWorkSnapshot{Available: true, CPUAvailable: true, CPUPercent: 12},
+		CoordinatedWork: CoordinatedWorkSnapshot{Available: true, CPUAvailable: true, CPUPercent: 12, InventoryAgeSeconds: 185},
 	}
 	got := queueCPUEvidenceFrom(Admission{Snapshot: snapshot})
-	if !got.hostAvailable || got.hostPercent != 22 || !got.workAvailable || got.workPercent != 12 {
+	// The leased-work figure carries its inventory age: the resident refreshes
+	// it once per sample interval, so it can predate the block by minutes.
+	if !got.hostAvailable || got.hostPercent != 22 || !got.workAvailable || got.workPercent != 12 || got.workInventoryAgeSeconds != 185 {
 		t.Fatalf("rolling evidence=%+v", got)
 	}
 	snapshot.HostCPURollingAvailable = false
