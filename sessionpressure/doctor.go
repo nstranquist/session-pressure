@@ -10,20 +10,21 @@ import (
 // `session-pressure doctor`. It composes resident evidence only by default
 // (no mandatory live sample or long self-test wait).
 type PressureDoctor struct {
-	SchemaVersion      int           `json:"schema_version"`
-	OK                 bool          `json:"ok"`
-	ProtectionMode     string        `json:"protection_mode"`
-	PolicyPersisted    bool          `json:"policy_persisted"`
-	EnforceAdmission   bool          `json:"enforce_admission"`
-	AutoShedCritical   bool          `json:"auto_shed_critical"`
-	Monitor            DoctorMonitor `json:"monitor"`
-	Host               DoctorHost    `json:"host"`
-	Work               DoctorWork    `json:"work"`
-	LaunchSoftPressure DoctorLaunch  `json:"launch_soft_pressure"`
-	CoverageStatus     string        `json:"coverage_status,omitempty"`
-	Fixes              []string      `json:"fixes,omitempty"`
-	Warnings           []string      `json:"warnings,omitempty"`
-	Health             GuardHealth   `json:"health"`
+	SchemaVersion      int                      `json:"schema_version"`
+	OK                 bool                     `json:"ok"`
+	ProtectionMode     string                   `json:"protection_mode"`
+	PolicyPersisted    bool                     `json:"policy_persisted"`
+	EnforceAdmission   bool                     `json:"enforce_admission"`
+	AutoShedCritical   bool                     `json:"auto_shed_critical"`
+	Monitor            DoctorMonitor            `json:"monitor"`
+	Host               DoctorHost               `json:"host"`
+	Work               DoctorWork               `json:"work"`
+	LaunchSoftPressure DoctorLaunch             `json:"launch_soft_pressure"`
+	CoverageStatus     string                   `json:"coverage_status,omitempty"`
+	SourceRevisions    *ArtifactSourceRevisions `json:"source_revisions,omitempty"`
+	Fixes              []string                 `json:"fixes,omitempty"`
+	Warnings           []string                 `json:"warnings,omitempty"`
+	Health             GuardHealth              `json:"health"`
 }
 
 type DoctorMonitor struct {
@@ -71,6 +72,8 @@ type PressureDoctorInput struct {
 	Coverage     CoverageReport
 	// Optional: if set, used instead of recomputing soft launch from Work.
 	SoftWouldBlock *bool
+	// Optional: executing-binary source revisions (artifact status probe).
+	SourceRevisions *ArtifactSourceRevisions
 }
 
 // BuildPressureDoctor composes doctor from already-loaded state (no sampling).
@@ -163,6 +166,18 @@ func BuildPressureDoctor(in PressureDoctorInput) PressureDoctor {
 		}
 	}
 
+	if revisions := in.SourceRevisions; revisions != nil {
+		copied := *revisions
+		doc.SourceRevisions = &copied
+		if revisions.Mismatch {
+			// A warning, not a failure: the resident still protects the host,
+			// but reports and policy commands may run older code than it.
+			doc.Warnings = append(doc.Warnings, fmt.Sprintf("session-pressure binaries disagree on source revision (cli=%s front_door=%s helper=%s)",
+				ShortRevision(revisions.CLI), ShortRevision(revisions.FrontDoor), ShortRevision(revisions.InstalledHelper)))
+			doc.Fixes = append(doc.Fixes, PromoteCommand())
+		}
+	}
+
 	// ok: monitor healthy and no pending recovery; observe-only is fine for ok.
 	doc.OK = health.MonitorHealthy && in.RecoveryErr == nil && !in.HasRecovery
 	return doc
@@ -243,6 +258,10 @@ func LoadPressureDoctorFromDir(ctx context.Context, dir string, repoRoot string)
 		ExpressGreen: green.Active,
 		RepoRoot:     repoRoot,
 		Coverage:     coverage,
+		SourceRevisions: func() *ArtifactSourceRevisions {
+			revisions := InspectArtifactSourceRevisions(dir)
+			return &revisions
+		}(),
 	}), nil
 }
 

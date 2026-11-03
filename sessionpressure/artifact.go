@@ -81,11 +81,34 @@ type ArtifactDrift struct {
 	CandidateSHA256 string `json:"candidate_sha256,omitempty"`
 	InstalledSHA256 string `json:"installed_sha256,omitempty"`
 	Detail          string `json:"detail,omitempty"`
+	// SourceRevisions catches a partial promotion that the sha comparison
+	// cannot: a current helper under a CLI or front door built earlier.
+	SourceRevisions ArtifactSourceRevisions `json:"source_revisions"`
 }
 
 // InspectArtifactDrift is report-only and never fails closed: an unreadable
 // candidate leaves Checked false rather than blocking artifact inspection.
 func InspectArtifactDrift(candidateBinary, dir string) ArtifactDrift {
+	drift := inspectArtifactSHA256Drift(candidateBinary, dir)
+	installedPath := ""
+	if installed, found, err := LoadInstalledArtifact(dir); err == nil && found {
+		installedPath = installed.Path
+	}
+	drift.SourceRevisions = inspectSourceRevisions(SourceRevision(), os.Getenv(FrontDoorRevisionEnv),
+		BinarySourceRevision(installedPath), BinarySourceRevision(candidateBinary))
+	return drift
+}
+
+// InspectArtifactSourceRevisions is the cheap revision-only probe for doctor.
+func InspectArtifactSourceRevisions(dir string) ArtifactSourceRevisions {
+	installedPath := ""
+	if installed, found, err := LoadInstalledArtifact(dir); err == nil && found {
+		installedPath = installed.Path
+	}
+	return inspectSourceRevisions(SourceRevision(), os.Getenv(FrontDoorRevisionEnv), BinarySourceRevision(installedPath), "")
+}
+
+func inspectArtifactSHA256Drift(candidateBinary, dir string) ArtifactDrift {
 	drift := ArtifactDrift{CandidatePath: candidateBinary}
 	installed, found, err := LoadInstalledArtifact(dir)
 	if err != nil {
@@ -106,7 +129,7 @@ func InspectArtifactDrift(candidateBinary, dir string) ArtifactDrift {
 	drift.Checked = true
 	drift.Drifted = digest != installed.SHA256
 	if drift.Drifted {
-		drift.Detail = "coordinated work runs the installed artifact; promote this build with `ndev session pressure monitor install`"
+		drift.Detail = "coordinated work runs the installed artifact; promote this build with `" + PromoteCommand() + "`"
 	}
 	return drift
 }

@@ -6,6 +6,18 @@
 
 ### Added
 
+- **Source-revision check across executing binaries.** Each binary records
+  the session-pressure revision it was built from: a link-time stamp
+  (`-X github.com/nstranquist/session-pressure/sessionpressure.sourceRevision=<sha>`),
+  or Go's VCS stamp for a standalone build. `artifact status` (JSON
+  `drift.source_revisions`) and `doctor` compare the CLI, the installed
+  resident helper, and a wrapper's front door
+  (`SESSION_PRESSURE_FRONT_DOOR_REVISION`). A mismatch is a doctor warning
+  with a fix, not a failure. A partial promotion could leave a CLI built
+  hours earlier serving reports and policy commands over a current helper,
+  and the sha-only drift check could not see it. A wrapper can name its full
+  promotion command in `SESSION_PRESSURE_PROMOTE_COMMAND` for these hints.
+
 - **Live swap-out pressure.** The resident reads cumulative kernel swap
   counters (`host_statistics64`, no subprocess) and reports
   `swap_in_mb_per_s` / `swap_out_mb_per_s` on every snapshot, compact status,

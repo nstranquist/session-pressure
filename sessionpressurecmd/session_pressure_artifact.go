@@ -41,7 +41,14 @@ func cmdSessionPressureArtifact(g *Flags, args []string) int {
 		text := fmt.Sprintf("artifact: active=%t revisions=%d prune=%d reclaim=%d bytes\n", found, len(report.Entries), report.PruneCount, report.ReclaimBytes)
 		if drift.Drifted {
 			text += "artifact DRIFT: a newer build is not promoted; coordinated work still runs the installed revision.\n" +
-				"  promote with: session-pressure monitor install\n"
+				"  promote with: " + sessionpressure.PromoteCommand() + "\n"
+		}
+		if revisions := drift.SourceRevisions; revisions.Mismatch {
+			text += fmt.Sprintf("artifact REVISION MISMATCH: cli=%s front_door=%s helper=%s\n  executing binaries were built from different session-pressure sources; promote all with: %s\n",
+				sessionpressure.ShortRevision(revisions.CLI), sessionpressure.ShortRevision(revisions.FrontDoor),
+				sessionpressure.ShortRevision(revisions.InstalledHelper), sessionpressure.PromoteCommand())
+		} else if revisions.Checked {
+			text += "artifact source revision: " + sessionpressure.ShortRevision(revisions.CLI) + " (cli, front door, and helper agree)\n"
 		}
 		return emitPressure(g, payload, text, 0)
 	case "prune":
