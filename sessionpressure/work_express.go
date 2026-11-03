@@ -1368,6 +1368,11 @@ func RunWorkCommandWithExpressReuse(coordinator *WorkCoordinator, options WorkRu
 	if coordinator == nil {
 		return 1, errors.New("work coordinator is required")
 	}
+	// A nested run executes inline under its parent lease; replaying a reuse
+	// receipt there would skip work the parent asked for.
+	if _, nested := nestedWorkParent(coordinator, os.Environ()); nested {
+		return RunWorkCommand(coordinator, options, admissionCheck, retryInterval, streams)
+	}
 	key, err := readOrCreateWorkReuseKey(coordinator.Dir)
 	if err != nil {
 		return 1, err
