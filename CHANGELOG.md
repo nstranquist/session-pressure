@@ -57,6 +57,15 @@
 
 ### Fixed
 
+- **`monitor install` waits for the new resident to report.** It returned as
+  soon as launchd had a PID, so a resident that crashed on start, or had not
+  sampled yet, still printed `installed`, and a following `artifact status`
+  read the helper revision as unknown. Install now waits up to 30 s, after it
+  releases the policy lock, for a report from that PID and the installed
+  artifact. The text output adds `resident reporting after <time> (source
+  <revision>)` or a warning; the JSON output adds `resident_report`. A slow
+  first report warns and does not fail the install.
+
 - **Leased-work CPU stays known during builds.** Leased-work CPU
   (`coordinated_work.cpu_percent`) was unknown whenever a leased process had
   started since the previous inventory. Compile, link, and test steps start all
