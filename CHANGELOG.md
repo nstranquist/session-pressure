@@ -92,6 +92,12 @@
 
 ### Fixed
 
+- **Revision checks survive `-trimpath` builds.** Go omits `-ldflags` from
+  build info when `-trimpath` is set (golang/go#52372), so the installed
+  helper's stamp became unreadable from the file. The resident now reports
+  its own revision as `guard_source_revision` in `latest.json`, and artifact
+  status uses that report when the file carries no stamp and the resident
+  runs the exact installed binary.
 - **`monitor install` finds the helper beside a symlinked CLI.** When a
   publisher installs the CLI as a stable symlink into a revision store
   (`bin/cli -> bin/.cli.revisions/current -> sha256-…`), the resolved path

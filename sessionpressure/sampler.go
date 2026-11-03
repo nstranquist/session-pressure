@@ -374,6 +374,7 @@ func (sampler *Sampler) Sample(ctx context.Context, policy Policy) (Snapshot, er
 		ProcessInventorySource:     inventorySource,
 		GuardPID:                   sampler.pid,
 		GuardBinarySHA256:          sampler.binarySHA256,
+		GuardSourceRevision:        SourceRevision(),
 		GuardRole:                  sampler.role,
 		GuardBudgetApplicable:      sampler.role == "resident",
 		Storage:                    storage,

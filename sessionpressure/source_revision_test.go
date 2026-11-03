@@ -1,12 +1,14 @@
 package sessionpressure
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStampedSourceRevisionParsesLinkerAssignments(t *testing.T) {
@@ -199,5 +201,42 @@ func TestAgreementSummaryNamesOnlyComparedBinaries(t *testing.T) {
 	}
 	if got := inspectSourceRevisions("a", "a", "a", "").AgreementSummary(); got != "cli, front door, helper agree" {
 		t.Fatalf("summary=%q", got)
+	}
+}
+
+// A -trimpath helper carries no readable stamp in its build info; the
+// resident's own report stands in only for the exact installed binary.
+func TestInstalledHelperRevisionFallsBackToMatchingResidentReport(t *testing.T) {
+	dir := t.TempDir()
+	digest := strings.Repeat("c", 64)
+	path := filepath.Join(dir, "artifacts", "sha256-"+digest, residentHelperName)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not a go binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(InstalledArtifact{SchemaVersion: artifactManifestSchemaVersion, SHA256: digest, Path: path, InstalledAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWrite(ArtifactManifestPath(dir), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := NewTelemetryStore(dir)
+	if got := installedHelperSourceRevision(dir); got != "" {
+		t.Fatalf("no report yet: %q", got)
+	}
+	if err := store.WriteLatest(Snapshot{GuardBinarySHA256: strings.Repeat("d", 64), GuardSourceRevision: "other"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := installedHelperSourceRevision(dir); got != "" {
+		t.Fatalf("a report from another binary was attributed to the installed helper: %q", got)
+	}
+	if err := store.WriteLatest(Snapshot{GuardBinarySHA256: digest, GuardSourceRevision: "resident-rev"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := installedHelperSourceRevision(dir); got != "resident-rev" {
+		t.Fatalf("matching resident report: %q", got)
 	}
 }

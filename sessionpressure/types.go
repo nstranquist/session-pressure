@@ -243,51 +243,56 @@ type Snapshot struct {
 	ProcessInventoryError      string                  `json:"process_inventory_error,omitempty"`
 	GuardPID                   int                     `json:"guard_pid"`
 	GuardBinarySHA256          string                  `json:"guard_binary_sha256,omitempty"`
-	GuardRSSMB                 float64                 `json:"guard_rss_mb"`
-	GuardPeakRSSMB             float64                 `json:"guard_peak_rss_mb,omitempty"`
-	GuardCPUPercent            float64                 `json:"guard_cpu_percent"`
-	GuardRole                  string                  `json:"guard_role"`
-	GuardBudgetApplicable      bool                    `json:"guard_budget_applicable"`
-	GuardBaselineProven        bool                    `json:"guard_baseline_proven"`
-	MonitorSamples             int                     `json:"monitor_samples,omitempty"`
-	NormalMonitorSamples       int                     `json:"normal_monitor_samples,omitempty"`
-	GuardRSSMaxMB              float64                 `json:"guard_rss_max_mb,omitempty"`
-	GuardCPUAvgPercent         float64                 `json:"guard_cpu_avg_percent,omitempty"`
-	SampleDurationMS           float64                 `json:"sample_duration_ms"`
-	SamplePhaseMS              map[string]float64      `json:"sample_phase_ms,omitempty"`
-	SamplePhaseAvgMS           map[string]float64      `json:"sample_phase_avg_ms,omitempty"`
-	SamplePhaseP95MS           map[string]float64      `json:"sample_phase_p95_ms,omitempty"`
-	SamplePhaseMaxMS           map[string]float64      `json:"sample_phase_max_ms,omitempty"`
-	SampleDurationAvgMS        float64                 `json:"sample_duration_avg_ms,omitempty"`
-	SampleDurationP95MS        float64                 `json:"sample_duration_p95_ms,omitempty"`
-	SampleDurationMaxMS        float64                 `json:"sample_duration_max_ms,omitempty"`
-	SampleCPUTimeMS            float64                 `json:"sample_cpu_time_ms"`
-	SampleCPUTimeAvgMS         float64                 `json:"sample_cpu_time_avg_ms,omitempty"`
-	SampleCPUTimeP95MS         float64                 `json:"sample_cpu_time_p95_ms,omitempty"`
-	SampleCPUTimeMaxMS         float64                 `json:"sample_cpu_time_max_ms,omitempty"`
-	ObservedIntervalSeconds    float64                 `json:"observed_interval_seconds,omitempty"`
-	GuardCPUDutyPercent        float64                 `json:"guard_cpu_duty_percent,omitempty"`
-	GuardIdleCPUDutyPercent    float64                 `json:"guard_idle_cpu_duty_percent,omitempty"`
-	TelemetryBytesToday        int64                   `json:"telemetry_bytes_today,omitempty"`
-	TelemetryProjectedBytesDay int64                   `json:"telemetry_projected_bytes_per_day,omitempty"`
-	GuardBudgetOK              bool                    `json:"guard_budget_ok"`
-	GuardBudgetReasons         []string                `json:"guard_budget_reasons,omitempty"`
-	TopHostConsumers           []HostConsumer          `json:"top_host_consumers"`
-	TopAgentTrees              []AgentTree             `json:"top_agent_trees"`
-	PolicySource               string                  `json:"policy_source,omitempty"`
-	ConsecutiveSamples         int                     `json:"consecutive_samples,omitempty"`
-	MemoryConsecutiveSamples   int                     `json:"memory_consecutive_samples,omitempty"`
-	ResourceCleanupError       string                  `json:"resource_cleanup_error,omitempty"`
-	GuardSampleErrors          int                     `json:"guard_sample_errors,omitempty"`
-	ResourceCleanupFailures    int                     `json:"resource_cleanup_failures,omitempty"`
-	ResourceCleanupStatus      string                  `json:"resource_cleanup_status,omitempty"`
-	ResourceCleanupExecutedAt  time.Time               `json:"resource_cleanup_control_executed_at,omitempty,omitzero"`
-	ResourceCleanupDurationMS  float64                 `json:"resource_cleanup_control_duration_ms,omitempty"`
-	ResourceCleanupMaxRSSMB    float64                 `json:"resource_cleanup_control_max_rss_mb,omitempty"`
-	ResidentStarts24h          int                     `json:"resident_starts_24h,omitempty"`
-	Storage                    StorageSnapshot         `json:"storage"`
-	DiskWrite                  *DiskWriteSummary       `json:"disk_write,omitempty"`
-	DiskWriteWriters           []DiskWriter            `json:"disk_write_writers,omitempty"`
+	// GuardSourceRevision is the session-pressure source revision linked into
+	// the sampling process. Builds with -trimpath omit -ldflags from build
+	// info (golang/go#52372), so the running process is the only reliable
+	// reporter of its own stamp.
+	GuardSourceRevision        string             `json:"guard_source_revision,omitempty"`
+	GuardRSSMB                 float64            `json:"guard_rss_mb"`
+	GuardPeakRSSMB             float64            `json:"guard_peak_rss_mb,omitempty"`
+	GuardCPUPercent            float64            `json:"guard_cpu_percent"`
+	GuardRole                  string             `json:"guard_role"`
+	GuardBudgetApplicable      bool               `json:"guard_budget_applicable"`
+	GuardBaselineProven        bool               `json:"guard_baseline_proven"`
+	MonitorSamples             int                `json:"monitor_samples,omitempty"`
+	NormalMonitorSamples       int                `json:"normal_monitor_samples,omitempty"`
+	GuardRSSMaxMB              float64            `json:"guard_rss_max_mb,omitempty"`
+	GuardCPUAvgPercent         float64            `json:"guard_cpu_avg_percent,omitempty"`
+	SampleDurationMS           float64            `json:"sample_duration_ms"`
+	SamplePhaseMS              map[string]float64 `json:"sample_phase_ms,omitempty"`
+	SamplePhaseAvgMS           map[string]float64 `json:"sample_phase_avg_ms,omitempty"`
+	SamplePhaseP95MS           map[string]float64 `json:"sample_phase_p95_ms,omitempty"`
+	SamplePhaseMaxMS           map[string]float64 `json:"sample_phase_max_ms,omitempty"`
+	SampleDurationAvgMS        float64            `json:"sample_duration_avg_ms,omitempty"`
+	SampleDurationP95MS        float64            `json:"sample_duration_p95_ms,omitempty"`
+	SampleDurationMaxMS        float64            `json:"sample_duration_max_ms,omitempty"`
+	SampleCPUTimeMS            float64            `json:"sample_cpu_time_ms"`
+	SampleCPUTimeAvgMS         float64            `json:"sample_cpu_time_avg_ms,omitempty"`
+	SampleCPUTimeP95MS         float64            `json:"sample_cpu_time_p95_ms,omitempty"`
+	SampleCPUTimeMaxMS         float64            `json:"sample_cpu_time_max_ms,omitempty"`
+	ObservedIntervalSeconds    float64            `json:"observed_interval_seconds,omitempty"`
+	GuardCPUDutyPercent        float64            `json:"guard_cpu_duty_percent,omitempty"`
+	GuardIdleCPUDutyPercent    float64            `json:"guard_idle_cpu_duty_percent,omitempty"`
+	TelemetryBytesToday        int64              `json:"telemetry_bytes_today,omitempty"`
+	TelemetryProjectedBytesDay int64              `json:"telemetry_projected_bytes_per_day,omitempty"`
+	GuardBudgetOK              bool               `json:"guard_budget_ok"`
+	GuardBudgetReasons         []string           `json:"guard_budget_reasons,omitempty"`
+	TopHostConsumers           []HostConsumer     `json:"top_host_consumers"`
+	TopAgentTrees              []AgentTree        `json:"top_agent_trees"`
+	PolicySource               string             `json:"policy_source,omitempty"`
+	ConsecutiveSamples         int                `json:"consecutive_samples,omitempty"`
+	MemoryConsecutiveSamples   int                `json:"memory_consecutive_samples,omitempty"`
+	ResourceCleanupError       string             `json:"resource_cleanup_error,omitempty"`
+	GuardSampleErrors          int                `json:"guard_sample_errors,omitempty"`
+	ResourceCleanupFailures    int                `json:"resource_cleanup_failures,omitempty"`
+	ResourceCleanupStatus      string             `json:"resource_cleanup_status,omitempty"`
+	ResourceCleanupExecutedAt  time.Time          `json:"resource_cleanup_control_executed_at,omitempty,omitzero"`
+	ResourceCleanupDurationMS  float64            `json:"resource_cleanup_control_duration_ms,omitempty"`
+	ResourceCleanupMaxRSSMB    float64            `json:"resource_cleanup_control_max_rss_mb,omitempty"`
+	ResidentStarts24h          int                `json:"resident_starts_24h,omitempty"`
+	Storage                    StorageSnapshot    `json:"storage"`
+	DiskWrite                  *DiskWriteSummary  `json:"disk_write,omitempty"`
+	DiskWriteWriters           []DiskWriter       `json:"disk_write_writers,omitempty"`
 
 	// Internal cumulative counters let the resident account for CPU used by
 	// persistence, pruning, and action bookkeeping between samples. They are
