@@ -41,11 +41,14 @@ func cmdSessionPressurePolicyProfile(g *Flags, runtime pressureRuntime, args []s
 		name := args[0]
 		args = args[1:]
 		withAutoShed := false
+		multiAgent := false
 		dryRun := false
 		for _, arg := range args {
 			switch arg {
 			case "--with-auto-shed":
 				withAutoShed = true
+			case "--multi-agent":
+				multiAgent = true
 			case "--dry-run":
 				dryRun = true
 			default:
@@ -55,7 +58,8 @@ func cmdSessionPressurePolicyProfile(g *Flags, runtime pressureRuntime, args []s
 		if withAutoShed && name != sessionpressure.PolicyProfileBalanced && name != sessionpressure.PolicyProfileThroughput && name != sessionpressure.PolicyProfileInteractive && name != sessionpressure.PolicyProfileDailyDriverEnforce {
 			return sessionPressureError("--with-auto-shed is only valid for balanced, throughput, or interactive", 2)
 		}
-		applied, err := sessionpressure.ApplyPolicyProfile(runtime.policy, name, sessionpressure.ApplyProfileOptions{WithAutoShed: withAutoShed})
+		options := sessionpressure.ApplyProfileOptions{WithAutoShed: withAutoShed, MultiAgent: multiAgent}
+		applied, err := sessionpressure.ApplyPolicyProfile(runtime.policy, name, options)
 		if err != nil {
 			return sessionPressureError(err.Error(), 2)
 		}
@@ -73,7 +77,7 @@ func cmdSessionPressurePolicyProfile(g *Flags, runtime pressureRuntime, args []s
 		defer mutation.Close()
 		runtime = mutation.Runtime
 		// Re-apply on freshly locked runtime so concurrent edits do not win.
-		applied, err = sessionpressure.ApplyPolicyProfile(runtime.policy, name, sessionpressure.ApplyProfileOptions{WithAutoShed: withAutoShed})
+		applied, err = sessionpressure.ApplyPolicyProfile(runtime.policy, name, options)
 		if err != nil {
 			return sessionPressureError(err.Error(), 2)
 		}

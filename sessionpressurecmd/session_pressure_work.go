@@ -564,8 +564,9 @@ func cmdSessionPressureWorkReport(g *Flags, dir string, policy sessionpressure.P
 		calibration.ReuseHits, calibration.CacheHits, calibration.CacheMisses, calibration.WrapperInterruptOperations, calibration.ThresholdRetuneHint,
 	)
 	if calibration.SuggestedPolicyProfile != "" {
+		applyArgs := strings.TrimSpace(calibration.SuggestedPolicyProfile + " " + strings.Join(calibration.SuggestedPolicyProfileFlags, " "))
 		text += fmt.Sprintf("  suggested_profile=%s reason=%s  # advisory only; try: session-pressure policy profile apply %s --dry-run\n",
-			calibration.SuggestedPolicyProfile, calibration.SuggestedPolicyProfileReason, calibration.SuggestedPolicyProfile)
+			calibration.SuggestedPolicyProfile, calibration.SuggestedPolicyProfileReason, applyArgs)
 	}
 	text += workEventDiagnosticsText(diagnostics)
 	return emitPressure(g, payload, text, 0)

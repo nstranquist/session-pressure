@@ -46,6 +46,7 @@ Subcommands:
   work run --class C [--exclusive] [--wait D] -- CMD  Hold shared host capacity while CMD runs
   policy show                      Show the effective policy
   policy profile show|apply NAME   Named balanced / throughput / interactive / observe work styles
+                                   apply flags: --multi-agent (earlier soft-launch warnings), --with-auto-shed, --dry-run
   policy init [--force]            Write the tuned observe-only default policy
   policy migrate                   Persist filled default work weights (express/benchmark) without changing enforcement
   policy enable [--no-auto-shed]   Block launches at red; gracefully shed a quiescent tree at sustained critical

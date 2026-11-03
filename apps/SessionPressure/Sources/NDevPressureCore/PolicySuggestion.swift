@@ -76,6 +76,7 @@ public struct PolicySuggestion: Equatable, Sendable {
 public enum PolicySuggestionFactory {
     public static let multiAgentSoft = "multi-agent-soft"
     public static let balanced = "balanced"
+    public static let multiAgentFlag = "--multi-agent"
 
     /// Calibration hint when it is not already live; otherwise a return-to-balanced
     /// card whenever the host is off the daily-driver work style.
@@ -92,15 +93,19 @@ public enum PolicySuggestionFactory {
               !profile.isEmpty
         else { return nil }
 
-        if matchesApplied(profile: profile, policy: policy) { return nil }
+        let flags = calibration.suggestedPolicyProfileFlags ?? []
+        if matchesApplied(profile: profile, flags: flags, policy: policy) { return nil }
 
         let reason = calibration.suggestedPolicyProfileReason ?? ""
-        let title = displayName(profile)
+        let multiAgent = flags.contains(multiAgentFlag)
+        let title = multiAgent ? "\(displayName(profile)) + multi-agent warnings" : displayName(profile)
         let liveTitle = currentTitle(policy)
         let liveFlags = currentFlags(policy)
         let explanation = explanationText(profile: profile, reason: reason, calibration: calibration)
-        let tradeoff = tradeoffText(profile: profile, policy: policy)
-        let apply = "ndev session pressure policy profile apply \(profile)"
+        let tradeoff = multiAgent
+            ? "Keeps \(displayName(profile).lowercased()) protection exactly as it is and only warns new agent launches earlier when the work queue piles up."
+            : tradeoffText(profile: profile, policy: policy)
+        let apply = (["ndev session pressure policy profile apply", profile] + flags).joined(separator: " ")
         let dryRun = apply + " --dry-run"
         let paste = agentPaste(
             profile: profile,
@@ -182,10 +187,12 @@ public enum PolicySuggestionFactory {
         return name.isEmpty || name.caseInsensitiveCompare(balanced) == .orderedSame
     }
 
-    public static func matchesApplied(profile: String, policy: PressurePolicy?) -> Bool {
+    public static func matchesApplied(profile: String, flags: [String] = [], policy: PressurePolicy?) -> Bool {
         guard let policy else { return false }
         if policy.profile?.caseInsensitiveCompare(profile) == .orderedSame {
-            return true
+            // Same profile is applied only once every suggested flag is live.
+            guard flags.contains(multiAgentFlag) else { return true }
+            return policy.launchAdmission?.mode == "soft" && policy.launchAdmission?.oldestWaitBlockSeconds == 60
         }
         guard profile == multiAgentSoft else { return false }
         return !policy.enforceAdmission

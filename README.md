@@ -86,7 +86,7 @@ Default state directory: `~/.nicos-dev/session-pressure`.
 | `NDEV_PRESSURE_BIN` | Compatibility alias for the same path |
 | `SESSION_PRESSURE_API_BIN` | Exact `session-pressure-api` path for `session-pressure api` |
 
-Policy lives at `$SESSION_PRESSURE_HOME/policy.json`. `policy init` writes observe-only defaults. `policy enable` is the first command that can block launches. `policy profile apply` accepts `balanced`, `throughput`, `interactive`, or `observe`.
+Policy lives at `$SESSION_PRESSURE_HOME/policy.json`. `policy init` writes observe-only defaults. `policy enable` is the first command that can block launches. `policy profile apply` accepts `balanced`, `throughput`, `interactive`, or `observe`. Add `--multi-agent` to any profile for earlier soft-launch warnings when many agents share the host. Enforcement stays as the profile sets it.
 
 Do not copy a live `~/.nicos-dev/session-pressure` tree into issues, fixtures, or pull requests.
 

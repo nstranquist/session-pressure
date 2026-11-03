@@ -25,6 +25,9 @@ type WorkCalibrationReport struct {
 	// SuggestedPolicyProfile is advisory only (M2); never auto-applied.
 	SuggestedPolicyProfile       string `json:"suggested_policy_profile,omitempty"`
 	SuggestedPolicyProfileReason string `json:"suggested_policy_profile_reason,omitempty"`
+	// SuggestedPolicyProfileFlags are extra `policy profile apply` flags, such
+	// as --multi-agent for an enforcing host that keeps its profile.
+	SuggestedPolicyProfileFlags []string `json:"suggested_policy_profile_flags,omitempty"`
 	// InterruptProjection is the sparse counts-only forensics envelope (M2).
 	InterruptProjection *WrapperInterruptProjection `json:"interrupt_projection,omitempty"`
 	ByClass             []WorkClassStats            `json:"by_class"`
@@ -137,11 +140,22 @@ func BuildWorkCalibrationReport(events []WorkEvent, since, generatedAt time.Time
 // SuppressIfAlreadyApplied clears the advisory suggestion when the live policy
 // already has multi-agent-soft effects. Suggestion remains read-only.
 func (r *WorkCalibrationReport) SuppressIfAlreadyApplied(policy Policy) {
-	if r == nil || !MatchesMultiAgentSoft(policy) {
+	if r == nil || r.SuggestedPolicyProfile == "" {
 		return
 	}
-	r.SuggestedPolicyProfile = ""
-	r.SuggestedPolicyProfileReason = ""
+	if MatchesMultiAgentSoft(policy) || HasMultiAgentLaunchAdmission(policy) {
+		r.SuggestedPolicyProfile = ""
+		r.SuggestedPolicyProfileReason = ""
+		r.SuggestedPolicyProfileFlags = nil
+		return
+	}
+	if policy.Enabled && policy.EnforceAdmission && policy.Profile != "" {
+		// Never advise an enforcing host to drop to observe-only: that would
+		// trade away the CPU latch, memory floors, and swap-thrash derate for
+		// earlier warnings. Keep its profile and add only the warnings.
+		r.SuggestedPolicyProfile = policy.Profile
+		r.SuggestedPolicyProfileFlags = []string{"--multi-agent"}
+	}
 }
 
 func share(part, total int) float64 {

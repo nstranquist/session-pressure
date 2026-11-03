@@ -1527,6 +1527,8 @@ public struct WorkCalibration: Codable, Sendable, Hashable {
     public var wrapperInterruptOperations: Int?
     public var suggestedPolicyProfile: String?
     public var suggestedPolicyProfileReason: String?
+    /// Extra apply flags, e.g. `--multi-agent` for an enforcing host that keeps its profile.
+    public var suggestedPolicyProfileFlags: [String]?
     public var expressTestShare: Double?
     public var expressBuildShare: Double?
     public var thresholdRetuneHint: String?
@@ -1539,6 +1541,7 @@ public struct WorkCalibration: Codable, Sendable, Hashable {
         case wrapperInterruptOperations = "wrapper_interrupt_operations"
         case suggestedPolicyProfile = "suggested_policy_profile"
         case suggestedPolicyProfileReason = "suggested_policy_profile_reason"
+        case suggestedPolicyProfileFlags = "suggested_policy_profile_flags"
         case expressTestShare = "express_test_share"
         case expressBuildShare = "express_build_share"
         case thresholdRetuneHint = "threshold_retune_hint"
@@ -1552,6 +1555,7 @@ public struct WorkCalibration: Codable, Sendable, Hashable {
         wrapperInterruptOperations: Int? = nil,
         suggestedPolicyProfile: String? = nil,
         suggestedPolicyProfileReason: String? = nil,
+        suggestedPolicyProfileFlags: [String]? = nil,
         expressTestShare: Double? = nil,
         expressBuildShare: Double? = nil,
         thresholdRetuneHint: String? = nil,
@@ -1563,6 +1567,7 @@ public struct WorkCalibration: Codable, Sendable, Hashable {
         self.wrapperInterruptOperations = wrapperInterruptOperations
         self.suggestedPolicyProfile = suggestedPolicyProfile
         self.suggestedPolicyProfileReason = suggestedPolicyProfileReason
+        self.suggestedPolicyProfileFlags = suggestedPolicyProfileFlags
         self.expressTestShare = expressTestShare
         self.expressBuildShare = expressBuildShare
         self.thresholdRetuneHint = thresholdRetuneHint
@@ -1577,6 +1582,7 @@ public struct WorkCalibration: Codable, Sendable, Hashable {
         wrapperInterruptOperations = try c.decodeIfPresent(Int.self, forKey: .wrapperInterruptOperations) ?? 0
         suggestedPolicyProfile = try c.decodeIfPresent(String.self, forKey: .suggestedPolicyProfile)
         suggestedPolicyProfileReason = try c.decodeIfPresent(String.self, forKey: .suggestedPolicyProfileReason)
+        suggestedPolicyProfileFlags = try c.decodeIfPresent([String].self, forKey: .suggestedPolicyProfileFlags)
         expressTestShare = try c.decodeIfPresent(Double.self, forKey: .expressTestShare)
         expressBuildShare = try c.decodeIfPresent(Double.self, forKey: .expressBuildShare)
         thresholdRetuneHint = try c.decodeIfPresent(String.self, forKey: .thresholdRetuneHint)

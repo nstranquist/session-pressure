@@ -64,8 +64,20 @@
   blocker, queue position, and pressure. Used capacity and running-duration
   reasons no longer defeat deduplication, and an unchanged wait repeats at
   30 s, doubling to a 2 min cap. Any change still prints at once.
+- **`policy profile apply --multi-agent`.** Any profile can take the earlier
+  multi-agent soft-launch warnings. Before, the only route to them was the
+  observe-only `multi-agent-soft` profile, so many-agent hosts had to choose
+  between protection and early warnings.
 
 ### Fixed
+
+- **The work report no longer advises an enforcing host to drop its
+  protection.** On queue pressure, an enforcing host was told to apply
+  `multi-agent-soft`, which turns off launch blocking, the CPU latch, memory
+  floors, and the swap-thrash derate. The suggestion now keeps the live
+  profile and adds `--multi-agent` (JSON `suggested_policy_profile_flags`).
+  It goes away when those warnings are already live. Observe-only hosts get
+  the old suggestion. The desktop app shows the additive command.
 
 - **Per-process CPU on Apple Silicon.** libproc rusage CPU totals are mach
   absolute-time ticks, not nanoseconds. The native sampler now converts them
