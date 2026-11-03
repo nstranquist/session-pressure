@@ -14,7 +14,8 @@ type StorageProviderContract struct {
 }
 
 // StorageProviderContracts returns the closed provider list in inventory
-// order. Operator providers are in safe-first order.
+// order. Inventory order is not apply priority: go-build-cache appears early
+// but is the last operator choice.
 func StorageProviderContracts() []StorageProviderContract {
 	return []StorageProviderContract{
 		{ID: "browser-dead-profiles", Classification: string(storageProviderAutoSafe)},
