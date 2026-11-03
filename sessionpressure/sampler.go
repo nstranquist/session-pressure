@@ -682,7 +682,7 @@ func (sampler *Sampler) processInventory(ctx context.Context, policy Policy, for
 		}
 		capturedAt := sampler.now().UTC()
 		if hasCumulativeCPUEvidence(previous) {
-			annotateProcessCPUPercent(processes, previous, capturedAt.Sub(previousAt))
+			annotateProcessCPUPercent(processes, previous, previousAt, capturedAt)
 		} else if hasCumulativeCPUEvidence(processes) {
 			// Native rusage exposes cumulative CPU time. One bounded first-inventory
 			// warm-up establishes truthful activity for operator snapshots and the
@@ -699,7 +699,7 @@ func (sampler *Sampler) processInventory(ctx context.Context, policy Policy, for
 			case <-timer.C:
 				second := refreshNativeProcessCPUTotals(ctx, processes)
 				secondAt := sampler.now().UTC()
-				annotateProcessCPUPercent(second, processes, secondAt.Sub(capturedAt))
+				annotateProcessCPUPercent(second, processes, capturedAt, secondAt)
 				processes = second
 			}
 		}
@@ -725,13 +725,13 @@ func (sampler *Sampler) scheduleResidentInventoryRefresh(previous []Process, pre
 		capturedAt := sampler.now().UTC()
 		if err == nil {
 			if hasCumulativeCPUEvidence(previous) {
-				annotateProcessCPUPercent(processes, previous, capturedAt.Sub(previousAt))
+				annotateProcessCPUPercent(processes, previous, previousAt, capturedAt)
 			} else if hasCumulativeCPUEvidence(processes) {
 				// A resident refresh normally has a prior inventory. Keep the same
 				// first-inventory truthfulness if a test or recovery path races it.
 				second := refreshNativeProcessCPUTotals(ctx, processes)
 				secondAt := sampler.now().UTC()
-				annotateProcessCPUPercent(second, processes, secondAt.Sub(capturedAt))
+				annotateProcessCPUPercent(second, processes, capturedAt, secondAt)
 				processes = second
 			}
 		}
@@ -833,10 +833,14 @@ func attributeCoordinatedWork(processes []Process, leases []WorkLeaseStatus, cap
 		rssMB := float64(process.RSSKB) / 1024
 		result.RSSSumMB += rssMB
 		usage.RSSSumMB += rssMB
-		if validCPUEvidence(process.CPUAvailable, process.CPUPercent) {
+		switch {
+		case validCPUEvidence(process.CPUAvailable, process.CPUPercent):
 			rawCPUPercent += process.CPUPercent
 			rawClassCPU[class] += process.CPUPercent
-		} else {
+		case validCPUEvidence(process.NewProcessCPUValid, process.NewProcessCPUPercent):
+			rawCPUPercent += process.NewProcessCPUPercent
+			rawClassCPU[class] += process.NewProcessCPUPercent
+		default:
 			result.CPUAvailable = false
 			usage.CPUAvailable = false
 		}
@@ -877,10 +881,14 @@ func hasCumulativeCPUEvidence(processes []Process) bool {
 	return false
 }
 
-func annotateProcessCPUPercent(current, previous []Process, elapsed time.Duration) {
+// annotateProcessCPUPercent derives each process's CPU share of the interval
+// from previousAt (the previous inventory's capture) to capturedAt.
+func annotateProcessCPUPercent(current, previous []Process, previousAt, capturedAt time.Time) {
+	elapsed := capturedAt.Sub(previousAt)
 	if elapsed <= 0 {
 		return
 	}
+	previousNS, capturedNS := previousAt.UnixNano(), capturedAt.UnixNano()
 	byPID := make(map[int]Process, len(previous))
 	for _, process := range previous {
 		if process.PID > 0 && process.CPUTotalValid {
@@ -892,6 +900,12 @@ func annotateProcessCPUPercent(current, previous []Process, elapsed time.Duratio
 		before, ok := byPID[process.PID]
 		if !ok || !process.CPUTotalValid || process.StartedAtNS == 0 || process.StartedAtNS != before.StartedAtNS || process.CPUTotalNS < before.CPUTotalNS {
 			process.CPUAvailable = false
+			// The previous inventory was read before previousAt, so a process
+			// that started later cannot be in it: a reused PID is a new process.
+			if process.CPUTotalValid && process.StartedAtNS > previousNS && process.StartedAtNS <= capturedNS {
+				process.NewProcessCPUPercent = float64(process.CPUTotalNS) * 100 / float64(elapsed)
+				process.NewProcessCPUValid = true
+			}
 			continue
 		}
 		process.CPUPercent = float64(process.CPUTotalNS-before.CPUTotalNS) * 100 / float64(elapsed)

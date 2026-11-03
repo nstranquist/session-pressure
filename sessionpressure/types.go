@@ -107,6 +107,15 @@ type Process struct {
 	StartedAtNS    int64  `json:"-"`
 	DiskWriteBytes uint64 `json:"-"`
 	DiskWriteValid bool   `json:"-"`
+	// NewProcessCPU* is set for a process that started after the previous
+	// inventory. All of its CPU time fell inside the interval, so its delta
+	// from zero is exact. It stays apart from CPUPercent and CPUAvailable:
+	// idle and relief selection read a new process as activity with unknown
+	// CPU, which is the safe reading for them. Leased-work attribution uses it,
+	// because build steps (compile, link, test binaries) start between
+	// inventories and would otherwise hide leased CPU under every build.
+	NewProcessCPUPercent float64 `json:"-"`
+	NewProcessCPUValid   bool    `json:"-"`
 }
 
 // AgentTree is one top-level Claude, Codex, Grok, or Kimi process plus descendants.
