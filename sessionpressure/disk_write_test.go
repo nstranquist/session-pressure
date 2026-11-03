@@ -111,6 +111,62 @@ func TestDiskWriteGapAndDeviceChangeRebaseWithoutRateSpike(t *testing.T) {
 	}
 }
 
+func TestDiskWriteAbsoluteBurstDetectsDuringLearningAndRecovers(t *testing.T) {
+	policy := defaultDiskWritePolicy()
+	policy.NotificationsEnabled = true
+	observer := NewDiskWriteObserver(t.TempDir(), policy)
+	observer.store = nil
+	var written uint64
+	observer.deviceSource = func(context.Context) (diskDeviceCounter, error) {
+		return diskDeviceCounter{BytesWritten: written, DeviceCount: 1, Identity: "disk0", Source: "test"}, nil
+	}
+	observer.processSource = func(context.Context) (diskProcessSnapshot, error) { return diskProcessSnapshot{}, nil }
+	observer.swapSource = func(context.Context) (swapIOCounter, error) { return swapIOCounter{}, nil }
+	start := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	observer.Sample(context.Background(), start)
+	written += diskWriteBurstBytes
+	report, transition, alert := observer.Sample(context.Background(), start.Add(15*time.Second))
+	if report.Summary.State != DiskWriteStateHigh || !report.Summary.BurstActive || report.Summary.BurstWindowBytes != diskWriteBurstBytes || alert == nil || alert.BurstBytes != diskWriteBurstBytes || transition == nil || transition.BurstBytes != diskWriteBurstBytes {
+		t.Fatalf("burst not reported during learning: report=%+v transition=%+v alert=%+v", report.Summary, transition, alert)
+	}
+	if report.Summary.BaselineSamples != 0 {
+		t.Fatal("burst trained the quiet baseline")
+	}
+	for i := 2; i <= 5; i++ {
+		report, _, alert = observer.Sample(context.Background(), start.Add(time.Duration(i)*15*time.Second))
+		if alert != nil {
+			t.Fatal("duplicate burst notification")
+		}
+	}
+	if report.Summary.BurstActive || report.Summary.State != DiskWriteStateLearning || observer.incidentOpen {
+		t.Fatalf("burst did not recover while learning: %+v", report.Summary)
+	}
+	written += diskWriteBurstBytes
+	_, _, alert = observer.Sample(context.Background(), start.Add(90*time.Second))
+	if alert == nil {
+		t.Fatal("a later burst did not open a new incident")
+	}
+}
+
+func TestDiskWriteAbsoluteBurstIgnoresUnscoredGaps(t *testing.T) {
+	policy := defaultDiskWritePolicy()
+	policy.NotificationsEnabled = true
+	observer := NewDiskWriteObserver(t.TempDir(), policy)
+	observer.store = nil
+	var written uint64
+	observer.deviceSource = func(context.Context) (diskDeviceCounter, error) {
+		return diskDeviceCounter{BytesWritten: written, DeviceCount: 1, Identity: "disk0", Source: "test"}, nil
+	}
+	observer.processSource = func(context.Context) (diskProcessSnapshot, error) { return diskProcessSnapshot{}, nil }
+	start := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	observer.Sample(context.Background(), start)
+	written = 4 * diskWriteBurstBytes
+	report, _, alert := observer.Sample(context.Background(), start.Add(2*time.Minute))
+	if report.Summary.BurstActive || alert != nil || report.Summary.UnscoredGapBytes != written {
+		t.Fatalf("gap was misreported as burst: %+v alert=%+v", report.Summary, alert)
+	}
+}
+
 func TestDiskWriteUnavailableSourcesFailClosed(t *testing.T) {
 	observer := NewDiskWriteObserver(t.TempDir(), defaultDiskWritePolicy())
 	observer.store = nil

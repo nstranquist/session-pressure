@@ -52,6 +52,21 @@ func TestNotifyRecoveryHintQueuesSafeActionableToast(t *testing.T) {
 	}
 }
 
+func TestNotifyDiskWriteBurstUsesAbsoluteEvidence(t *testing.T) {
+	inbox := filepath.Join(t.TempDir(), "notifications", "inbox.jsonl")
+	t.Setenv("NDEV_TOAST_INBOX", inbox)
+	if err := notifyDiskWriteAlert(sessionpressure.DiskWriteAlert{BurstBytes: 2 << 30}); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(inbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "2.0 GiB measured") || strings.Contains(string(body), "learned baseline") {
+		t.Fatalf("burst toast uses wrong evidence: %s", body)
+	}
+}
+
 func TestCommandResourceCleanerDoesNotSpawnOutsidePersistedEnforcementTrigger(t *testing.T) {
 	dir := t.TempDir()
 	policy := sessionpressure.DefaultPolicy(16 * 1024)

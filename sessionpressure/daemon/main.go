@@ -357,6 +357,9 @@ func notifyRecoveryHint(hint sessionpressure.RecoveryHint) error {
 
 func notifyDiskWriteAlert(alert sessionpressure.DiskWriteAlert) error {
 	body := fmt.Sprintf("Sustained internal SSD writes are %.1fx the learned baseline over 15 minutes.", alert.Ratio)
+	if alert.BurstBytes > 0 {
+		body = fmt.Sprintf("Internal SSD writes reached 1 GiB in one minute (%.1f GiB measured). Open Disk Writes to investigate.", float64(alert.BurstBytes)/float64(uint64(1)<<30))
+	}
 	if alert.TopWriter != "" {
 		body += " Likely contributor: " + alert.TopWriter + "."
 	}
