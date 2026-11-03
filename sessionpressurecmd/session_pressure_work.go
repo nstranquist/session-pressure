@@ -537,8 +537,26 @@ func cmdSessionPressureWorkStats(g *Flags, dir string, policy sessionpressure.Po
 		fmt.Printf("  %-8s operations=%d completed=%d reused=%d failed=%d cancelled=%d expired=%d wait_p95=%s runtime_p95=%s\n", class.Class, class.Operations, class.Completed, class.Reused, class.Failed, class.Cancelled, class.Expired, time.Duration(class.Wait.P95MS)*time.Millisecond, time.Duration(class.Runtime.P95MS)*time.Millisecond)
 	}
 	fmt.Printf("calibration express_test_share=%.2f express_build_share=%.2f reuse_hits=%d wrapper_interrupts=%d retune=%s\n", calibration.ExpressTestShare, calibration.ExpressBuildShare, calibration.ReuseHits, calibration.WrapperInterruptOperations, calibration.ThresholdRetuneHint)
+	printWaitAttribution(stats.WaitAttribution)
 	printSwapDerateCost(stats.SwapDerate)
 	return 0
+}
+
+func printWaitAttribution(attribution sessionpressure.WorkWaitAttribution) {
+	line := fmt.Sprintf("wait_attribution total=%s operations=%d dominant=%s swap_share=%.0f%%",
+		(time.Duration(attribution.TotalMS) * time.Millisecond).Round(time.Second), attribution.Operations, attribution.Dominant, attribution.SwapShare*100)
+	for index, cause := range attribution.ByCause {
+		if index == 4 {
+			break
+		}
+		line += fmt.Sprintf(" %s=%s(%.0f%%)", cause.Cause, (time.Duration(cause.WaitMS) * time.Millisecond).Round(time.Second), cause.Share*100)
+	}
+	fmt.Println(line)
+	for _, burst := range attribution.LongWaitBursts {
+		fmt.Printf("  long_wait_burst %s..%s operations=%d max_wait=%s dominant=%s\n",
+			burst.Start.Local().Format("01-02 15:04"), burst.End.Local().Format("15:04"), burst.Operations,
+			(time.Duration(burst.MaxWaitMS) * time.Millisecond).Round(time.Second), burst.Dominant)
+	}
 }
 
 // attachSwapThrashEpisodes adds resident latch history to the derate cost.
@@ -565,6 +583,9 @@ func printSwapDerateCost(cost sessionpressure.WorkSwapDerateCost) {
 	fmt.Println(line)
 	if cost.Advice != "" {
 		fmt.Println("  advice:", cost.Advice)
+	}
+	if cost.Note != "" {
+		fmt.Println("  note:", cost.Note)
 	}
 }
 

@@ -47,6 +47,11 @@ type WorkSwapDerateCost struct {
 	BudgetMaxWaitMS     int64               `json:"budget_max_wait_ms"`
 	Episodes            *SwapThrashEpisodes `json:"episodes,omitempty"`
 	Advice              string              `json:"advice,omitempty"`
+	// AllWaitTotalMS and ShareOfAllWait put the derate beside every wait in
+	// the window. Note says so when long waits had another cause.
+	AllWaitTotalMS int64   `json:"all_wait_total_ms"`
+	ShareOfAllWait float64 `json:"share_of_all_wait"`
+	Note           string  `json:"note,omitempty"`
 }
 
 // SwapThrashEpisodes summarizes resident latch history in the window.

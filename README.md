@@ -100,7 +100,9 @@ and the derate stops holding work until the latch releases. `doctor` then
 names the largest non-agent memory users; close them to end the storm.
 
 Measure the cost with `session-pressure --json work stats --since 72h` and read
-`work_stats.swap_derate`. If `verdict` is `over_budget`, loosen in
+`work_stats.swap_derate`, not total wait. Most wait is usually queue capacity:
+`work_stats.wait_attribution` splits all wait by cause, and `swap_share` is the
+derate's part. If `swap_derate.verdict` is `over_budget`, loosen in
 `policy.json` `work_limits`:
 
 | Change | Effect |

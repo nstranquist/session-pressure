@@ -1175,6 +1175,7 @@ type WorkStats struct {
 	PressureConditionedServiceLevel WorkPressureConditionedServiceLevel `json:"pressure_conditioned_service_level"`
 	CalibrationCohorts              []WorkCalibrationCohort             `json:"calibration_cohorts"`
 	SwapDerate                      WorkSwapDerateCost                  `json:"swap_derate"`
+	WaitAttribution                 WorkWaitAttribution                 `json:"wait_attribution"`
 }
 
 func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkStats {
@@ -1606,13 +1607,16 @@ func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkS
 		}
 		return left.SchedulingPolicy < right.SchedulingPolicy
 	})
+	swapDerate := summarizeSwapDerate(events, since, generatedAt)
+	waitAttribution := summarizeWaitAttribution(events)
+	relateSwapDerateToAllWait(&swapDerate, waitAttribution)
 	return WorkStats{
 		SchemaVersion: WorkEventSchemaVersion,
 		Since:         since.UTC(), GeneratedAt: generatedAt.UTC(), EventCount: rawEventCount,
 		OperationCount: len(operations), OpenOperations: open, ByClass: resultClasses,
 		ReviewSignals: signals, ServiceLevel: serviceLevel,
 		PressureConditionedServiceLevel: conditioned, CalibrationCohorts: cohorts,
-		SwapDerate: summarizeSwapDerate(events, since, generatedAt),
+		SwapDerate: swapDerate, WaitAttribution: waitAttribution,
 	}
 }
 
