@@ -88,6 +88,28 @@ Default state directory: `~/.nicos-dev/session-pressure`.
 
 Policy lives at `$SESSION_PRESSURE_HOME/policy.json`. `policy init` writes observe-only defaults. `policy enable` is the first command that can block launches. `policy profile apply` accepts `balanced`, `throughput`, `interactive`, or `observe`. Add `--multi-agent` to any profile for earlier soft-launch warnings when many agents share the host. Enforcement stays as the profile sets it.
 
+### Swap-thrash derate
+
+While the host swaps hard (the resident latch, `swap_thrash_latched`), enforcing
+profiles admit new heavy work only up to `work_limits.swap_thrash_capacity`
+(default: one full build). A lone operation always runs. The resident
+attributes each episode (`swap_thrash_cause`). If leased work stays under
+`swap_thrash_agent_share_percent` of RAM (default 25) for
+`swap_thrash_external_release_seconds` (default 300), the storm is `external`
+and the derate stops holding work until the latch releases. `doctor` then
+names the largest non-agent memory users; close them to end the storm.
+
+Measure the cost with `session-pressure --json work stats --since 72h` and read
+`work_stats.swap_derate`. If `verdict` is `over_budget`, loosen in
+`policy.json` `work_limits`:
+
+| Change | Effect |
+|---|---|
+| Lower `swap_thrash_external_release_seconds` (min 60) | Lift the derate sooner in outside storms |
+| Raise `swap_thrash_agent_share_percent` | Count more leased RSS as "small" |
+| Set `swap_thrash_capacity` to `capacity` | Turn the derate off; the latch still reports |
+| Set `swap_thrash_external_release_seconds` to `-1` | Strict: hold work for the whole storm |
+
 Do not copy a live `~/.nicos-dev/session-pressure` tree into issues, fixtures, or pull requests.
 
 ## Troubleshooting

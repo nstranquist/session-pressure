@@ -1013,6 +1013,8 @@ func (sampler *Sampler) SampleHost(ctx context.Context, policy Policy, latest *S
 			snapshot.SwapOutMBPerSecond = latest.SwapOutMBPerSecond
 			snapshot.SwapIOWindowMS = latest.SwapIOWindowMS
 			snapshot.SwapThrashLatched = latest.SwapThrashLatched
+			snapshot.SwapThrashCause = latest.SwapThrashCause
+			snapshot.SwapThrashSince = latest.SwapThrashSince
 		}
 	}
 	if latest != nil && latest.ProcessInventoryAvailable {

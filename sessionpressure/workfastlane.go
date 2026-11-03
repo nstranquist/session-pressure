@@ -184,6 +184,9 @@ func (gate *workAdmissionGate) decisionLabel() string {
 	if gate.swapThrashAdmitted {
 		return SwapThrashAdmittedDecision
 	}
+	if gate.swapThrashExternal {
+		return SwapThrashExternalDecision
+	}
 	if gate.warningCapacityAdmitted {
 		return WarningCapacityAdmittedDecision
 	}

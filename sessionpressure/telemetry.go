@@ -24,6 +24,7 @@ type TelemetryEvent struct {
 	Summary       *TelemetrySnapshotSummary `json:"summary,omitempty"`
 	Error         string                    `json:"error,omitempty"`
 	DiskWrite     *DiskWriteTransition      `json:"disk_write,omitempty"`
+	SwapThrash    *SwapThrashTransition     `json:"swap_thrash,omitempty"`
 }
 
 // TelemetrySnapshotSummary is the compact steady-state heartbeat projection.
@@ -44,6 +45,8 @@ type TelemetrySnapshotSummary struct {
 	SwapUsedMB                 float64        `json:"swap_used_mb"`
 	SwapInMBPerSecond          float64        `json:"swap_in_mb_per_s,omitempty"`
 	SwapOutMBPerSecond         float64        `json:"swap_out_mb_per_s,omitempty"`
+	SwapThrashLatched          bool           `json:"swap_thrash_latched,omitempty"`
+	SwapThrashCause            string         `json:"swap_thrash_cause,omitempty"`
 	HostCPUPercent             float64        `json:"host_cpu_percent"`
 	AgentTreeCount             int            `json:"agent_tree_count"`
 	AgentRSSSumMB              float64        `json:"agent_rss_sum_mb"`
@@ -79,6 +82,7 @@ func compactTelemetrySummary(snapshot Snapshot) TelemetrySnapshotSummary {
 		SchemaVersion: SchemaVersion, Timestamp: snapshot.Timestamp, Level: snapshot.Level,
 		PrimaryReason: primaryReason, FreePercent: snapshot.FreePercent, SwapUsedMB: snapshot.SwapUsedMB,
 		SwapInMBPerSecond: snapshot.SwapInMBPerSecond, SwapOutMBPerSecond: snapshot.SwapOutMBPerSecond,
+		SwapThrashLatched: snapshot.SwapThrashLatched, SwapThrashCause: snapshot.SwapThrashCause,
 		HostCPUPercent: snapshot.HostCPUPercent, AgentTreeCount: snapshot.AgentTreeCount, AgentRSSSumMB: snapshot.AgentRSSSumMB,
 		MemoryMomentum: snapshot.MemoryMomentum, FreePercentSlopePerMinute: snapshot.FreePercentSlopePerMinute,
 		MinutesToMemoryRed: snapshot.MinutesToMemoryRed,

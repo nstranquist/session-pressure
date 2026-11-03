@@ -154,6 +154,17 @@ type WorkLimits struct {
 	// slows every process super-linearly, so serializing memory-heavy work
 	// finishes the same queue sooner. A lone operation is always admitted.
 	SwapThrashCapacity int `json:"swap_thrash_capacity"`
+	// SwapThrashExternalReleaseSeconds bounds what an outside thrash can cost
+	// agents. Holding new heavy work only helps when leased work is part of the
+	// memory demand. When leased work RSS stays under SwapThrashAgentSharePercent
+	// of physical memory for this long while the latch holds, the resident
+	// marks the episode external and the derate stops deferring until the latch
+	// releases. 0 means the default; negative never releases (strict).
+	SwapThrashExternalReleaseSeconds int `json:"swap_thrash_external_release_seconds"`
+	// SwapThrashAgentSharePercent is the share of physical memory that leased
+	// work RSS must reach for a thrash to count as agent-driven. 0 means the
+	// default.
+	SwapThrashAgentSharePercent int `json:"swap_thrash_agent_share_percent"`
 	// IdleParkSeconds releases a lease's weight after its process group has
 	// burned under 1% of one core for this long, and re-charges it as soon as
 	// the group works again. 0 means the default; negative disables parking.
@@ -239,15 +250,17 @@ func defaultWorkLimits(logicalCPUCount int) WorkLimits {
 		TestWeight: testWeight,
 		// A strict majority keeps two compiler waves from overlapping while
 		// allowing one focused test to share the target 8-unit host capacity.
-		BuildWeight:        buildWeight,
-		SwapThrashCapacity: min(capacity, buildWeight),
-		IdleParkSeconds:    defaultIdleParkSeconds,
-		ExpressTestWeight:  expressTest,
-		ExpressBuildWeight: expressBuild,
-		EmulatorWeight:     max(1, (capacity*5+7)/8),
-		BrowserWeight:      max(1, (capacity+3)/4),
-		HeavyWeight:        max(1, (capacity*3+3)/4),
-		BenchmarkWeight:    benchmark,
+		BuildWeight:                      buildWeight,
+		SwapThrashCapacity:               min(capacity, buildWeight),
+		SwapThrashExternalReleaseSeconds: defaultSwapThrashExternalReleaseSeconds,
+		SwapThrashAgentSharePercent:      defaultSwapThrashAgentSharePercent,
+		IdleParkSeconds:                  defaultIdleParkSeconds,
+		ExpressTestWeight:                expressTest,
+		ExpressBuildWeight:               expressBuild,
+		EmulatorWeight:                   max(1, (capacity*5+7)/8),
+		BrowserWeight:                    max(1, (capacity+3)/4),
+		HeavyWeight:                      max(1, (capacity*3+3)/4),
+		BenchmarkWeight:                  benchmark,
 		// Package installs are network/disk-bound; small weight + storage-red admit.
 		InstallWeight: 1,
 		ReclaimWeight: 1,
@@ -373,6 +386,12 @@ func normalizeWorkLimits(limits WorkLimits) WorkLimits {
 	if limits.SwapThrashCapacity == 0 {
 		// One full build at a time, or a test beside light express work.
 		limits.SwapThrashCapacity = min(limits.Capacity, limits.BuildWeight)
+	}
+	if limits.SwapThrashExternalReleaseSeconds == 0 {
+		limits.SwapThrashExternalReleaseSeconds = defaultSwapThrashExternalReleaseSeconds
+	}
+	if limits.SwapThrashAgentSharePercent == 0 {
+		limits.SwapThrashAgentSharePercent = defaultSwapThrashAgentSharePercent
 	}
 	if limits.IdleParkSeconds == 0 {
 		limits.IdleParkSeconds = defaultIdleParkSeconds
@@ -565,6 +584,12 @@ func (policy Policy) Validate() error {
 	if w.SwapThrashCapacity < 1 || w.SwapThrashCapacity > w.Capacity {
 		return errors.New("work swap_thrash_capacity must be between 1 and capacity")
 	}
+	if w.SwapThrashExternalReleaseSeconds > 0 && w.SwapThrashExternalReleaseSeconds < minSwapThrashExternalReleaseSeconds {
+		return fmt.Errorf("work swap_thrash_external_release_seconds must be negative (strict) or at least %d", minSwapThrashExternalReleaseSeconds)
+	}
+	if w.SwapThrashAgentSharePercent < 1 || w.SwapThrashAgentSharePercent > 100 {
+		return errors.New("work swap_thrash_agent_share_percent must be between 1 and 100")
+	}
 	if w.WarningCapacity < 1 || w.WarningCapacity > w.Capacity {
 		return errors.New("work warning_capacity must be positive and no greater than capacity")
 	}
@@ -747,6 +772,12 @@ func LoadPolicy(path string, physicalMemoryMB float64) (Policy, bool, error) {
 		// Derive from this policy's own ceiling, not the host default: an
 		// operator-tuned capacity must not inherit a mismatched derate.
 		policy.WorkLimits.SwapThrashCapacity = min(policy.WorkLimits.Capacity, policy.WorkLimits.BuildWeight)
+	}
+	if policy.WorkLimits.SwapThrashExternalReleaseSeconds == 0 {
+		policy.WorkLimits.SwapThrashExternalReleaseSeconds = defaultSwapThrashExternalReleaseSeconds
+	}
+	if policy.WorkLimits.SwapThrashAgentSharePercent == 0 {
+		policy.WorkLimits.SwapThrashAgentSharePercent = defaultSwapThrashAgentSharePercent
 	}
 	if policy.WorkLimits.CPUBlockSamples == 0 {
 		policy.WorkLimits.CPUBlockSamples = defaults.WorkLimits.CPUBlockSamples

@@ -420,6 +420,7 @@ type workAdmissionGate struct {
 	swapThrashEnforced bool
 	swapThrashAdmitted bool
 	swapThrashDeferred bool
+	swapThrashExternal bool
 	fastLaneAdmitted   bool
 	fastLaneRefusal    fastLaneRefusal
 	// Warning derating keeps the coordinator resident while lowering only the

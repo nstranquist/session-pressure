@@ -9,6 +9,9 @@ const (
 	WarningCapacityDeferredDecision = "warning_capacity_deferred"
 	SwapThrashAdmittedDecision      = "swap_thrash_admitted"
 	SwapThrashDeferredDecision      = "swap_thrash_deferred"
+	// SwapThrashExternalDecision marks work the derate let through because
+	// the resident attributed the latched episode to non-agent memory demand.
+	SwapThrashExternalDecision = "swap_thrash_external"
 )
 
 // swapThrashDecision serializes new heavy work while the resident's swap
@@ -16,11 +19,17 @@ const (
 // fits falls through to the CPU, memory, and storage gates unchanged, so the
 // derate never weakens another safety floor. A lone operation is always
 // admitted, so a thrash caused outside the queue (browser, editor) can slow
-// agents but never starve them.
+// agents but never starve them. When the resident attributes the episode to
+// non-agent demand (cause "external"), the derate stops deferring: holding
+// agents cannot end a storm they do not drive, so the wait would be pure cost.
 func (gate *workAdmissionGate) swapThrashDecision(admission Admission, ownsLease bool) (workAdmissionDecision, bool) {
 	if gate == nil || !gate.swapThrashEnforced || gate.class == "" || !admission.Allowed ||
 		admission.Snapshot == nil || !admission.Snapshot.SwapIOAvailable || !admission.Snapshot.SwapThrashLatched ||
 		gate.warningCapacityStatus == nil {
+		return workAdmissionDecision{}, false
+	}
+	if admission.Snapshot.SwapThrashCause == SwapThrashCauseExternal {
+		gate.swapThrashExternal = true
 		return workAdmissionDecision{}, false
 	}
 	limits := normalizeWorkLimits(gate.limits)
@@ -39,9 +48,13 @@ func (gate *workAdmissionGate) swapThrashDecision(admission Admission, ownsLease
 		// Coordinator status already counts this operation after acquisition.
 		projectedUsed, alone = used, used <= weight
 	}
+	cause := admission.Snapshot.SwapThrashCause
+	if cause == "" {
+		cause = "unknown"
+	}
 	reason := fmt.Sprintf(
-		"swap thrash (%.1f MB/s swap-out) serializes new heavy work: class=%s weight=%d used=%d projected_used=%d thrash_capacity=%d",
-		admission.Snapshot.SwapOutMBPerSecond, gate.class, weight, used, projectedUsed, limits.SwapThrashCapacity,
+		"swap thrash (%.1f MB/s swap-out) serializes new heavy work: class=%s weight=%d used=%d projected_used=%d thrash_capacity=%d cause=%s",
+		admission.Snapshot.SwapOutMBPerSecond, gate.class, weight, used, projectedUsed, limits.SwapThrashCapacity, cause,
 	)
 	if projectedUsed <= limits.SwapThrashCapacity || alone {
 		gate.swapThrashAdmitted = true

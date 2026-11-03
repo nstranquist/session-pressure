@@ -3,6 +3,8 @@ package sessionpressure
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -24,6 +26,7 @@ type PressureDoctor struct {
 	SourceRevisions    *ArtifactSourceRevisions `json:"source_revisions,omitempty"`
 	Fixes              []string                 `json:"fixes,omitempty"`
 	Warnings           []string                 `json:"warnings,omitempty"`
+	SwapDerate         *WorkSwapDerateCost      `json:"swap_derate,omitempty"`
 	Health             GuardHealth              `json:"health"`
 }
 
@@ -74,6 +77,9 @@ type PressureDoctorInput struct {
 	SoftWouldBlock *bool
 	// Optional: executing-binary source revisions (artifact status probe).
 	SourceRevisions *ArtifactSourceRevisions
+	// Optional: 24h swap-thrash derate cost. Loaded only when the latch is
+	// set or held in the window, so a calm host pays nothing for it.
+	SwapDerate *WorkSwapDerateCost
 }
 
 // BuildPressureDoctor composes doctor from already-loaded state (no sampling).
@@ -158,6 +164,8 @@ func BuildPressureDoctor(in PressureDoctorInput) PressureDoctor {
 		doc.Warnings = append(doc.Warnings, "agent identity overlay failed closed: "+catalog.OverlayError)
 		doc.Fixes = append(doc.Fixes, "fix ~/.nicos-dev/session-pressure/agent-identity.json or remove it; session-pressure identity show")
 	}
+	doc.Warnings = append(doc.Warnings, swapThrashDoctorWarnings(in)...)
+	doc.SwapDerate = in.SwapDerate
 	for _, surface := range in.Coverage.Surfaces {
 		if surface.ID == "agent_identity" && surface.State == CoverageAttention {
 			doc.Warnings = append(doc.Warnings, "agent identity: "+surface.Detail)
@@ -243,7 +251,12 @@ func LoadPressureDoctorFromDir(ctx context.Context, dir string, repoRoot string)
 		Trees:    trees,
 		Catalog:  ActiveAgentIdentityCatalog(),
 	})
+	var swapDerate *WorkSwapDerateCost
+	if cost, ok := loadDoctorSwapDerate(dir, latest, hasLatest, time.Now().UTC()); ok {
+		swapDerate = &cost
+	}
 	return BuildPressureDoctor(PressureDoctorInput{
+		SwapDerate:   swapDerate,
 		Now:          time.Now().UTC(),
 		Dir:          dir,
 		Policy:       policy,
@@ -273,4 +286,70 @@ func SummarizePressureDoctorCheck(doc PressureDoctor) (statusOK bool, detail str
 		detail += " host_level=" + string(doc.Host.Level)
 	}
 	return doc.OK, detail, append([]string(nil), doc.Fixes...)
+}
+
+// swapThrashDoctorWarnings explains a live storm and an over-budget derate.
+// An external storm names the largest non-agent memory users: closing them is
+// the only fix, because agent waits cannot end it.
+func swapThrashDoctorWarnings(in PressureDoctorInput) []string {
+	warnings := make([]string, 0, 2)
+	if in.HasLatest && in.Latest.SwapIOAvailable && in.Latest.SwapThrashLatched {
+		since := ""
+		if !in.Latest.SwapThrashSince.IsZero() {
+			since = fmt.Sprintf(" for %s", in.Now.Sub(in.Latest.SwapThrashSince).Round(time.Second))
+		}
+		if in.Latest.SwapThrashCause == SwapThrashCauseExternal {
+			warning := fmt.Sprintf("swap storm%s (%.0f MB/s swap-out) is outside agent work; heavy-work derate is lifted", since, in.Latest.SwapOutMBPerSecond)
+			if consumers := topNonAgentMemoryConsumers(in.Latest.TopHostConsumers, 3); consumers != "" {
+				warning += "; largest non-agent memory: " + consumers
+			}
+			warnings = append(warnings, warning)
+		} else {
+			cause := in.Latest.SwapThrashCause
+			if cause == "" {
+				cause = "unknown"
+			}
+			warnings = append(warnings, fmt.Sprintf("swap thrash%s (%.0f MB/s swap-out, cause=%s): new heavy work is serialized to swap_thrash_capacity=%d",
+				since, in.Latest.SwapOutMBPerSecond, cause, normalizeWorkLimits(in.Policy.WorkLimits).SwapThrashCapacity))
+		}
+	}
+	if in.SwapDerate != nil && in.SwapDerate.Verdict == SwapDerateOverBudget {
+		warnings = append(warnings, "swap derate over budget (24h): "+in.SwapDerate.Advice)
+	}
+	return warnings
+}
+
+func topNonAgentMemoryConsumers(consumers []HostConsumer, limit int) string {
+	ordered := make([]HostConsumer, 0, len(consumers))
+	for _, consumer := range consumers {
+		if consumer.Category != "agent" && consumer.RSSSumMB > 0 {
+			ordered = append(ordered, consumer)
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].RSSSumMB > ordered[j].RSSSumMB })
+	parts := make([]string, 0, limit)
+	for _, consumer := range ordered[:min(limit, len(ordered))] {
+		parts = append(parts, fmt.Sprintf("%s %.1f GB", consumer.Executable, consumer.RSSSumMB/1024))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// loadDoctorSwapDerate reads 24h of history only when the latch is set now or
+// held in the window. The episode scan decodes marker rows only.
+func loadDoctorSwapDerate(dir string, latest Snapshot, hasLatest bool, now time.Time) (WorkSwapDerateCost, bool) {
+	since := now.Add(-24 * time.Hour)
+	episodes, err := ReadSwapThrashEpisodes(dir, since, now)
+	if err != nil {
+		return WorkSwapDerateCost{}, false
+	}
+	if episodes.Count == 0 && !(hasLatest && latest.SwapThrashLatched) {
+		return WorkSwapDerateCost{}, false
+	}
+	events, err := NewWorkEventStore(dir).Read(WorkEventFilter{Since: since})
+	if err != nil {
+		return WorkSwapDerateCost{}, false
+	}
+	cost := summarizeSwapDerate(events, since, now)
+	cost.AttachEpisodes(episodes)
+	return cost, true
 }
