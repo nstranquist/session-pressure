@@ -57,6 +57,15 @@
 
 ### Fixed
 
+- **Leased-work CPU stays known during builds.** Leased-work CPU
+  (`coordinated_work.cpu_percent`) was unknown whenever a leased process had
+  started since the previous inventory. Compile, link, and test steps start all
+  the time, so the figure was missing under exactly the load it measures. A
+  process that started after the previous inventory used all of its CPU time
+  inside the interval, so its delta from zero is exact; leased-work attribution
+  now counts it. Agent-tree CPU, idle detection, and relief selection do not
+  change: they still read a new process as activity with unknown CPU.
+
 - **Swap deferrals were counted as memory deferrals.** The review now counts
   them as `swap_deferrals`, and `swap_thrash_external_bypasses` counts work
   admitted through an external storm.

@@ -318,7 +318,7 @@ func TestNativeProcessCPUUsesLiveCumulativeDelta(t *testing.T) {
 	}
 	second := refreshNativeProcessCPUTotals(ctx, first)
 	secondAt := time.Now()
-	annotateProcessCPUPercent(second, first, secondAt.Sub(firstAt))
+	annotateProcessCPUPercent(second, first, firstAt, secondAt)
 	for _, process := range second {
 		if process.PID != os.Getpid() {
 			continue

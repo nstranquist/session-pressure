@@ -61,13 +61,14 @@ func TestHostConsumersPropagateUnavailableCPUEvidence(t *testing.T) {
 func TestAnnotateProcessCPUPercentUsesCumulativeDeltaAndStableIdentity(t *testing.T) {
 	previous := []Process{{PID: 42, StartedAtNS: 100, CPUTotalNS: 1_000_000_000, CPUTotalValid: true}}
 	current := []Process{{PID: 42, StartedAtNS: 100, CPUTotalNS: 1_500_000_000, CPUTotalValid: true}}
-	annotateProcessCPUPercent(current, previous, 2*time.Second)
+	at := time.Unix(1_800_000_000, 0)
+	annotateProcessCPUPercent(current, previous, at, at.Add(2*time.Second))
 	if !current[0].CPUAvailable || current[0].CPUPercent != 25 {
 		t.Fatalf("native CPU delta = %+v, want available 25%%", current[0])
 	}
 
 	current[0].CPUTotalNS = previous[0].CPUTotalNS
-	annotateProcessCPUPercent(current, previous, time.Second)
+	annotateProcessCPUPercent(current, previous, at, at.Add(time.Second))
 	if !current[0].CPUAvailable || current[0].CPUPercent != 0 {
 		t.Fatalf("zero native CPU delta must be known idle: %+v", current[0])
 	}
@@ -82,7 +83,8 @@ func TestAnnotateProcessCPUPercentRejectsPIDReuseAndRegressingCounters(t *testin
 	} {
 		t.Run(name, func(t *testing.T) {
 			processes := []Process{current}
-			annotateProcessCPUPercent(processes, previous, time.Second)
+			at := time.Unix(1_800_000_000, 0)
+			annotateProcessCPUPercent(processes, previous, at, at.Add(time.Second))
 			if processes[0].CPUAvailable {
 				t.Fatalf("invalid native CPU identity became available: %+v", processes[0])
 			}
