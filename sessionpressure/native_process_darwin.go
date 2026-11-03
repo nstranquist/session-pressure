@@ -247,6 +247,38 @@ func refreshNativeProcessCPUTotals(ctx context.Context, processes []Process) []P
 	return refreshed
 }
 
+// nativeProcessGroupActivity sums own plus reaped-child CPU and page-ins
+// across a process group. Reaped counters move from the exited process into
+// its parent's child counters, so the sums stay nearly monotonic as
+// short-lived children churn.
+func nativeProcessGroupActivity(pgid int) (workGroupActivity, error) {
+	if err := loadDarwinLibproc(); err != nil {
+		return workGroupActivity{}, err
+	}
+	rows, err := unix.SysctlKinfoProcSlice("kern.proc.pgrp", pgid)
+	if err != nil {
+		return workGroupActivity{}, err
+	}
+	if len(rows) == 0 {
+		return workGroupActivity{}, fmt.Errorf("process group %d is empty", pgid)
+	}
+	var total workGroupActivity
+	for index := range rows {
+		var usage darwinRusageInfoV2
+		if darwinLibproc.pidRusageV2(rows[index].Proc.P_pid, darwinRusageInfoVersion2, &usage) != 0 {
+			continue
+		}
+		own, ownOK := darwinRusageCPUTimeNS(usage.UserTime, usage.SystemTime)
+		children, childOK := darwinRusageCPUTimeNS(usage.ChildUserTime, usage.ChildSystemTime)
+		if !ownOK || !childOK {
+			continue
+		}
+		total.CPUNS += own + children
+		total.Pageins += usage.Pageins + usage.ChildPageins
+	}
+	return total, nil
+}
+
 func darwinCString(value []byte) string {
 	if index := bytes.IndexByte(value, 0); index >= 0 {
 		return string(value[:index])

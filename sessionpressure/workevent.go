@@ -150,6 +150,9 @@ type WorkEvent struct {
 	// operation. It keeps fast-lane and warning-derating populations measurable
 	// and revocable from telemetry alone.
 	AdmissionDecision string `json:"admission_decision,omitempty"`
+	// Terminal events record how long an idle leased group held no weight.
+	IdleParkedMilliseconds int64 `json:"idle_parked_ms,omitempty"`
+	IdleParkCount          int   `json:"idle_park_count,omitempty"`
 }
 
 func (event WorkEvent) Validate() error {
@@ -1001,6 +1004,9 @@ type WorkReviewSignals struct {
 	WarningCapacityDeferrals   int `json:"warning_capacity_deferrals"`
 	SwapThrashAdmissions       int `json:"swap_thrash_admissions"`
 	SwapThrashDeferrals        int `json:"swap_thrash_deferrals"`
+	// IdleParked* measure weight returned to the queue by idle leased groups.
+	IdleParkedOperations   int   `json:"idle_parked_operations"`
+	IdleParkedMilliseconds int64 `json:"idle_parked_ms"`
 }
 
 // Closed outcomes that classify a cancelled operation as wrapper/agent interrupt.
@@ -1340,6 +1346,10 @@ func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkS
 		}
 		if event.Event == WorkEventAcquired && event.ProtectedOperationID == event.OperationID {
 			signals.ProtectedAcquisitions++
+		}
+		if event.IdleParkCount > 0 {
+			signals.IdleParkedOperations++
+			signals.IdleParkedMilliseconds += event.IdleParkedMilliseconds
 		}
 		if event.Event == WorkEventOverrideRequested {
 			if event.Outcome == "agent_priority_requested" {

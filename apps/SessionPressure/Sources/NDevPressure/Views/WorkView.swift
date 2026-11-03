@@ -294,9 +294,10 @@ struct WorkView: View {
                     .help(lease.reviewReason ?? "Finite lease exceeded review age")
             }
             Spacer()
-            Text("running")
+            Text(lease.parked ? "idle · parked" : "running")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(PressureTheme.levelColor(.normal))
+                .foregroundStyle(lease.parked ? Color.secondary : PressureTheme.levelColor(.normal))
+                .help(lease.parked ? "Idle for the park window; its weight is free for queued work until it uses CPU again." : "Running and charged its full weight.")
             Text("pid \(PressureFormat.pid(lease.pid))")
                 .font(PressureTheme.monoCaption)
             Text(PressureFormat.relative(lease.startedAt))

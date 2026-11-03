@@ -692,7 +692,7 @@ func TestDefaultPolicyIsObserveOnlyAndValid(t *testing.T) {
 	}
 	if got := defaultWorkLimits(10); got != (WorkLimits{
 		SchedulingPolicy: WorkSchedulingPolicy,
-		Capacity:         8, WarningCapacity: 4, WarningCapacityEnabled: true, SwapThrashCapacity: 5, TestWeight: 3, BuildWeight: 5, ExpressTestWeight: 1, ExpressBuildWeight: 2,
+		Capacity:         8, WarningCapacity: 4, WarningCapacityEnabled: true, SwapThrashCapacity: 5, IdleParkSeconds: 120, TestWeight: 3, BuildWeight: 5, ExpressTestWeight: 1, ExpressBuildWeight: 2,
 		EmulatorWeight: 5, BrowserWeight: 2, HeavyWeight: 6, BenchmarkWeight: 6, InstallWeight: 1, ReclaimWeight: 1,
 		CPUBlockSamples: 2, CPUReleaseSamples: 2, CPUReleasePercent: 80,
 		// The fast lane defaults on but narrow: only the express classes are light

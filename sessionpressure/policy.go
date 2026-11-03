@@ -153,7 +153,11 @@ type WorkLimits struct {
 	// resident's swap-thrash latch is set under an enforcing profile. Thrash
 	// slows every process super-linearly, so serializing memory-heavy work
 	// finishes the same queue sooner. A lone operation is always admitted.
-	SwapThrashCapacity int     `json:"swap_thrash_capacity"`
+	SwapThrashCapacity int `json:"swap_thrash_capacity"`
+	// IdleParkSeconds releases a lease's weight after its process group has
+	// burned under 1% of one core for this long, and re-charges it as soon as
+	// the group works again. 0 means the default; negative disables parking.
+	IdleParkSeconds    int     `json:"idle_park_seconds"`
 	TestWeight         int     `json:"test_weight"`
 	BuildWeight        int     `json:"build_weight"`
 	ExpressTestWeight  int     `json:"express_test_weight"`
@@ -237,6 +241,7 @@ func defaultWorkLimits(logicalCPUCount int) WorkLimits {
 		// allowing one focused test to share the target 8-unit host capacity.
 		BuildWeight:        buildWeight,
 		SwapThrashCapacity: min(capacity, buildWeight),
+		IdleParkSeconds:    defaultIdleParkSeconds,
 		ExpressTestWeight:  expressTest,
 		ExpressBuildWeight: expressBuild,
 		EmulatorWeight:     max(1, (capacity*5+7)/8),
@@ -368,6 +373,9 @@ func normalizeWorkLimits(limits WorkLimits) WorkLimits {
 	if limits.SwapThrashCapacity == 0 {
 		// One full build at a time, or a test beside light express work.
 		limits.SwapThrashCapacity = min(limits.Capacity, limits.BuildWeight)
+	}
+	if limits.IdleParkSeconds == 0 {
+		limits.IdleParkSeconds = defaultIdleParkSeconds
 	}
 	limits = reconcileFastLaneDefaults(limits, defaultWorkLimits(runtime.NumCPU()))
 	return limits
@@ -551,6 +559,9 @@ func (policy Policy) Validate() error {
 	if w.Capacity < 1 || w.TestWeight < 1 || w.BuildWeight < 1 || w.ExpressTestWeight < 1 || w.ExpressBuildWeight < 1 || w.EmulatorWeight < 1 || w.BrowserWeight < 1 || w.HeavyWeight < 1 || w.BenchmarkWeight < 1 || w.ReclaimWeight < 1 {
 		return errors.New("work capacity and weights must be positive")
 	}
+	if w.IdleParkSeconds > 0 && w.IdleParkSeconds < minIdleParkSeconds {
+		return fmt.Errorf("work idle_park_seconds must be negative (disabled) or at least %d", minIdleParkSeconds)
+	}
 	if w.SwapThrashCapacity < 1 || w.SwapThrashCapacity > w.Capacity {
 		return errors.New("work swap_thrash_capacity must be between 1 and capacity")
 	}
@@ -728,6 +739,9 @@ func LoadPolicy(path string, physicalMemoryMB float64) (Policy, bool, error) {
 	}
 	if policy.WorkLimits.WarningCapacity == 0 {
 		policy.WorkLimits.WarningCapacity = defaults.WorkLimits.WarningCapacity
+	}
+	if policy.WorkLimits.IdleParkSeconds == 0 {
+		policy.WorkLimits.IdleParkSeconds = defaultIdleParkSeconds
 	}
 	if policy.WorkLimits.SwapThrashCapacity == 0 {
 		// Derive from this policy's own ceiling, not the host default: an
