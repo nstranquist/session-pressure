@@ -33,8 +33,9 @@ const (
 )
 
 // WorkSwapDerateCost is the measured agent cost of the swap-thrash derate.
-// Wait is the pressure wait of operations the derate deferred first. It can
-// include later CPU or memory wait, so it is an upper bound.
+// Wait is the admission plus pressure wait of operations the derate deferred.
+// It can include CPU or memory wait in the same operation, so it is an upper
+// bound.
 type WorkSwapDerateCost struct {
 	Verdict             string              `json:"verdict"`
 	DeferredOperations  int                 `json:"deferred_operations"`
@@ -65,8 +66,9 @@ type SwapThrashEpisodes struct {
 // cumulative wait fields, so the maximum per operation is its total.
 func summarizeSwapDerate(events []WorkEvent, since, generatedAt time.Time) WorkSwapDerateCost {
 	type swapOperation struct {
-		deferred, external, initialPressure bool
-		waitMS                              int64
+		deferred, external bool
+		pressureMS         int64
+		admissionMS        int64
 	}
 	operations := map[string]*swapOperation{}
 	for _, event := range events {
@@ -75,20 +77,14 @@ func summarizeSwapDerate(events []WorkEvent, since, generatedAt time.Time) WorkS
 			operation = &swapOperation{}
 			operations[event.OperationID] = operation
 		}
-		if event.Event == WorkEventQueued && event.PressureDimension != "" {
-			operation.initialPressure = true
-		}
 		if event.PressureDimension == "swap" || event.AdmissionDecision == SwapThrashDeferredDecision {
 			operation.deferred = true
 		}
 		if event.AdmissionDecision == SwapThrashExternalDecision {
 			operation.external = true
 		}
-		wait := max(int64(0), event.PressureWaitMilliseconds)
-		if operation.initialPressure {
-			wait += max(int64(0), event.AdmissionWaitMilliseconds)
-		}
-		operation.waitMS = max(operation.waitMS, wait)
+		operation.pressureMS = max(operation.pressureMS, event.PressureWaitMilliseconds)
+		operation.admissionMS = max(operation.admissionMS, event.AdmissionWaitMilliseconds)
 	}
 	cost := SwapDerateCostBudget()
 	waits := make([]int64, 0)
@@ -99,9 +95,13 @@ func summarizeSwapDerate(events []WorkEvent, since, generatedAt time.Time) WorkS
 		if !operation.deferred {
 			continue
 		}
+		// Admission wait is the pre-lease pressure gate, where the derate
+		// usually holds work; pressure wait is the post-lease reservation.
+		// Both are derate wait for an operation it deferred.
+		wait := max(int64(0), operation.pressureMS) + max(int64(0), operation.admissionMS)
 		cost.DeferredOperations++
-		waits = append(waits, operation.waitMS)
-		cost.WaitTotalMS += operation.waitMS
+		waits = append(waits, wait)
+		cost.WaitTotalMS += wait
 	}
 	cost.Wait = durationStats(waits)
 	cost.WaitMinutesPerDay = swapDerateMinutesPerDay(cost.WaitTotalMS, since, generatedAt, events)
