@@ -92,6 +92,11 @@
 
 ### Fixed
 
+- **`monitor install` finds the helper beside a symlinked CLI.** When a
+  publisher installs the CLI as a stable symlink into a revision store
+  (`bin/cli -> bin/.cli.revisions/current -> sha256-…`), the resolved path
+  has no helper beside it. The helper lookup now walks the symlink chain
+  from the invoked path and uses the first hop with a published helper.
 - **The work report no longer advises an enforcing host to drop its
   protection.** On queue pressure, an enforcing host was told to apply
   `multi-agent-soft`, which turns off launch blocking, the CPU latch, memory

@@ -146,3 +146,49 @@ func containsSubstring(values []string, want string) bool {
 	}
 	return false
 }
+
+// bin/ndev-binary-publish installs the CLI as bin/ndev-pressure ->
+// bin/.ndev-pressure.revisions/current -> sha256-…; the helper sits beside
+// the stable link, not beside the resolved revision file.
+func TestResidentHelperFollowsCLISymlinkChainToPublishedHelper(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	store := filepath.Join(bin, ".ndev-pressure.revisions")
+	local := filepath.Join(root, "local")
+	for _, dir := range []string{store, local} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	revision := filepath.Join(store, "sha256-abc")
+	if err := os.WriteFile(revision, []byte("cli"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for link, target := range map[string]string{
+		filepath.Join(store, "current"):       "sha256-abc",
+		filepath.Join(bin, "ndev-pressure"):   filepath.Join(store, "current"),
+		filepath.Join(local, "ndev-pressure"): filepath.Join(bin, "ndev-pressure"),
+	} {
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolved, err := filepath.EvalSymlinks(revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No helper published yet: keep the historical resolved-path answer.
+	if got, want := residentHelperForExecutable(filepath.Join(local, "ndev-pressure")), filepath.Join(filepath.Dir(resolved), residentHelperName); got != want {
+		t.Fatalf("no helper: got %q want %q", got, want)
+	}
+	helper := filepath.Join(bin, residentHelperName)
+	if err := os.WriteFile(helper, []byte("helper"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := residentHelperForExecutable(filepath.Join(local, "ndev-pressure")); got != helper {
+		t.Fatalf("chain walk got %q want %q", got, helper)
+	}
+	if got := residentHelperForExecutable(helper); got != helper {
+		t.Fatalf("helper invoked directly got %q", got)
+	}
+}
