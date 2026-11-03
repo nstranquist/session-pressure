@@ -156,6 +156,20 @@ type WorkLeaseRecord struct {
 	ScheduleID         string    `json:"schedule_id,omitempty"`
 	ScheduleRunID      string    `json:"schedule_run_id,omitempty"`
 	AgentKind          string    `json:"agent_kind,omitempty"`
+	// ParkedAt is set while the leased process group has been idle long enough
+	// that holding its weight only starves the queue. A parked lease is charged
+	// zero weight; it is re-charged the moment the group burns CPU again. An
+	// n-1 helper ignores the field and charges the full weight (conservative).
+	ParkedAt *time.Time `json:"parked_at,omitempty"`
+}
+
+// chargedWeight is the capacity a lease consumes for admission. Every used
+// and drain-budget sum goes through it so parking has one meaning.
+func (record WorkLeaseRecord) chargedWeight() int {
+	if record.ParkedAt != nil {
+		return 0
+	}
+	return record.Weight
 }
 
 // WorkLeaseStatus keeps the established public v1 wire contract. The private
@@ -170,6 +184,9 @@ type WorkLeaseStatus struct {
 	AgeMS        int64     `json:"age_ms"`
 	Review       bool      `json:"review"`
 	ReviewReason string    `json:"review_reason,omitempty"`
+	// Parked leases are idle and charged zero weight until they wake.
+	Parked   bool       `json:"parked,omitempty"`
+	ParkedAt *time.Time `json:"parked_at,omitempty"`
 }
 
 // WorkWaiterRecord is private durable queue state. Like leases, it stores a
@@ -237,10 +254,12 @@ type workState struct {
 }
 
 type WorkStatus struct {
-	SchemaVersion              int                `json:"schema_version"`
-	Capacity                   int                `json:"capacity"`
-	Used                       int                `json:"used"`
-	Available                  int                `json:"available"`
+	SchemaVersion int `json:"schema_version"`
+	Capacity      int `json:"capacity"`
+	Used          int `json:"used"`
+	Available     int `json:"available"`
+	// ParkedWeight is weight held by idle parked leases and not charged.
+	ParkedWeight               int                `json:"parked_weight,omitempty"`
 	Leases                     []WorkLeaseStatus  `json:"leases"`
 	Waiters                    []WorkWaiterStatus `json:"waiters"`
 	QueueDepth                 int                `json:"queue_depth"`
@@ -1186,7 +1205,7 @@ func expressLeasedWeight(leases []WorkLeaseRecord) int {
 	total := 0
 	for _, lease := range leases {
 		if IsExpressClass(lease.Class) {
-			total += lease.Weight
+			total += lease.chargedWeight()
 		}
 	}
 	return total
@@ -1223,9 +1242,12 @@ func (coordinator *WorkCoordinator) status(state workState, prunedLeases, pruned
 	})
 	now := coordinator.now()
 	leases := make([]WorkLeaseStatus, 0, len(records))
-	used := 0
+	used, parkedWeight := 0, 0
 	for _, record := range records {
-		used += record.Weight
+		used += record.chargedWeight()
+		if record.ParkedAt != nil {
+			parkedWeight += record.Weight
+		}
 		age := max(time.Duration(0), now.Sub(record.StartedAt))
 		review := age >= WorkFiniteLeaseReviewAge
 		reason := ""
@@ -1235,6 +1257,7 @@ func (coordinator *WorkCoordinator) status(state workState, prunedLeases, pruned
 		leases = append(leases, WorkLeaseStatus{
 			ID: record.ID, OperationID: record.OperationID, Class: record.Class, Weight: record.Weight,
 			PID: record.PID, StartedAt: record.StartedAt, AgeMS: age.Milliseconds(), Review: review, ReviewReason: reason,
+			Parked: record.ParkedAt != nil, ParkedAt: record.ParkedAt,
 		})
 	}
 	waiters := make([]WorkWaiterStatus, 0, len(state.Waiters))
@@ -1291,6 +1314,7 @@ func (coordinator *WorkCoordinator) status(state workState, prunedLeases, pruned
 		Capacity:                   limits.Capacity,
 		Used:                       used,
 		Available:                  max(0, limits.Capacity-used),
+		ParkedWeight:               parkedWeight,
 		Leases:                     leases,
 		Waiters:                    waiters,
 		QueueDepth:                 len(waiters),
@@ -1462,6 +1486,37 @@ type WorkLease struct {
 	coordinator *WorkCoordinator
 	record      WorkLeaseRecord
 	released    bool
+}
+
+// ErrWorkLeaseMissing reports a lease record that is no longer in the state,
+// for example after release or owner-expiry reconciliation.
+var ErrWorkLeaseMissing = errors.New("work lease is not active")
+
+// SetParked charges (false) or releases (true) this lease's weight. It is
+// idempotent: re-asserting a parked lease keeps its original ParkedAt, which
+// also self-heals an n-1 writer that dropped the field.
+func (lease *WorkLease) SetParked(ctx context.Context, parked bool, at time.Time) error {
+	if lease == nil || lease.coordinator == nil || lease.released {
+		return ErrWorkLeaseMissing
+	}
+	_, err := lease.coordinator.withState(ctx, func(state *workState) error {
+		for index := range state.Leases {
+			if state.Leases[index].ID != lease.record.ID {
+				continue
+			}
+			switch {
+			case parked && state.Leases[index].ParkedAt == nil:
+				stamp := at.UTC()
+				state.Leases[index].ParkedAt = &stamp
+			case !parked:
+				state.Leases[index].ParkedAt = nil
+			}
+			lease.record.ParkedAt = state.Leases[index].ParkedAt
+			return nil
+		}
+		return ErrWorkLeaseMissing
+	})
+	return err
 }
 
 func (lease *WorkLease) Record() WorkLeaseRecord {
@@ -1645,7 +1700,7 @@ func (coordinator *WorkCoordinator) AcquireOperationWithCapacity(ctx context.Con
 		}
 		used := 0
 		for _, existing := range state.Leases {
-			used += existing.Weight
+			used += existing.chargedWeight()
 		}
 		if used+record.Weight > effectiveCapacity {
 			if !(green.Active && IsExpressClass(class) && used+record.Weight <= effectiveCapacity+green.Overcommit) {
@@ -1757,7 +1812,7 @@ func (waiter *WorkWaiter) TryAcquireWithCapacity(ctx context.Context, effectiveC
 		record.QueuedAt = state.Waiters[position].QueuedAt
 		used := 0
 		for _, lease := range state.Leases {
-			used += lease.Weight
+			used += lease.chargedWeight()
 		}
 		materializeWorkProtections(state.Waiters, limits.Capacity, now)
 		selection := waiter.coordinator.selectStateWaiter(*state, used, effectiveCapacity, now, green)

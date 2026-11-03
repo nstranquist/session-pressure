@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -132,5 +133,40 @@ func TestDarwinMachTicksToNS(t *testing.T) {
 		if got := darwinMachTicksToNS(test.ticks, test.numer, test.denom); got != test.want {
 			t.Fatalf("ticks=%d %d/%d got=%d want=%d", test.ticks, test.numer, test.denom, got, test.want)
 		}
+	}
+}
+
+// A sleeping group must read as idle and a spinning group as working, with
+// reaped children counted, so parking never releases weight held by work.
+func TestNativeProcessGroupCPUSeparatesIdleFromWork(t *testing.T) {
+	measure := func(script string) float64 {
+		command := exec.Command("/bin/sh", "-c", script)
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := command.Start(); err != nil {
+			t.Skipf("shell unavailable: %v", err)
+		}
+		defer func() { _ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL); _ = command.Wait() }()
+		time.Sleep(100 * time.Millisecond)
+		before, err := nativeProcessGroupActivity(command.Process.Pid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+		time.Sleep(600 * time.Millisecond)
+		after, err := nativeProcessGroupActivity(command.Process.Pid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return float64(after.CPUNS-before.CPUNS) / float64(time.Since(start).Nanoseconds())
+	}
+	if idle := measure("sleep 30"); idle >= workIdleMaxCores {
+		t.Fatalf("sleeping group used %.4f cores", idle)
+	}
+	// A child that spins and is reaped mid-window still counts as work.
+	if busy := measure("/usr/bin/yes >/dev/null & Y=$!; sleep 0.4; kill $Y; wait $Y; sleep 30"); busy < workIdleWakeCores {
+		t.Fatalf("spinning group read %.4f cores; reaped child time lost or units wrong", busy)
+	}
+	if _, err := nativeProcessGroupActivity(1 << 30); err == nil {
+		t.Fatal("nonexistent process group sampled")
 	}
 }

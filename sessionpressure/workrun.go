@@ -949,10 +949,12 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	var queueWaitMS int64
 	var pressureWaitMS int64
 	terminalRecorded := false
+	var idleParking *workIdleParking
 	recordTerminal := func(eventType WorkEventType, outcome string, exitCode *int) error {
 		if terminalRecorded {
 			return nil
 		}
+		parkedFor, parkCount := idleParking.stop()
 		now := time.Now().UTC()
 		waitMS := now.Sub(startedAt).Milliseconds()
 		if !childStartedAt.IsZero() {
@@ -986,7 +988,8 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 			WaitMilliseconds: max(int64(0), waitMS), RuntimeMillis: max(int64(0), runtimeMS), ExitCode: exitCode, Outcome: outcome,
 			AdmissionWaitMilliseconds: terminalAdmissionMS, QueueWaitMilliseconds: terminalQueueMS,
 			PressureWaitMilliseconds: pressureWaitMS, PrestartMilliseconds: max(int64(0), waitMS),
-			BatchCompletedSteps: completedSteps,
+			BatchCompletedSteps:    completedSteps,
+			IdleParkedMilliseconds: parkedFor.Milliseconds(), IdleParkCount: parkCount,
 		})
 		if err == nil {
 			terminalRecorded = true
@@ -1414,6 +1417,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		}
 	}
 	reporter.emit(WorkProgress{Stage: "started"})
+	idleParking = startWorkIdleParking(lease, command.Process.Pid, options.Class, coordinator.Limits, nativeProcessGroupActivity)
 
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
@@ -1490,7 +1494,8 @@ func finalizeWorkLease(recordTerminal, release func() error) error {
 func workCapacityReason(status WorkStatus) string {
 	reason := "weighted capacity unavailable"
 	for _, lease := range status.Leases {
-		if lease.Review {
+		// A parked lease is charged nothing, so it cannot be the blocker.
+		if lease.Review && !lease.Parked {
 			return fmt.Sprintf("%s; finite %s lease has run %s and may be a resident service (inspect work status; use ndev dev for future launches)", reason, lease.Class, time.Duration(lease.AgeMS)*time.Millisecond)
 		}
 	}

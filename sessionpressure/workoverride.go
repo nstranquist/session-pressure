@@ -232,7 +232,7 @@ func (coordinator *WorkCoordinator) ClearWaiterOverride(ctx context.Context) ([]
 		}
 		used := 0
 		for _, lease := range state.Leases {
-			used += lease.Weight
+			used += lease.chargedWeight()
 		}
 		store := coordinator.EventStore
 		if store == nil {
@@ -385,7 +385,7 @@ func (coordinator *WorkCoordinator) overrideWaiters(ctx context.Context, operati
 		requestedAt := coordinator.now()
 		used := 0
 		for _, lease := range state.Leases {
-			used += lease.Weight
+			used += lease.chargedWeight()
 		}
 		store := coordinator.EventStore
 		if store == nil {

@@ -25,6 +25,22 @@
   gates still apply. Observe profiles stay report-only. Work events record
   `swap_thrash_admitted` / `swap_thrash_deferred`, and the work review counts
   both.
+- **Idle-lease parking.** The `work run` wrapper samples its own leased
+  process group's CPU (own plus reaped-child rusage, every 15 s). After
+  `work_limits.idle_park_seconds` (default 120; negative disables) under 1%
+  of one core, the lease is parked: it stays held, but it is charged zero
+  weight, so queued work can start. At 5% of one core or more it is
+  re-charged at once, even past the ceiling. Nothing is preempted, and only
+  new admissions wait. Group page-ins count as activity: more than 4/s blocks
+  parking, and 64/s or more re-charges the lease. Thus a process stalled on
+  swap thrash is never parked, and parking cannot admit more work into the
+  thrash. Light activity between the thresholds holds the current verdict. Missing evidence and failed writes never leave weight released.
+  Parking applies to test, build, express, and heavy classes, and never to
+  benchmarks, emulators, browsers, install, or reclaim. Work status adds
+  `parked`, `parked_at`, and `parked_weight`. Terminal events add
+  `idle_parked_ms` and `idle_park_count`, and the work review counts
+  `idle_parked_operations` and `idle_parked_ms`. An n-1 helper ignores the
+  field and charges full weight.
 - **`state_lock` wait blocker.** A coordinator state-lock timeout inside a
   `--wait` budget now retries (250 ms) instead of failing the command; nothing
   was mutated, so the retry is safe. `filelock.ErrTimeout` types both the file

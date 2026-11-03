@@ -718,6 +718,19 @@ struct CoreTests {
         #expect(PressureFormat.swapOutRate(nil) == "—")
     }
 
+    @Test("parked idle lease decodes; n-1 lease defaults to charged")
+    func decodeParkedLease() throws {
+        let parked = try PressureJSON.decode(WorkLease.self, from: Data(#"""
+        {"id": "l1", "class": "test", "weight": 3, "pid": 42, "age_ms": 300000, "review": false,
+         "parked": true, "parked_at": "2026-11-02T23:00:00Z"}
+        """#.utf8))
+        #expect(parked.parked)
+        #expect(parked.parkedAt != nil)
+        let legacy = try PressureJSON.decode(WorkLease.self, from: Data(#"{"id": "l2", "class": "build", "weight": 5}"#.utf8))
+        #expect(!legacy.parked)
+        #expect(legacy.parkedAt == nil)
+    }
+
     @Test("fs_usage path parsing is unique and bounded")
     func parseBoundedDiskTracePaths() {
         let output = """

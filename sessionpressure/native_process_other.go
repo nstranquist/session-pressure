@@ -18,3 +18,7 @@ func refreshNativeProcessCPUTotals(_ context.Context, processes []Process) []Pro
 }
 
 func darwinEnvKeys(int, []string) map[string]string { return nil }
+
+func nativeProcessGroupActivity(int) (workGroupActivity, error) {
+	return workGroupActivity{}, errors.New("native process-group activity sampler unavailable")
+}

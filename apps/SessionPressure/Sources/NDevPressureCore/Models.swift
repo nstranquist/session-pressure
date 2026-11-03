@@ -1095,6 +1095,9 @@ public struct WorkLease: Codable, Sendable, Identifiable, Hashable {
     public var ageMS: Int64
     public var review: Bool
     public var reviewReason: String?
+    /// Idle leased group whose weight is released until it works again.
+    public var parked: Bool
+    public var parkedAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -1105,6 +1108,8 @@ public struct WorkLease: Codable, Sendable, Identifiable, Hashable {
         case ageMS = "age_ms"
         case review
         case reviewReason = "review_reason"
+        case parked
+        case parkedAt = "parked_at"
     }
 
     public init(from decoder: Decoder) throws {
@@ -1118,6 +1123,8 @@ public struct WorkLease: Codable, Sendable, Identifiable, Hashable {
         ageMS = try c.decodeIfPresent(Int64.self, forKey: .ageMS) ?? 0
         review = try c.decodeIfPresent(Bool.self, forKey: .review) ?? false
         reviewReason = try c.decodeIfPresent(String.self, forKey: .reviewReason)
+        parked = try c.decodeIfPresent(Bool.self, forKey: .parked) ?? false
+        parkedAt = try c.decodeIfPresent(Date.self, forKey: .parkedAt)
     }
 }
 
