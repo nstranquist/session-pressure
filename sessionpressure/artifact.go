@@ -101,11 +101,26 @@ func InspectArtifactDrift(candidateBinary, dir string) ArtifactDrift {
 
 // InspectArtifactSourceRevisions is the cheap revision-only probe for doctor.
 func InspectArtifactSourceRevisions(dir string) ArtifactSourceRevisions {
-	installedPath := ""
-	if installed, found, err := LoadInstalledArtifact(dir); err == nil && found {
-		installedPath = installed.Path
+	return inspectSourceRevisions(SourceRevision(), os.Getenv(FrontDoorRevisionEnv), installedHelperSourceRevision(dir), "")
+}
+
+// installedHelperSourceRevision reads the stamp from the installed helper's
+// build info. A -trimpath build does not record -ldflags there, so fall back
+// to the resident's own report, but only when the resident reports the exact
+// installed binary; a report from any other binary is not evidence for it.
+func installedHelperSourceRevision(dir string) string {
+	installed, found, err := LoadInstalledArtifact(dir)
+	if err != nil || !found {
+		return ""
 	}
-	return inspectSourceRevisions(SourceRevision(), os.Getenv(FrontDoorRevisionEnv), BinarySourceRevision(installedPath), "")
+	if revision := BinarySourceRevision(installed.Path); revision != "" {
+		return revision
+	}
+	latest, ok := NewTelemetryStore(dir).ReadLatest()
+	if !ok || latest.GuardBinarySHA256 == "" || latest.GuardBinarySHA256 != installed.SHA256 {
+		return ""
+	}
+	return strings.TrimSpace(latest.GuardSourceRevision)
 }
 
 func inspectArtifactSHA256Drift(candidateBinary, dir string) ArtifactDrift {
