@@ -38,6 +38,7 @@ func cmdSessionPressureDoctor(g *Flags, args []string) int {
 		"coverage_status":      doc.CoverageStatus,
 		"fixes":                doc.Fixes,
 		"warnings":             doc.Warnings,
+		"swap_derate":          doc.SwapDerate,
 		"health":               doc.Health,
 		"doctor":               doc,
 	}
@@ -48,6 +49,9 @@ func cmdSessionPressureDoctor(g *Flags, args []string) int {
 		doc.LaunchSoftPressure.WouldBlock, doc.LaunchSoftPressure.NoiseSuppressed,
 		doc.EnforceAdmission, doc.AutoShedCritical,
 	)
+	for _, warning := range doc.Warnings {
+		text += "  warn: " + warning + "\n"
+	}
 	for _, fix := range doc.Fixes {
 		text += "  fix: " + fix + "\n"
 	}

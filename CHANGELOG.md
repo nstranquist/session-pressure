@@ -40,6 +40,8 @@
   `doctor` explains a live storm, names the largest non-agent memory users
   when it is external, and warns when the last 24 hours are over budget. The
   doctor reads history only when the latch is set or held in the window.
+  Text `doctor` now prints its warnings as `warn:` lines; before, only JSON
+  showed them. JSON also has a top-level `swap_derate`.
 
 ### Fixed
 
