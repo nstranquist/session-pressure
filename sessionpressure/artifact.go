@@ -90,12 +90,11 @@ type ArtifactDrift struct {
 // candidate leaves Checked false rather than blocking artifact inspection.
 func InspectArtifactDrift(candidateBinary, dir string) ArtifactDrift {
 	drift := inspectArtifactSHA256Drift(candidateBinary, dir)
-	installedPath := ""
-	if installed, found, err := LoadInstalledArtifact(dir); err == nil && found {
-		installedPath = installed.Path
-	}
+	// The candidate's revision is informational and only readable from a
+	// build that records -ldflags; the installed helper falls back to the
+	// resident's own report (see installedHelperSourceRevision).
 	drift.SourceRevisions = inspectSourceRevisions(SourceRevision(), os.Getenv(FrontDoorRevisionEnv),
-		BinarySourceRevision(installedPath), BinarySourceRevision(candidateBinary))
+		installedHelperSourceRevision(dir), BinarySourceRevision(candidateBinary))
 	return drift
 }
 

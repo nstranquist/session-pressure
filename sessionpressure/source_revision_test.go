@@ -239,4 +239,9 @@ func TestInstalledHelperRevisionFallsBackToMatchingResidentReport(t *testing.T) 
 	if got := installedHelperSourceRevision(dir); got != "resident-rev" {
 		t.Fatalf("matching resident report: %q", got)
 	}
+	// artifact status reaches the revisions through InspectArtifactDrift, a
+	// separate path from doctor's probe; both must use the fallback.
+	if got := InspectArtifactDrift(path, dir).SourceRevisions.InstalledHelper; got != "resident-rev" {
+		t.Fatalf("artifact status path ignored the resident report: %q", got)
+	}
 }
