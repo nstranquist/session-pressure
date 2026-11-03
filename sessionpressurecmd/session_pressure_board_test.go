@@ -155,14 +155,15 @@ func TestPressureWorkOverrideClearReleasesPins(t *testing.T) {
 		t.Fatalf("clear rc=%d stderr=%q", rc, stderr)
 	}
 	var payload struct {
-		Cleared int                        `json:"cleared"`
-		Pinned  int                        `json:"pinned"`
-		Work    sessionpressure.WorkStatus `json:"work"`
+		Cleared   bool                                 `json:"cleared"`
+		Overrides []sessionpressure.WorkOverrideResult `json:"overrides"`
+		Pinned    int                                  `json:"pinned"`
+		Work      sessionpressure.WorkStatus           `json:"work"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Cleared != 1 || payload.Pinned != 0 || payload.Work.OverrideOperationID != "" || payload.Work.OverrideQueueDepth != 0 {
+	if !payload.Cleared || len(payload.Overrides) != 1 || payload.Pinned != 0 || payload.Work.OverrideOperationID != "" || payload.Work.OverrideQueueDepth != 0 {
 		t.Fatalf("clear payload=%+v", payload)
 	}
 	// Clearing an already-clear queue must report that, not a fake success.

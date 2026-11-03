@@ -258,7 +258,7 @@ func cmdSessionPressureWorkOverride(g *Flags, coordinator *sessionpressure.WorkC
 	}
 	if clear {
 		payload := map[string]any{
-			"ok": true, "action": "work.override", "cleared": len(results),
+			"ok": true, "action": "work.override", "cleared": true,
 			"overrides": results, "pinned": 0, "work": status,
 		}
 		var text strings.Builder

@@ -710,25 +710,25 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 		selected = append([]string(nil), storageAutoSafeApplyIDs...)
 	}
 	receipts := make([]sessionpressure.StorageReceipt, 0, len(selected)*2)
-	skipped := make([]map[string]any, 0, len(selected))
+	skipped := make([]storageSkippedProvider, 0, len(selected))
 	cooldownBypassed := false
 	for _, id := range selected {
 		current := sessionpressure.SampleStorageCapacity(sessionpressure.DefaultStorageVolumePath(), time.Now())
 		if current.Available && current.AvailableBytes >= target {
-			skipped = append(skipped, map[string]any{"provider_id": id, "reason": "target already met; no reclaim attempted"})
+			skipped = append(skipped, storageSkippedProvider{ProviderID: id, Reason: "target already met; no reclaim attempted"})
 			break
 		}
 		provider, found := storageProviderByID(plan.Providers, id)
 		if !found {
 			if autoSafe {
-				skipped = append(skipped, map[string]any{"provider_id": id, "reason": "unknown storage provider"})
+				skipped = append(skipped, storageSkippedProvider{ProviderID: id, Reason: "unknown storage provider"})
 				continue
 			}
 			return sessionPressureError("unknown storage provider "+strconv.Quote(id), 2)
 		}
 		if autoSafe {
 			if reason, skip := storageAutoSafeSkipReason(provider); skip {
-				skipped = append(skipped, map[string]any{"provider_id": id, "reason": reason})
+				skipped = append(skipped, storageSkippedProvider{ProviderID: id, Reason: reason})
 				continue
 			}
 		} else if provider.Classification == storageProviderReportOnly || !provider.MutationSupported {
@@ -747,7 +747,7 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 			if force && providerID != "" {
 				cooldownBypassed = true
 			} else if autoSafe {
-				skipped = append(skipped, map[string]any{"provider_id": id, "reason": reason})
+				skipped = append(skipped, storageSkippedProvider{ProviderID: id, Reason: reason})
 				continue
 			} else {
 				return sessionPressureError(reason, 1)
@@ -774,7 +774,7 @@ func cmdSessionPressureStorageApply(g *Flags, args []string) int {
 		outcome = "no_action"
 	}
 	payload := map[string]any{"ok": true, "action": "storage.apply", "apply": true, "outcome": outcome, "target_free_bytes": target, "storage": after, "receipts": receipts, "skipped_providers": skipped, "force": force, "full_wipe": fullWipe, "cooldown_bypassed": cooldownBypassed}
-	return emitPressure(g, payload, fmt.Sprintf("storage reclaim %s: available=%.1fGiB target=%.1fGiB receipts=%d skipped=%v\n", outcome, bytesToGiB(after.AvailableBytes), bytesToGiB(target), len(receipts), skipped), 0)
+	return emitPressure(g, payload, fmt.Sprintf("storage reclaim %s: available=%.1fGiB target=%.1fGiB receipts=%d skipped=%v\n", outcome, bytesToGiB(after.AvailableBytes), bytesToGiB(target), len(receipts), skippedProviderIDs(skipped)), 0)
 }
 
 func storageProviderInsideCooldown(receipts []sessionpressure.StorageReceipt, providerID string) bool {
@@ -1292,3 +1292,17 @@ func parseStorageBytes(raw string) (int64, error) {
 }
 
 func bytesToGiB(value int64) float64 { return float64(value) / (1 << 30) }
+
+// storageSkippedProvider names a provider that a reclaim did not run and why.
+type storageSkippedProvider struct {
+	ProviderID string `json:"provider_id"`
+	Reason     string `json:"reason"`
+}
+
+func skippedProviderIDs(skipped []storageSkippedProvider) []string {
+	ids := make([]string, 0, len(skipped))
+	for _, provider := range skipped {
+		ids = append(ids, provider.ProviderID)
+	}
+	return ids
+}

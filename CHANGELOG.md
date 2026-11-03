@@ -67,7 +67,22 @@
   in two bursts during a 12-session spike. Loosening the derate for that
   wait would keep the wait and drop the protection.
 
+### Changed
+
+- **`work override --clear` reports `cleared: true`.** The JSON key was a
+  count, while every other clear action in ndev reports a boolean. Read the
+  count from `len(overrides)`. The nicos-tools operation contract declares
+  `cleared` as a boolean, so the old count failed contract validation.
+
 ### Fixed
+
+- **Doctor JSON no longer emits `null`.** `fixes` and `warnings` are `[]` when
+  empty, and `swap_derate` is absent until a cost is loaded. A null failed the
+  closed nicos-tools output contract for these keys.
+
+- **`storage apply` skipped providers are typed.** The JSON keys stay
+  `provider_id` and `reason`; the text line now lists provider IDs instead of
+  Go map syntax.
 
 - **`monitor install` waits for the new resident to report.** It returned as
   soon as launchd had a PID, so a resident that crashed on start, or had not
