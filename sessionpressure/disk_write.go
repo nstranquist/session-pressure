@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +17,8 @@ const (
 	DiskWriteSummarySchemaVersion = 1
 	diskWriteModelVersion         = DiskWriteProfileQuietAdaptiveV1
 	diskWriteWindow               = 15 * time.Minute
+	diskWriteBurstWindow          = time.Minute
+	diskWriteBurstBytes           = uint64(1 << 30)
 	diskWriteHistoryWindow        = 24 * time.Hour
 	diskWriteMinimumWindow        = 14 * time.Minute
 	diskWriteLearningSamples      = 480
@@ -34,9 +37,9 @@ const (
 	diskWriteMaxExecutableModels  = 32
 	// diskWriteBaselineEpoch invalidates learned baselines without hiding
 	// hourly history. Epoch 2 excludes kernel swap-dominated windows from the
-	// quiet histogram; epoch-1 baselines trained on swap thrash as "quiet" and
-	// saturated p99 near the 64 GiB/15m bucket, so they are never merged.
-	diskWriteBaselineEpoch = 2
+	// quiet histogram. Epoch 3 discards baselines polluted by large write
+	// bursts that the adaptive detector previously accepted while learning.
+	diskWriteBaselineEpoch = 3
 	// diskWriteSwapExecutable is the synthetic writer for kernel swap-out
 	// traffic. No process rusage counter owns these bytes.
 	diskWriteSwapExecutable    = "kernel_swap"
@@ -99,6 +102,8 @@ type DiskWriteSummary struct {
 	MeasurementWindowSeconds float64             `json:"measurement_window_seconds,omitempty"`
 	CurrentBytesPerSecond    float64             `json:"current_bytes_per_second,omitempty"`
 	Window15mBytes           uint64              `json:"window_15m_bytes,omitempty"`
+	BurstWindowBytes         uint64              `json:"burst_window_bytes,omitempty"`
+	BurstActive              bool                `json:"burst_active,omitempty"`
 	Bytes24h                 uint64              `json:"bytes_24h,omitempty"`
 	UnscoredGapBytes         uint64              `json:"unscored_gap_bytes,omitempty"`
 	BaselineP99Bytes15m      uint64              `json:"baseline_p99_bytes_15m,omitempty"`
@@ -132,6 +137,7 @@ type DiskWriteTransition struct {
 	Confidence    DiskWriteConfidence `json:"confidence"`
 	Ratio         float64             `json:"ratio,omitempty"`
 	WindowBytes   uint64              `json:"window_bytes,omitempty"`
+	BurstBytes    uint64              `json:"burst_bytes,omitempty"`
 	Context       string              `json:"context,omitempty"`
 }
 
@@ -141,6 +147,7 @@ type DiskWriteAlert struct {
 	Ratio       float64
 	WindowBytes uint64
 	TopWriter   string
+	BurstBytes  uint64
 }
 
 type diskDeviceCounter struct {
@@ -279,29 +286,31 @@ type DiskWriteObserver struct {
 	now           func() time.Time
 	allowShort    bool
 
-	previousDevice    diskDeviceCounter
-	previousSwap      swapIOCounter
-	previousProcesses map[diskProcessKey]diskProcessCounter
-	previousAt        time.Time
-	volumePoints      []diskVolumePoint
-	writerPoints      []diskWriterPoint
-	baselines         map[string]*diskHistogram
-	executableModels  map[string]*diskHistogram
-	executableBytes   map[string]uint64
-	ownership         map[diskProcessKey]diskOwnership
-	context           string
-	currentHour       *diskWriteHistoryRecord
-	lastReport        DiskWriteReport
-	lastState         DiskWriteState
-	unusualSince      time.Time
-	highSince         time.Time
-	recoverySince     time.Time
-	lastTransition    time.Time
-	incidentOpen      bool
-	alertDay          string
-	alertsToday       int
-	alertStateInvalid bool
-	dominance         []string
+	previousDevice     diskDeviceCounter
+	previousSwap       swapIOCounter
+	previousProcesses  map[diskProcessKey]diskProcessCounter
+	previousAt         time.Time
+	volumePoints       []diskVolumePoint
+	writerPoints       []diskWriterPoint
+	baselines          map[string]*diskHistogram
+	executableModels   map[string]*diskHistogram
+	executableBytes    map[string]uint64
+	ownership          map[diskProcessKey]diskOwnership
+	context            string
+	currentHour        *diskWriteHistoryRecord
+	lastReport         DiskWriteReport
+	lastState          DiskWriteState
+	lastAdaptiveState  DiskWriteState
+	burstTrainingUntil time.Time
+	unusualSince       time.Time
+	highSince          time.Time
+	recoverySince      time.Time
+	lastTransition     time.Time
+	incidentOpen       bool
+	alertDay           string
+	alertsToday        int
+	alertStateInvalid  bool
+	dominance          []string
 }
 
 func NewDiskWriteObserver(dir string, policy DiskWritePolicy) *DiskWriteObserver {
@@ -699,7 +708,12 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 		ratio = float64(window15) / float64(p99)
 	}
 	confidence := diskWriteConfidenceFor(*histogram, at)
+	// Keep the adaptive hysteresis separate from the absolute burst signal.
+	lastState := observer.lastState
+	observer.lastState = observer.lastAdaptiveState
 	state, accepted := observer.classifyLocked(at, confidence, ratio, p99, writers, writerTotal)
+	observer.lastAdaptiveState = state
+	observer.lastState = lastState
 	// Memory thrash is not a quiet workload. Training on it is exactly how the
 	// epoch-1 model learned a 1 TB/hour swap storm as its normal baseline.
 	if swapDominant {
@@ -708,6 +722,18 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	if !observer.windowCoveredLocked(at) {
 		state = DiskWriteStateLearning
 		confidence = DiskWriteConfidenceLearning
+		accepted = false
+	}
+	// Only actual valid device deltas count; gaps and restored hourly totals
+	// cannot create an instantaneous burst. A single large 15-second sample is
+	// enough, including during startup and baseline learning.
+	burstBytes := observer.windowBytesLocked(at.Add(-diskWriteBurstWindow).Add(time.Nanosecond), true)
+	burst := validWindow && burstBytes >= diskWriteBurstBytes
+	if burst {
+		state = DiskWriteStateHigh
+		observer.burstTrainingUntil = at.Add(diskWriteWindow)
+	}
+	if at.Before(observer.burstTrainingUntil) {
 		accepted = false
 	}
 	observer.recordHourLocked(at, state, p99, deviceDelta, swapDelta, device, hasPrevious, validWindow)
@@ -720,7 +746,7 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 		SchemaVersion: DiskWriteSummarySchemaVersion, ModelVersion: diskWriteModelVersion,
 		CapturedAt: at, State: state, Confidence: confidence, Source: device.Source,
 		DeviceScope: "internal_ssd", AttributionScope: "all_disk_io_best_effort", Context: contextName,
-		Window15mBytes: window15, Bytes24h: bytes24h,
+		Window15mBytes: window15, BurstWindowBytes: burstBytes, BurstActive: burst, Bytes24h: bytes24h,
 		UnscoredGapBytes: observer.windowGapBytesLocked(at.Add(-diskWriteHistoryWindow)), BaselineP99Bytes15m: p99, BaselineRatio: roundRatio(ratio),
 		BaselineSamples: histogram.Count, DeviceCount: device.DeviceCount,
 		SwapOutBytes15m: swap15, SwapShare15m: roundRatio(swapShare),
@@ -760,6 +786,9 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	}
 	if swapDominant {
 		summary.Reasons = append(summary.Reasons, "swap_dominant", "baseline_excluded_swap")
+	}
+	if burst {
+		summary.Reasons = append(summary.Reasons, "absolute_write_burst")
 	}
 	if processes.AccessibleCount < processes.TotalPIDCount {
 		summary.Reasons = append(summary.Reasons, "process_attribution_partial")
@@ -993,14 +1022,18 @@ func (observer *DiskWriteObserver) transitionLocked(summary DiskWriteSummary) *D
 	if previous == "" || previous == summary.State {
 		return nil
 	}
-	if !observer.lastTransition.IsZero() && summary.CapturedAt.Sub(observer.lastTransition) < diskWriteTransitionInterval {
+	if !summary.BurstActive && !observer.lastTransition.IsZero() && summary.CapturedAt.Sub(observer.lastTransition) < diskWriteTransitionInterval {
 		return nil
 	}
 	observer.lastTransition = summary.CapturedAt
-	return &DiskWriteTransition{
+	transition := &DiskWriteTransition{
 		SchemaVersion: 1, Timestamp: summary.CapturedAt, From: previous, To: summary.State,
 		Confidence: summary.Confidence, Ratio: summary.BaselineRatio, WindowBytes: summary.Window15mBytes, Context: summary.Context,
 	}
+	if summary.BurstActive {
+		transition.BurstBytes = summary.BurstWindowBytes
+	}
+	return transition
 }
 
 func (observer *DiskWriteObserver) alertLocked(summary DiskWriteSummary) *DiskWriteAlert {
@@ -1016,7 +1049,7 @@ func (observer *DiskWriteObserver) alertLocked(summary DiskWriteSummary) *DiskWr
 		observer.alertStateInvalid = false
 	}
 	if summary.State != DiskWriteStateHigh {
-		if summary.State == DiskWriteStateNormal && observer.incidentOpen {
+		if (summary.State == DiskWriteStateNormal || (summary.State == DiskWriteStateLearning && summary.MeasurementWindowSeconds > 0 && !slices.Contains(summary.Reasons, "sample_gap_rebased"))) && observer.incidentOpen {
 			if !observer.saveAlertStateLocked(observer.alertDay, observer.alertsToday, false, summary.CapturedAt) {
 				return nil
 			}
@@ -1036,7 +1069,12 @@ func (observer *DiskWriteObserver) alertLocked(summary DiskWriteSummary) *DiskWr
 	if summary.TopWriter != nil {
 		writer = summary.TopWriter.Executable
 	}
-	return &DiskWriteAlert{Timestamp: summary.CapturedAt, State: summary.State, Ratio: summary.BaselineRatio, WindowBytes: summary.Window15mBytes, TopWriter: writer}
+	alert := &DiskWriteAlert{Timestamp: summary.CapturedAt, State: summary.State, Ratio: summary.BaselineRatio, WindowBytes: summary.Window15mBytes, TopWriter: writer}
+	if summary.BurstActive {
+		alert.BurstBytes = summary.BurstWindowBytes
+		alert.TopWriter = "" // Process counters are partial, all-volume candidates.
+	}
+	return alert
 }
 
 func (observer *DiskWriteObserver) saveAlertStateLocked(day string, alerts int, incidentOpen bool, at time.Time) bool {

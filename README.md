@@ -88,6 +88,22 @@ Default state directory: `~/.nicos-dev/session-pressure`.
 
 Policy lives at `$SESSION_PRESSURE_HOME/policy.json`. `policy init` writes observe-only defaults. `policy enable` is the first command that can block launches. `policy profile apply` accepts `balanced`, `throughput`, `interactive`, or `observe`. Add `--multi-agent` to any profile for earlier soft-launch warnings when many agents share the host. Enforcement stays as the profile sets it.
 
+### SSD burst alerts
+
+The resident flags a high write burst when valid internal SSD samples contain
+at least 1 GiB within one minute. At the default 15-second sampling interval,
+a single large sample can trigger the signal before the adaptive baseline is
+ready. Counter resets and unscored gaps do not trigger it. Burst windows are
+excluded from quiet-baseline training. `io status` reports `burst_active`,
+`burst_window_bytes`, and the `absolute_write_burst` reason when applicable.
+Device counters measure host writes, not NAND wear. Process attribution is
+partial and covers all volumes; it does not prove which process wrote the SSD.
+
+Notifications require `session-pressure io policy enable-alerts`. They are
+limited to four per day and open the Disk Writes view. Detection does not stop
+processes or launch an agent. Use `io top --live` to inspect current candidates
+and `io health` to inspect the drive's SMART counters.
+
 ### Swap-thrash derate
 
 While the host swaps hard (the resident latch, `swap_thrash_latched`), enforcing
