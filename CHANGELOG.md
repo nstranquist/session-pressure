@@ -6,6 +6,15 @@
 
 ### Added
 
+- **Nested work runs execute inline under the parent lease.** A leased
+  command's children inherit `SESSION_PRESSURE_WORK_OPERATION`. A nested
+  `work run` whose parent lease is live, whose lease leader is alive, and
+  whose process group is the leased group replaces itself with the command
+  and takes no second lease. Before, a build inside a build waited for
+  capacity that only its own parent could free (5 + 5 on a capacity of 8).
+  A process that left the group or outlived the lease uses normal admission.
+  The variable is excluded from the express reuse fingerprint.
+
 - **Source-revision check across executing binaries.** Each binary records
   the session-pressure revision it was built from: a link-time stamp
   (`-X github.com/nstranquist/session-pressure/sessionpressure.sourceRevision=<sha>`),

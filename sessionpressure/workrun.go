@@ -339,11 +339,15 @@ var workShellBookkeepingEnv = map[string]bool{
 	"_":      true,
 	"OLDPWD": true,
 	"SHLVL":  true,
+	// Set per launch by withWorkOperationEnv; a per-run ID must not perturb
+	// the reuse fingerprint.
+	WorkOperationEnv: true,
 }
 
 // WorkEnvironment builds the environment handed to a coordinated child. The
 // same slice is what the express reuse fingerprint hashes, so what was hashed
-// is exactly what ran — do not let the two diverge.
+// is exactly what ran — do not let the two diverge. The one exception is
+// WorkOperationEnv: a per-run ID that RunWorkCommand appends at launch.
 func WorkEnvironment(base []string, limits WorkLimits, class WorkClass) ([]string, error) {
 	environment := make([]string, 0, len(base)+1)
 	for _, value := range base {
@@ -839,6 +843,9 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	options.Class = ResolveWorkClass(options.Class, options.Exclusive, options.Command)
 	if options.Progress == "" {
 		options.Progress = WorkProgressHuman
+	}
+	if parent, nested := nestedWorkParent(coordinator, os.Environ()); nested {
+		return runNestedWorkCommand(parent, options, streams)
 	}
 	if admissionCheck == nil {
 		admissionCheck = func() Admission { return ConfiguredWorkHostAdmission(context.Background()) }
@@ -1347,7 +1354,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		}
 		return 1, errors.Join(fmt.Errorf("configure leased command: %w", environmentErr), recordTerminal(WorkEventFailed, "configure_failed", nil))
 	}
-	command.Env = environment
+	command.Env = withWorkOperationEnv(environment, operationID)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if startErr := command.Start(); startErr != nil {
 		if gate != nil {
