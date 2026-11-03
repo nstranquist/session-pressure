@@ -1,6 +1,7 @@
 package sessionpressure
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -103,7 +104,9 @@ func BuildWorkCalibrationReport(events []WorkEvent, since, generatedAt time.Time
 
 	// Data-driven retune hint: only suggest when samples exist; never invent thresholds.
 	totalTest := report.ExpressTestOps + report.FullTestOps
-	if totalTest >= 20 && report.ExpressTestShare < 0.2 {
+	if idle := stats.ReviewSignals.QueueWaitsIdleHost; idle >= queueIdleHostHintMinimum {
+		report.ThresholdRetuneHint = fmt.Sprintf("%d of %d measured queue waits (>=30s) ran while the host was under %.0f%% CPU; leased work under-uses its reserved weight, so review class weights or work capacity before CPU thresholds", idle, stats.ReviewSignals.QueueWaitsWithCPUEvidence, queueIdleHostCPUPercent)
+	} else if totalTest >= 20 && report.ExpressTestShare < 0.2 {
 		report.ThresholdRetuneHint = "low express-test share with adequate samples; prefer express-test for package-scoped go test before considering threshold changes"
 	} else if stats.OperationCount < 10 {
 		report.ThresholdRetuneHint = "insufficient calibration volume; no host threshold retune"
@@ -136,6 +139,9 @@ func BuildWorkCalibrationReport(events []WorkEvent, since, generatedAt time.Time
 	_ = classOps
 	return report
 }
+
+// queueIdleHostHintMinimum keeps one stray wait from steering a retune.
+const queueIdleHostHintMinimum = 3
 
 // SuppressIfAlreadyApplied clears the advisory suggestion when the live policy
 // already has multi-agent-soft effects. Suggestion remains read-only.

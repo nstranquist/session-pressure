@@ -153,6 +153,14 @@ type WorkEvent struct {
 	// Terminal events record how long an idle leased group held no weight.
 	IdleParkedMilliseconds int64 `json:"idle_parked_ms,omitempty"`
 	IdleParkCount          int   `json:"idle_park_count,omitempty"`
+
+	// Queue CPU evidence is measured once, at the first queue block (capacity,
+	// fairness, or reservation). It separates a justified wait (a busy host)
+	// from a wait behind weight that leased work reserves but does not use.
+	QueueHostCPUAvailable        bool    `json:"queue_host_cpu_available,omitempty"`
+	QueueHostCPUPercent          float64 `json:"queue_host_cpu_percent,omitempty"`
+	QueueCoordinatedCPUAvailable bool    `json:"queue_coordinated_cpu_available,omitempty"`
+	QueueCoordinatedCPUPercent   float64 `json:"queue_coordinated_cpu_percent,omitempty"`
 }
 
 func (event WorkEvent) Validate() error {
@@ -213,6 +221,14 @@ func (event WorkEvent) Validate() error {
 	}
 	if math.IsNaN(event.CoordinatedWorkCPUPercent) || math.IsInf(event.CoordinatedWorkCPUPercent, 0) || event.CoordinatedWorkCPUPercent < 0 || event.CoordinatedWorkCPUPercent > 100 {
 		return errors.New("work event coordinated CPU percent must be between 0 and 100")
+	}
+	for _, percent := range []float64{event.QueueHostCPUPercent, event.QueueCoordinatedCPUPercent} {
+		if math.IsNaN(percent) || math.IsInf(percent, 0) || percent < 0 || percent > 100 {
+			return errors.New("work event queue CPU percent must be between 0 and 100")
+		}
+	}
+	if (event.QueueHostCPUPercent > 0 && !event.QueueHostCPUAvailable) || (event.QueueCoordinatedCPUPercent > 0 && !event.QueueCoordinatedCPUAvailable) {
+		return errors.New("work event queue CPU percent requires available evidence")
 	}
 	if math.IsNaN(event.CoordinatedWorkInventoryAgeSeconds) || math.IsInf(event.CoordinatedWorkInventoryAgeSeconds, 0) || event.CoordinatedWorkInventoryAgeSeconds < 0 {
 		return errors.New("work event coordinated inventory age cannot be negative or non-finite")
@@ -1007,6 +1023,20 @@ type WorkReviewSignals struct {
 	// IdleParked* measure weight returned to the queue by idle leased groups.
 	IdleParkedOperations   int   `json:"idle_parked_operations"`
 	IdleParkedMilliseconds int64 `json:"idle_parked_ms"`
+	// Queue waits of at least queueWaitEvidenceMS with host CPU measured at the
+	// first block. IdleHost counts the waits while the host was less than half
+	// busy: reserved weight, not CPU, held the agent back.
+	QueueWaitsWithCPUEvidence int `json:"queue_waits_with_cpu_evidence"`
+	QueueWaitsIdleHost        int `json:"queue_waits_idle_host"`
+}
+
+const (
+	queueWaitEvidenceMS     = int64(30 * time.Second / time.Millisecond)
+	queueIdleHostCPUPercent = 50.0
+)
+
+func isQueueBlocker(blocker WorkBlocker) bool {
+	return blocker == WorkBlockerCapacity || blocker == WorkBlockerFairness || blocker == WorkBlockerReservation
 }
 
 // Closed outcomes that classify a cancelled operation as wrapper/agent interrupt.
@@ -1378,6 +1408,12 @@ func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkS
 		case WorkEventAcquired:
 			stats.Acquired++
 			state.leaseWaitMS = event.WaitMilliseconds
+			if isQueueBlocker(event.Blocker) && event.QueueWaitMilliseconds >= queueWaitEvidenceMS && event.QueueHostCPUAvailable {
+				signals.QueueWaitsWithCPUEvidence++
+				if event.QueueHostCPUPercent < queueIdleHostCPUPercent {
+					signals.QueueWaitsIdleHost++
+				}
+			}
 		case WorkEventReacquired:
 			state.leaseWaitMS = event.WaitMilliseconds
 		case WorkEventStarted:
