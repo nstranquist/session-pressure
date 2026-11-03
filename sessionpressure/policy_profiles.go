@@ -33,6 +33,10 @@ type ApplyProfileOptions struct {
 	// WithAutoShed is honored only for enforcing profiles. Observe and legacy
 	// advisory aliases always force AutoShedCritical=false.
 	WithAutoShed bool
+	// MultiAgent layers the earlier soft-launch knobs of multi-agent-soft onto
+	// any profile. Enforcement and multi-agent warnings are independent axes;
+	// a many-agent host should not have to give up protection to get them.
+	MultiAgent bool
 }
 
 // multi-agent soft launch knobs (observe-only; never hard enforce by default).
@@ -172,6 +176,9 @@ func ApplyPolicyProfile(base Policy, name string, opts ApplyProfileOptions) (Pol
 		sort.Strings(names)
 		return Policy{}, fmt.Errorf("unknown policy profile %q; want one of %s", name, strings.Join(names, ", "))
 	}
+	if opts.MultiAgent {
+		policy.LaunchAdmission = multiAgentSoftLaunchAdmission(policy.WorkLimits.Capacity)
+	}
 	if opts.WithAutoShed && !policy.EnforceAdmission {
 		return Policy{}, fmt.Errorf("auto-shed requires enforce admission")
 	}
@@ -179,6 +186,13 @@ func ApplyPolicyProfile(base Policy, name string, opts ApplyProfileOptions) (Pol
 		return Policy{}, err
 	}
 	return policy, nil
+}
+
+// HasMultiAgentLaunchAdmission reports the earlier multi-agent soft-launch
+// knobs regardless of enforcement, i.e. multi-agent-soft or --multi-agent.
+func HasMultiAgentLaunchAdmission(policy Policy) bool {
+	return policy.LaunchAdmission.Mode == LaunchAdmissionModeSoft &&
+		policy.LaunchAdmission.OldestWaitBlockSeconds == multiAgentSoftOldestWaitSeconds
 }
 
 // MatchesMultiAgentSoft reports whether policy already has the multi-agent-soft

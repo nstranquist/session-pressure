@@ -103,6 +103,25 @@ struct CoreTests {
         let noCal = WorkCalibration(schemaVersion: 1, operationCount: 2)
         #expect(PolicySuggestionFactory.current(from: noCal, policy: alreadyBalanced) == nil)
 
+        // An enforcing host keeps its profile and only gains earlier warnings.
+        let keepProfile = """
+        {"ok":true,"action":"work.report","calibration":{"schema_version":1,"operation_count":170,
+         "suggested_policy_profile":"balanced","suggested_policy_profile_reason":"multi_agent_queue_pressure",
+         "suggested_policy_profile_flags":["--multi-agent"],"review_signals":{"long_wait_operations":20}}}
+        """
+        let env3 = try PressureJSON.decode(WorkReportEnvelope.self, from: Data(keepProfile.utf8))
+        #expect(env3.calibration?.suggestedPolicyProfileFlags == ["--multi-agent"])
+        let additive = PolicySuggestionFactory.current(from: env3.calibration, policy: alreadyBalanced)
+        #expect(additive?.kind == .calibration)
+        #expect(additive?.applyCommand == "ndev session pressure policy profile apply balanced --multi-agent")
+        #expect(additive?.dryRunCommand.hasSuffix("--multi-agent --dry-run") == true)
+        #expect(additive?.weakensProtection == false)
+        #expect(additive?.title == "Balanced + multi-agent warnings")
+        var balancedWithWarnings = alreadyBalanced
+        balancedWithWarnings.launchAdmission = PolicyLaunchAdmission(
+            mode: "soft", queueDepthBlock: 8, oldestWaitBlockSeconds: 60, resumeBehavior: "auto")
+        #expect(PolicySuggestionFactory.current(from: env3.calibration, policy: balancedWithWarnings) == nil)
+
         let absent = """
         {"ok":true,"action":"work.report","calibration":{"schema_version":1,"operation_count":2}}
         """
