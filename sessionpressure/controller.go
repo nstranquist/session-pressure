@@ -24,9 +24,12 @@ type ControllerDecision struct {
 	BlockAgentLaunch bool           `json:"block_agent_launch"`
 	// SwapThrash mirrors the resident latch. It never sets BlockWork or
 	// BlockAgentLaunch; the work gate derates heavy-work concurrency instead.
-	SwapThrash bool     `json:"swap_thrash,omitempty"`
-	Dimension  string   `json:"dimension,omitempty"`
-	Reasons    []string `json:"reasons,omitempty"`
+	SwapThrash bool `json:"swap_thrash,omitempty"`
+	// SwapThrashCause is the resident attribution; "external" means the
+	// derate no longer defers work this episode.
+	SwapThrashCause string   `json:"swap_thrash_cause,omitempty"`
+	Dimension       string   `json:"dimension,omitempty"`
+	Reasons         []string `json:"reasons,omitempty"`
 }
 
 // ClassifyController applies the safety floors without changing the legacy
@@ -58,6 +61,9 @@ func ClassifyController(snapshot Snapshot, policy Policy) ControllerDecision {
 		ThermalState: thermal,
 		LowPowerMode: snapshot.LowPowerMode,
 		SwapThrash:   snapshot.SwapIOAvailable && snapshot.SwapThrashLatched,
+	}
+	if decision.SwapThrash {
+		decision.SwapThrashCause = snapshot.SwapThrashCause
 	}
 	if memory.Level.AtLeast(LevelCritical) || thermal == ThermalStateCritical {
 		decision.Mode = ControllerModeEmergency

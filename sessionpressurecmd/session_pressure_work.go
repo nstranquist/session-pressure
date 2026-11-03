@@ -517,6 +517,7 @@ func cmdSessionPressureWorkStats(g *Flags, dir string, policy sessionpressure.Po
 		return sessionPressureError(err.Error(), 1)
 	}
 	stats := sessionpressure.SummarizeWorkEvents(events, options.since, time.Now())
+	attachSwapThrashEpisodes(&stats, dir)
 	// One source of truth: embed calibration ratios on stats when JSON.
 	calibration := sessionpressure.BuildWorkCalibrationReport(events, options.since, time.Now().UTC())
 	calibration.SuppressIfAlreadyApplied(policy)
@@ -531,12 +532,40 @@ func cmdSessionPressureWorkStats(g *Flags, dir string, policy sessionpressure.Po
 		return emitPressure(g, payload, "", 0)
 	}
 	printWorkEventDiagnostics(diagnostics)
-	fmt.Printf("operations=%d events=%d open=%d expired=%d cancelled=%d long_wait=%d cache_hits=%d cache_misses=%d singleflight_waits=%d cpu_deferrals=%d memory_deferrals=%d storage_deferrals=%d slowdown_slo=%s slowdown_scope=%s target_p95=%.1f samples_required=%d evaluated=%d deferred=%d\n", stats.OperationCount, stats.EventCount, stats.OpenOperations, stats.ReviewSignals.ExpiredOwnerEvents, stats.ReviewSignals.CancelledOperations, stats.ReviewSignals.LongWaitOperations, stats.ReviewSignals.CacheHits, stats.ReviewSignals.CacheMisses, stats.ReviewSignals.SingleflightWaits, stats.ReviewSignals.CPUOnlyDeferrals, stats.ReviewSignals.MemoryDeferrals, stats.ReviewSignals.StorageDeferrals, stats.ServiceLevel.Status, stats.ServiceLevel.Scope, stats.ServiceLevel.TargetP95BoundedSlowdown, stats.ServiceLevel.SamplesRequired, stats.ServiceLevel.EvaluatedClasses, len(stats.ServiceLevel.DeferredClasses))
+	fmt.Printf("operations=%d events=%d open=%d expired=%d cancelled=%d long_wait=%d cache_hits=%d cache_misses=%d singleflight_waits=%d cpu_deferrals=%d memory_deferrals=%d storage_deferrals=%d swap_deferrals=%d slowdown_slo=%s slowdown_scope=%s target_p95=%.1f samples_required=%d evaluated=%d deferred=%d\n", stats.OperationCount, stats.EventCount, stats.OpenOperations, stats.ReviewSignals.ExpiredOwnerEvents, stats.ReviewSignals.CancelledOperations, stats.ReviewSignals.LongWaitOperations, stats.ReviewSignals.CacheHits, stats.ReviewSignals.CacheMisses, stats.ReviewSignals.SingleflightWaits, stats.ReviewSignals.CPUOnlyDeferrals, stats.ReviewSignals.MemoryDeferrals, stats.ReviewSignals.StorageDeferrals, stats.ReviewSignals.SwapDeferrals, stats.ServiceLevel.Status, stats.ServiceLevel.Scope, stats.ServiceLevel.TargetP95BoundedSlowdown, stats.ServiceLevel.SamplesRequired, stats.ServiceLevel.EvaluatedClasses, len(stats.ServiceLevel.DeferredClasses))
 	for _, class := range stats.ByClass {
 		fmt.Printf("  %-8s operations=%d completed=%d reused=%d failed=%d cancelled=%d expired=%d wait_p95=%s runtime_p95=%s\n", class.Class, class.Operations, class.Completed, class.Reused, class.Failed, class.Cancelled, class.Expired, time.Duration(class.Wait.P95MS)*time.Millisecond, time.Duration(class.Runtime.P95MS)*time.Millisecond)
 	}
 	fmt.Printf("calibration express_test_share=%.2f express_build_share=%.2f reuse_hits=%d wrapper_interrupts=%d retune=%s\n", calibration.ExpressTestShare, calibration.ExpressBuildShare, calibration.ReuseHits, calibration.WrapperInterruptOperations, calibration.ThresholdRetuneHint)
+	printSwapDerateCost(stats.SwapDerate)
 	return 0
+}
+
+// attachSwapThrashEpisodes adds resident latch history to the derate cost.
+// History is diagnostic: a read failure leaves the episodes out, it never
+// fails the stats command.
+func attachSwapThrashEpisodes(stats *sessionpressure.WorkStats, dir string) {
+	episodes, err := sessionpressure.ReadSwapThrashEpisodes(dir, stats.Since, stats.GeneratedAt)
+	if err != nil {
+		return
+	}
+	stats.SwapDerate.AttachEpisodes(episodes)
+}
+
+func printSwapDerateCost(cost sessionpressure.WorkSwapDerateCost) {
+	line := fmt.Sprintf("swap_derate verdict=%s deferred=%d external_bypasses=%d wait_total=%s wait_p95=%s wait_max=%s per_day=%.1fm budget=%.0fm/day,%s max",
+		cost.Verdict, cost.DeferredOperations, cost.ExternalBypasses,
+		time.Duration(cost.WaitTotalMS)*time.Millisecond, time.Duration(cost.Wait.P95MS)*time.Millisecond, time.Duration(cost.Wait.MaximumMS)*time.Millisecond,
+		cost.WaitMinutesPerDay, cost.BudgetMinutesPerDay, time.Duration(cost.BudgetMaxWaitMS)*time.Millisecond)
+	if episodes := cost.Episodes; episodes != nil {
+		line += fmt.Sprintf(" episodes=%d open=%v external=%d latched=%s longest=%s",
+			episodes.Count, episodes.Open, episodes.ExternalEpisodes,
+			(time.Duration(episodes.LatchedSeconds) * time.Second).Round(time.Second), (time.Duration(episodes.LongestSeconds) * time.Second).Round(time.Second))
+	}
+	fmt.Println(line)
+	if cost.Advice != "" {
+		fmt.Println("  advice:", cost.Advice)
+	}
 }
 
 func cmdSessionPressureWorkReport(g *Flags, dir string, policy sessionpressure.Policy, args []string) int {

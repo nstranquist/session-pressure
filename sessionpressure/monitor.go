@@ -265,7 +265,7 @@ func (stats *monitorStats) recordEventBytes(event string, bytes int64) {
 	if bytes <= 0 {
 		return
 	}
-	if event == "state_transition" || event == "sample_recovered" || event == "resource_cleanup_error" || event == "resource_cleanup_recovered" {
+	if event == "state_transition" || event == "sample_recovered" || event == "resource_cleanup_error" || event == "resource_cleanup_recovered" || event == SwapThrashTransitionEvent {
 		stats.transitionEventMaxBytes = max(stats.transitionEventMaxBytes, bytes)
 		return
 	}
@@ -489,6 +489,7 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 	memoryHistory := make([]memoryObservation, 0, memoryMomentumWindow)
 	if latest, ok := monitor.Store.ReadLatest(); ok {
 		lastStorageLevel = latest.Storage.Level
+		swapLatch.resume(latest, monitor.Now().UTC())
 		if age := monitor.Now().UTC().Sub(latest.Timestamp); age >= -5*time.Second && age <= 10*time.Minute {
 			memoryHistory = append(memoryHistory, memoryObservation{Timestamp: latest.Timestamp, FreePercent: float64(latest.FreePercent)})
 		}
@@ -571,7 +572,13 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 			}
 			snapshot.ConsecutiveSamples = consecutive
 			snapshot.MemoryConsecutiveSamples = memoryConsecutive
-			swapLatch.observe(&snapshot, monitor.Policy.Thresholds)
+			if transition, changed := swapLatch.advance(&snapshot, monitor.Policy.Thresholds, monitor.Policy.WorkLimits); changed {
+				beforeBytes := monitor.Store.BytesForDay(snapshot.Timestamp)
+				if appendErr := monitor.Store.AppendEvent(TelemetryEvent{Timestamp: snapshot.Timestamp, Event: SwapThrashTransitionEvent, SwapThrash: &transition}); appendErr != nil {
+					return appendErr
+				}
+				stats.recordEventBytes(SwapThrashTransitionEvent, monitor.Store.BytesForDay(snapshot.Timestamp)-beforeBytes)
+			}
 			snapshot.TelemetryBytesToday = monitor.Store.BytesForDay(snapshot.Timestamp)
 			stats.apply(&snapshot, monitor.Policy)
 			snapshot = Evaluate(snapshot, monitor.Policy)

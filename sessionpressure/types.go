@@ -206,7 +206,12 @@ type Snapshot struct {
 	// SwapThrashLatched is the resident's hysteretic thrash verdict. Admission
 	// samplers project it from fresh resident evidence; it derates new heavy
 	// work under enforcing profiles and never blocks agent launches.
-	SwapThrashLatched          bool                    `json:"swap_thrash_latched,omitempty"`
+	SwapThrashLatched bool `json:"swap_thrash_latched,omitempty"`
+	// SwapThrashCause is the resident's attribution for a latched episode:
+	// agents, unattributed, or external. Only external lifts the derate.
+	SwapThrashCause string `json:"swap_thrash_cause,omitempty"`
+	// SwapThrashSince is the latch entry time of the current episode.
+	SwapThrashSince            time.Time               `json:"swap_thrash_since,omitzero"`
 	LogicalCPUCount            int                     `json:"logical_cpu_count"`
 	HostCPUPercent             float64                 `json:"host_cpu_percent"`
 	HostCPUAvailable           bool                    `json:"host_cpu_available"`

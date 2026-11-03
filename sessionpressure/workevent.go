@@ -1020,6 +1020,10 @@ type WorkReviewSignals struct {
 	WarningCapacityDeferrals   int `json:"warning_capacity_deferrals"`
 	SwapThrashAdmissions       int `json:"swap_thrash_admissions"`
 	SwapThrashDeferrals        int `json:"swap_thrash_deferrals"`
+	// SwapDeferrals counts operations whose first pressure deferral was the
+	// swap-thrash derate. They used to be miscounted as memory deferrals.
+	SwapDeferrals              int `json:"swap_deferrals"`
+	SwapThrashExternalBypasses int `json:"swap_thrash_external_bypasses"`
 	// IdleParked* measure weight returned to the queue by idle leased groups.
 	IdleParkedOperations   int   `json:"idle_parked_operations"`
 	IdleParkedMilliseconds int64 `json:"idle_parked_ms"`
@@ -1170,6 +1174,7 @@ type WorkStats struct {
 	ServiceLevel                    WorkServiceLevel                    `json:"service_level"`
 	PressureConditionedServiceLevel WorkPressureConditionedServiceLevel `json:"pressure_conditioned_service_level"`
 	CalibrationCohorts              []WorkCalibrationCohort             `json:"calibration_cohorts"`
+	SwapDerate                      WorkSwapDerateCost                  `json:"swap_derate"`
 }
 
 func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkStats {
@@ -1340,6 +1345,9 @@ func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkS
 			case SwapThrashDeferredDecision:
 				signals.SwapThrashDeferrals++
 				state.warningDecisionSeen = true
+			case SwapThrashExternalDecision:
+				signals.SwapThrashExternalBypasses++
+				state.warningDecisionSeen = true
 			}
 		}
 		stats := byClass[event.Class]
@@ -1355,6 +1363,9 @@ func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkS
 				state.pressureSignal = true
 			} else if event.PressureDimension == "storage" {
 				signals.StorageDeferrals++
+				state.pressureSignal = true
+			} else if event.PressureDimension == "swap" {
+				signals.SwapDeferrals++
 				state.pressureSignal = true
 			} else if event.PressureDimension != "" {
 				signals.MemoryDeferrals++
@@ -1601,6 +1612,7 @@ func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkS
 		OperationCount: len(operations), OpenOperations: open, ByClass: resultClasses,
 		ReviewSignals: signals, ServiceLevel: serviceLevel,
 		PressureConditionedServiceLevel: conditioned, CalibrationCohorts: cohorts,
+		SwapDerate: summarizeSwapDerate(events, since, generatedAt),
 	}
 }
 

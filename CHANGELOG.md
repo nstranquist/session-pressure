@@ -13,6 +13,40 @@
   idle-host waits, the retune hint says that reserved weight, not CPU, held
   agents back, and names class weights and work capacity as the levers.
 
+- **External-storm release for the swap-thrash derate.** Holding new heavy
+  work only helps when agents are part of the memory demand. The resident now
+  attributes each latched episode with `swap_thrash_cause`: `agents` (leased
+  work RSS at or above `work_limits.swap_thrash_agent_share_percent` of RAM,
+  default 25), `unattributed` (leased work is small, but not yet for the
+  window), or `external`. When leased work stays small for
+  `work_limits.swap_thrash_external_release_seconds` (default 300; negative is
+  strict, never release) while the storm goes on, the episode is external and
+  the derate stops deferring until the latch releases. Leased work that grows
+  past the share re-engages it; the proof is sticky for the episode and for
+  one window after release, so an ongoing outside storm is not charged twice.
+  Missing inventory or memory size counts as small leased work. Work let
+  through is labelled `swap_thrash_external`. Before, a browser- or
+  editor-driven storm held every queued build for the whole storm.
+- **Swap-thrash history.** The resident appends a `swap_thrash_transition`
+  telemetry row on latch entry, release (with `episode_seconds` and
+  `external_seconds`), and each derate release or resume, with swap-out,
+  swap use, and leased-work RSS. Heartbeats carry `swap_thrash_latched` and
+  `swap_thrash_cause`. Storm length was not reconstructable before.
+- **Measured derate cost.** `work stats` has a `swap_derate` block: deferred
+  operations, external bypasses, wait (total, p95, maximum, per day), resident
+  episodes (count, latched and external time, longest, interrupted), and a
+  `verdict` of `unexercised`, `within_budget`, or `over_budget` (more than 30
+  minutes per day, or one wait over 15 minutes), with loosening advice.
+  `doctor` explains a live storm, names the largest non-agent memory users
+  when it is external, and warns when the last 24 hours are over budget. The
+  doctor reads history only when the latch is set or held in the window.
+
+### Fixed
+
+- **Swap deferrals were counted as memory deferrals.** The review now counts
+  them as `swap_deferrals`, and `swap_thrash_external_bypasses` counts work
+  admitted through an external storm.
+
 ## 0.6.0 — 2026-11-02
 
 ### Added
