@@ -98,6 +98,55 @@ func InspectArtifactDrift(candidateBinary, dir string) ArtifactDrift {
 	return drift
 }
 
+// ResidentReport says whether the resident that launchd started is sampling.
+// A launchd PID proves only that a process exists. A resident that crashes on
+// start, or has not sampled yet, has written no report.
+type ResidentReport struct {
+	Ready          bool   `json:"ready"`
+	PID            int    `json:"pid"`
+	WaitedMS       int64  `json:"waited_ms"`
+	SourceRevision string `json:"source_revision,omitempty"`
+	Detail         string `json:"detail,omitempty"`
+}
+
+// WaitForResidentReport polls the latest report until the resident with pid,
+// running the installed artifact, has written one, or until ctx ends. The
+// resident samples once at start, so a healthy one reports within seconds.
+func WaitForResidentReport(ctx context.Context, dir string, pid int, poll time.Duration) ResidentReport {
+	started := time.Now()
+	report := ResidentReport{PID: pid}
+	installed, found, err := LoadInstalledArtifact(dir)
+	switch {
+	case pid <= 0:
+		report.Detail = "launchd reported no resident pid"
+		return report
+	case err != nil || !found:
+		report.Detail = "no installed artifact manifest to match the resident against"
+		return report
+	}
+	if poll <= 0 {
+		poll = 250 * time.Millisecond
+	}
+	store := NewTelemetryStore(dir)
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for {
+		if latest, ok := store.ReadLatest(); ok && latest.GuardPID == pid && latest.GuardBinarySHA256 == installed.SHA256 {
+			report.Ready = true
+			report.SourceRevision = strings.TrimSpace(latest.GuardSourceRevision)
+			report.WaitedMS = time.Since(started).Milliseconds()
+			return report
+		}
+		select {
+		case <-ctx.Done():
+			report.WaitedMS = time.Since(started).Milliseconds()
+			report.Detail = "the resident wrote no report for the installed artifact before the deadline"
+			return report
+		case <-ticker.C:
+		}
+	}
+}
+
 // InspectArtifactSourceRevisions is the cheap revision-only probe for doctor.
 func InspectArtifactSourceRevisions(dir string) ArtifactSourceRevisions {
 	return inspectSourceRevisions(SourceRevision(), os.Getenv(FrontDoorRevisionEnv), installedHelperSourceRevision(dir), "")

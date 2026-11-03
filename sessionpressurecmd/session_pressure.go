@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -191,6 +192,10 @@ type LaunchdController interface {
 	EnsureRunning(context.Context) (sessionpressure.LaunchdStatus, error)
 	Status(context.Context) sessionpressure.LaunchdStatus
 }
+
+// ResidentReportTimeout bounds how long monitor install waits for the new
+// resident's first report. Tests lower it.
+var ResidentReportTimeout = 30 * time.Second
 
 var NewLaunchdController = func(dir string) (LaunchdController, error) {
 	return sessionpressure.NewLaunchdManager("", dir)
@@ -1085,8 +1090,21 @@ func cmdSessionPressureMonitor(g *Flags, args []string) int {
 			}
 			return sessionPressureError(err.Error(), 1)
 		}
-		payload := map[string]any{"ok": true, "action": "monitor.install", "launchd": status}
-		return emitPressure(g, payload, fmt.Sprintf("installed %s pid=%d policy=%s\n", status.Label, status.PID, map[bool]string{true: "enforced", false: "observe-only"}[runtime.policy.EnforceAdmission]), 0)
+		// "installed" means running and reporting. Release the policy lock
+		// first: the wait needs no lock, and other policy commands should not
+		// queue behind it.
+		mutation.Close()
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), ResidentReportTimeout)
+		resident := sessionpressure.WaitForResidentReport(waitCtx, runtime.dir, status.PID, 250*time.Millisecond)
+		waitCancel()
+		payload := map[string]any{"ok": true, "action": "monitor.install", "launchd": status, "resident_report": resident}
+		text := fmt.Sprintf("installed %s pid=%d policy=%s\n", status.Label, status.PID, map[bool]string{true: "enforced", false: "observe-only"}[runtime.policy.EnforceAdmission])
+		if resident.Ready {
+			text += fmt.Sprintf("resident reporting after %s (source %s)\n", (time.Duration(resident.WaitedMS) * time.Millisecond).Round(100*time.Millisecond), sessionpressure.ShortRevision(resident.SourceRevision))
+		} else {
+			text += fmt.Sprintf("warning: resident pid=%d is not reporting (%s); check `monitor status` and %s\n", status.PID, resident.Detail, filepath.Join(runtime.dir, "monitor.stderr.log"))
+		}
+		return emitPressure(g, payload, text, 0)
 	case "status":
 		if len(args) != 0 {
 			return sessionPressureError("monitor status accepts no arguments", 2)
