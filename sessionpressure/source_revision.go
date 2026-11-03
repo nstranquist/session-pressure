@@ -156,6 +156,26 @@ func inspectSourceRevisions(cli, frontDoor, installedHelper, candidateHelper str
 	return revisions
 }
 
+// AgreementSummary names exactly which executing binaries were compared, so
+// an unknown front door is never reported as agreeing.
+func (revisions ArtifactSourceRevisions) AgreementSummary() string {
+	var known, unknown []string
+	for _, entry := range []struct{ name, value string }{
+		{"cli", revisions.CLI}, {"front door", revisions.FrontDoor}, {"helper", revisions.InstalledHelper},
+	} {
+		if entry.value == "" {
+			unknown = append(unknown, entry.name)
+		} else {
+			known = append(known, entry.name)
+		}
+	}
+	summary := strings.Join(known, ", ") + " agree"
+	if len(unknown) > 0 {
+		summary += "; " + strings.Join(unknown, ", ") + " unknown"
+	}
+	return summary
+}
+
 // PromoteCommand is the host's full promotion command for operator hints.
 func PromoteCommand() string {
 	if command := strings.TrimSpace(os.Getenv(PromoteCommandEnv)); command != "" {
