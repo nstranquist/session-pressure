@@ -1492,6 +1492,33 @@ type WorkLease struct {
 // for example after release or owner-expiry reconciliation.
 var ErrWorkLeaseMissing = errors.New("work lease is not active")
 
+// ErrWorkParkSchemaPinned reports a document pinned below the current schema
+// by a live legacy cohort. Its downgrade encoder would drop parked_at, so the
+// lease would stay charged while the wrapper believed it parked. Parking fails
+// closed instead, and the wrapper keeps the lease charged until the pin lifts.
+var ErrWorkParkSchemaPinned = errors.New("work state is pinned to a legacy schema; lease parking unavailable")
+
+// parkWorkLeaseRecord is the pure SetParked mutation.
+func parkWorkLeaseRecord(state *workState, leaseID string, parked bool, at time.Time) (*time.Time, error) {
+	pinned := state.SchemaVersion < workStateSchemaVersion && state.legacyActive && (len(state.Leases) > 0 || len(state.Waiters) > 0)
+	for index := range state.Leases {
+		if state.Leases[index].ID != leaseID {
+			continue
+		}
+		switch {
+		case parked && pinned:
+			return state.Leases[index].ParkedAt, ErrWorkParkSchemaPinned
+		case parked && state.Leases[index].ParkedAt == nil:
+			stamp := at.UTC()
+			state.Leases[index].ParkedAt = &stamp
+		case !parked:
+			state.Leases[index].ParkedAt = nil
+		}
+		return state.Leases[index].ParkedAt, nil
+	}
+	return nil, ErrWorkLeaseMissing
+}
+
 // SetParked charges (false) or releases (true) this lease's weight. It is
 // idempotent: re-asserting a parked lease keeps its original ParkedAt, which
 // also self-heals an n-1 writer that dropped the field.
@@ -1500,21 +1527,11 @@ func (lease *WorkLease) SetParked(ctx context.Context, parked bool, at time.Time
 		return ErrWorkLeaseMissing
 	}
 	_, err := lease.coordinator.withState(ctx, func(state *workState) error {
-		for index := range state.Leases {
-			if state.Leases[index].ID != lease.record.ID {
-				continue
-			}
-			switch {
-			case parked && state.Leases[index].ParkedAt == nil:
-				stamp := at.UTC()
-				state.Leases[index].ParkedAt = &stamp
-			case !parked:
-				state.Leases[index].ParkedAt = nil
-			}
-			lease.record.ParkedAt = state.Leases[index].ParkedAt
-			return nil
+		parkedAt, err := parkWorkLeaseRecord(state, lease.record.ID, parked, at)
+		if err == nil {
+			lease.record.ParkedAt = parkedAt
 		}
-		return ErrWorkLeaseMissing
+		return err
 	})
 	return err
 }

@@ -265,3 +265,24 @@ func TestIdleParkPolicyValidationAndLegacyFill(t *testing.T) {
 		t.Fatalf("legacy limits idle park=%d", got)
 	}
 }
+
+func TestParkWorkLeaseRecordFailsClosedOnPinnedLegacySchema(t *testing.T) {
+	at := time.Date(2026, 11, 2, 23, 0, 0, 0, time.UTC)
+	state := workState{SchemaVersion: workStateSchemaVersion - 1, legacyActive: true, Leases: []WorkLeaseRecord{{ID: "a", Weight: 5}}}
+	if _, err := parkWorkLeaseRecord(&state, "a", true, at); !errors.Is(err, ErrWorkParkSchemaPinned) || state.Leases[0].ParkedAt != nil {
+		t.Fatalf("pinned schema parked: err=%v parked_at=%v", err, state.Leases[0].ParkedAt)
+	}
+	// Un-parking is always allowed: it only restores the conservative charge.
+	state.Leases[0].ParkedAt = &at
+	if _, err := parkWorkLeaseRecord(&state, "a", false, at); err != nil || state.Leases[0].ParkedAt != nil {
+		t.Fatalf("unpark on pinned schema: err=%v", err)
+	}
+	// An old document with no live legacy cohort is upgraded on write, so it parks.
+	state.legacyActive = false
+	if stamp, err := parkWorkLeaseRecord(&state, "a", true, at); err != nil || stamp == nil || !stamp.Equal(at) {
+		t.Fatalf("unpinned old schema did not park: %v %v", stamp, err)
+	}
+	if _, err := parkWorkLeaseRecord(&state, "missing", true, at); !errors.Is(err, ErrWorkLeaseMissing) {
+		t.Fatalf("missing lease err=%v", err)
+	}
+}
