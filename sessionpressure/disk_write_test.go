@@ -167,6 +167,23 @@ func TestDiskWriteAbsoluteBurstIgnoresUnscoredGaps(t *testing.T) {
 	}
 }
 
+func TestDiskWriteBurstWindowExcludesIntervalsCrossingBoundary(t *testing.T) {
+	at := time.Date(2026, 11, 3, 12, 1, 0, 0, time.UTC)
+	observer := &DiskWriteObserver{volumePoints: []diskVolumePoint{
+		{At: at.Add(-30 * time.Second), Duration: 45 * time.Second, Bytes: diskWriteBurstBytes, Scored: true},
+		{At: at, Duration: 30 * time.Second, Bytes: 12, Scored: true},
+		{At: at, Duration: 10 * time.Second, Bytes: 20, Gap: true},
+		{At: at, Bytes: 40, Scored: true},
+	}}
+	if got := observer.burstWindowBytesLocked(at); got != 12 {
+		t.Fatalf("burst window includes bytes outside the minute or without a valid interval: %d", got)
+	}
+	observer.volumePoints[0].Duration = 30 * time.Second
+	if got := observer.burstWindowBytesLocked(at); got != diskWriteBurstBytes+12 {
+		t.Fatalf("burst window excluded an interval beginning at the boundary: %d", got)
+	}
+}
+
 func TestDiskWriteUnavailableSourcesFailClosed(t *testing.T) {
 	observer := NewDiskWriteObserver(t.TempDir(), defaultDiskWritePolicy())
 	observer.store = nil
