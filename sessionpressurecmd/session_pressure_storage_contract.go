@@ -39,6 +39,7 @@ func StorageProviderContracts() []StorageProviderContract {
 		{ID: "nicos-voice-models", Classification: string(storageProviderReportOnly)},
 		{ID: "nicos-wine-proof", Classification: string(storageProviderReportOnly)},
 		{ID: "nicos-pw-archive", Classification: string(storageProviderReportOnly)},
+		{ID: "dev-root-leftovers", Classification: string(storageProviderReportOnly)},
 		{ID: "xcode-developer-data", Classification: string(storageProviderReportOnly)},
 		{ID: "xcode-device-support", Classification: string(storageProviderReportOnly)},
 		{ID: "go-module-cache", Classification: string(storageProviderReportOnly)},
