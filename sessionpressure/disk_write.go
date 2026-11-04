@@ -185,6 +185,7 @@ type diskProcessDelta struct {
 
 type diskVolumePoint struct {
 	At        time.Time
+	Duration  time.Duration
 	Bytes     uint64
 	SwapBytes uint64
 	Scored    bool
@@ -648,7 +649,7 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 		observer.previousSwap = swapIOCounter{}
 	}
 	if hasPrevious {
-		observer.volumePoints = append(observer.volumePoints, diskVolumePoint{At: at, Bytes: deviceDelta, SwapBytes: swapDelta, Scored: validWindow, Gap: !validWindow})
+		observer.volumePoints = append(observer.volumePoints, diskVolumePoint{At: at, Duration: elapsed, Bytes: deviceDelta, SwapBytes: swapDelta, Scored: validWindow, Gap: !validWindow})
 	}
 
 	processDeltas := make([]diskProcessDelta, 0, len(processes.Counters))
@@ -727,7 +728,7 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	// Only actual valid device deltas count; gaps and restored hourly totals
 	// cannot create an instantaneous burst. A single large 15-second sample is
 	// enough, including during startup and baseline learning.
-	burstBytes := observer.windowBytesLocked(at.Add(-diskWriteBurstWindow).Add(time.Nanosecond), true)
+	burstBytes := observer.burstWindowBytesLocked(at)
 	burst := validWindow && burstBytes >= diskWriteBurstBytes
 	if burst {
 		state = DiskWriteStateHigh
@@ -837,6 +838,20 @@ func (observer *DiskWriteObserver) windowSwapBytesLocked(cutoff time.Time) uint6
 			continue
 		}
 		total = saturatingAddUint64(total, point.SwapBytes)
+	}
+	return total
+}
+
+// Count only complete intervals inside the window. Including a delta whose
+// interval straddles the boundary would ascribe older writes to this minute.
+func (observer *DiskWriteObserver) burstWindowBytesLocked(at time.Time) uint64 {
+	cutoff := at.Add(-diskWriteBurstWindow)
+	var total uint64
+	for _, point := range observer.volumePoints {
+		if !point.Scored || point.Duration <= 0 || point.At.After(at) || point.At.Add(-point.Duration).Before(cutoff) {
+			continue
+		}
+		total = saturatingAddUint64(total, point.Bytes)
 	}
 	return total
 }
