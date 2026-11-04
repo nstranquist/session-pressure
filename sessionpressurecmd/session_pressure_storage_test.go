@@ -44,6 +44,10 @@ func withStorageProviderFakes(t *testing.T) {
 	originalBrewAutoremoveRun := storageRunBrewAutoremove
 	originalUVPrune := storageRunUVCachePrune
 	originalSimulatorReclaim := storageRunSimulatorReclaim
+	originalDevRootInspect := storageDevRootInspect
+	storageDevRootInspect = func(_ context.Context, root string, measure bool) (storageDevRootEvidence, error) {
+		return storageDevRootEvidence{SchemaVersion: devRootEvidenceSchema, Root: root, Measured: measure, Entries: []storageDevRootEntry{}}, nil
+	}
 	storageGradleActive = func() (bool, error) { return false, nil }
 	storageCacheOwnerActive = func(string) (bool, error) { return false, nil }
 	storageSimctlRuntimeJSON = func() ([]byte, error) { return []byte("{}"), nil }
@@ -93,6 +97,7 @@ func withStorageProviderFakes(t *testing.T) {
 		storageRunBrewAutoremove = originalBrewAutoremoveRun
 		storageRunUVCachePrune = originalUVPrune
 		storageRunSimulatorReclaim = originalSimulatorReclaim
+		storageDevRootInspect = originalDevRootInspect
 	})
 }
 
@@ -141,7 +146,7 @@ func TestStorageProviderClassificationPreservesPersonalStateAndRequiresExplicitG
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"mobile-sync", "downloads", "go-module-cache", "cargo-registry", "xcode-developer-data", "xcode-device-support", "nicos-telemetry-archive", "nicos-voice-models", "nicos-wine-proof", "nicos-pw-archive"} {
+	for _, id := range []string{"mobile-sync", "downloads", "go-module-cache", "cargo-registry", "xcode-developer-data", "xcode-device-support", "nicos-telemetry-archive", "nicos-voice-models", "nicos-wine-proof", "nicos-pw-archive", "dev-root-leftovers"} {
 		report, ok := storageProviderByID(reports, id)
 		if !ok || report.Classification != storageProviderReportOnly || report.MutationSupported {
 			t.Fatalf("provider %s = %+v", id, report)
