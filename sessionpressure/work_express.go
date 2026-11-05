@@ -414,6 +414,9 @@ func ClassifyGoWorkArgv(argv []string) (WorkClass, bool) {
 	}
 	switch verb {
 	case "test":
+		if goTestRunsBenchmark(rest) {
+			return WorkClassBenchmark, true
+		}
 		if goTestRequiresFullWeight(rest) {
 			return WorkClassTest, true
 		}
@@ -444,6 +447,36 @@ func ClassifyGoWorkArgv(argv []string) (WorkClass, bool) {
 	default:
 		return "", false
 	}
+}
+
+// Benchmark execution needs the benchmark envelope even when a caller labels
+// a single-package invocation as a test. Do not inspect test-binary arguments
+// or mistake the value of another Go flag for a benchmark selector.
+func goTestRunsBenchmark(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "-args" || arg == "--" {
+			break
+		}
+		if arg == "-bench" {
+			return i+1 < len(args) && args[i+1] != ""
+		}
+		if strings.HasPrefix(arg, "-bench=") {
+			return strings.TrimPrefix(arg, "-bench=") != ""
+		}
+		if strings.Contains(arg, "=") {
+			continue
+		}
+		switch arg {
+		case "-run", "-benchtime", "-count", "-cpu", "-parallel", "-timeout",
+			"-coverprofile", "-coverpkg", "-covermode", "-tags", "-mod", "-modfile",
+			"-exec", "-o", "-p", "-asmflags", "-gcflags", "-ldflags", "-toolexec",
+			"-C", "-overlay", "-pgo", "-vet", "-fuzz", "-fuzztime", "-skip",
+			"-blockprofile", "-cpuprofile", "-memprofile", "-mutexprofile", "-outputdir", "-trace":
+			i++
+		}
+	}
+	return false
 }
 
 // splitGoWorkArgv keeps the Go -C directory in the phase arguments while it
