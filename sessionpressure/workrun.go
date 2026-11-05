@@ -38,6 +38,9 @@ const (
 
 type WorkRunOptions struct {
 	Class               WorkClass
+	Workload            string
+	Cohort              string
+	ProfileGoTest       bool
 	RequestedClass      WorkClass
 	Exclusive           bool
 	Wait                time.Duration
@@ -197,6 +200,9 @@ func ParseWorkRunArgs(args []string) (WorkRunOptions, error) {
 			break
 		}
 		switch args[0] {
+		case "--profile-go-test":
+			options.ProfileGoTest = true
+			args = args[1:]
 		case "--class":
 			if len(args) < 2 {
 				return WorkRunOptions{}, errors.New("--class requires test, build, express-test, express-build, install, emulator, browser, heavy, benchmark, benchmark-exclusive, or reclaim")
@@ -207,6 +213,16 @@ func ParseWorkRunArgs(args []string) (WorkRunOptions, error) {
 			}
 			options.Class = class
 			classSet = true
+			args = args[2:]
+		case "--workload", "--cohort":
+			if len(args) < 2 {
+				return WorkRunOptions{}, fmt.Errorf("%s requires a value", args[0])
+			}
+			if args[0] == "--workload" {
+				options.Workload = args[1]
+			} else {
+				options.Cohort = args[1]
+			}
 			args = args[2:]
 		case "--exclusive":
 			// Opt-in clean-host mode for benchmarks. Capacity-sized exclusive
@@ -250,6 +266,9 @@ func ParseWorkRunArgs(args []string) (WorkRunOptions, error) {
 	if len(options.Command) == 0 {
 		return WorkRunOptions{}, errors.New("work run requires -- COMMAND [ARGS...]")
 	}
+	if options.ProfileGoTest && !isGoTestJSON(options.Command) {
+		return WorkRunOptions{}, errors.New("--profile-go-test requires a direct go test -json command")
+	}
 	if isResidentWorkCommand(options.Command) {
 		return WorkRunOptions{}, errors.New("work run accepts finite commands only; resident dev/server commands belong under `ndev dev` so capacity is released after startup health")
 	}
@@ -271,6 +290,9 @@ func ParseWorkRunArgs(args []string) (WorkRunOptions, error) {
 	}
 	if options.Priority && options.Wait == 0 {
 		return WorkRunOptions{}, errors.New("--priority requires a positive --wait so the request can enter the audited queue")
+	}
+	if err := ValidateWorkload(options.Workload, options.Cohort); err != nil {
+		return WorkRunOptions{}, err
 	}
 	options.RequestedClass = options.Class
 	options.Class = ResolveWorkClass(options.Class, options.Exclusive, options.Command)
@@ -879,6 +901,9 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	if len(options.Command) == 0 {
 		return 1, errors.New("work command is required")
 	}
+	if err := ValidateWorkload(options.Workload, options.Cohort); err != nil {
+		return 2, err
+	}
 	if options.RequestedClass == "" {
 		options.RequestedClass = options.Class
 	}
@@ -907,6 +932,18 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	operationID, err := NewWorkOperationID()
 	if err != nil {
 		return 1, err
+	}
+	if options.ProfileGoTest {
+		if !isGoTestJSON(options.Command) {
+			return 2, errors.New("--profile-go-test requires a direct go test -json command")
+		}
+		profile := newGoTestProfile(operationID)
+		streams.Stdout = io.MultiWriter(streams.Stdout, profile)
+		defer func() {
+			if err := profile.save(coordinator.Dir); err != nil {
+				fmt.Fprintln(streams.Stderr, "ndev pressure: save Go test profile:", err)
+			}
+		}()
 	}
 	resolvedExecutable, err := exec.LookPath(options.Command[0])
 	if err != nil {
@@ -938,6 +975,8 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	appendEvent := func(event WorkEvent) error {
 		event.OperationID = operationID
 		event.Class = options.Class
+		event.Workload = options.Workload
+		event.Cohort = options.Cohort
 		if event.Event == WorkEventQueued && options.RequestedClass != options.Class {
 			event.RequestedClass = options.RequestedClass
 		}

@@ -216,3 +216,33 @@ to change it.
 ## License
 
 Apache-2.0.
+
+## Workload performance review
+
+Use a registered workload and an explicit cohort to compare like-for-like runs:
+
+```bash
+session-pressure work run --workload catalog --cohort warm --profile-go-test -- go test -json ./internal/catalog
+session-pressure --json work report --since 48h --full
+```
+
+Registered workloads: `commitdelivery.full`, `commitdelivery.shard`,
+`precommithook`, `catalog`, `cli`, `docgraph-ask`, `browser-mcp-script`,
+`docs.noop`, `docs.incremental`, `docs.full`, `candidate-verify-path`.
+Cohorts: `warm`, `cold`, `cached`, `fixture`, `live`; omitted labels stay unknown.
+Batch manifests accept optional `workload` and `cohort` fields. Budgets are
+advisory warm execution targets. Reports retain failures and separate queue,
+pressure, reuse and execution. Every execution of at least one minute is reviewed,
+including intentional benchmarks. p95 requires 20 samples in the same cohort.
+
+`--profile-go-test` requires direct `go test -json`, executes rather than reuses
+an exit-only receipt, and preserves child streams and status. Structured package
+and test timings are stored in the data directory's `work-profiles/` (seven days,
+128 MiB total, 2,000 timing rows per run). Arbitrary output and argv are not saved.
+Oversized lines and excess records are counted as dropped. Batch progress includes
+per-step completion time and failure status. Profiling is off by default.
+
+On macOS, native capacity notifications wake queued work for a locked recheck.
+The two-second fallback remains active; pressure sampling keeps its own cadence.
+Set `SESSION_PRESSURE_WORK_NOTIFY=0` to return a process to timer-only waits.
+There are no model keepalive calls, forced compactions, or cache-retention promises.
