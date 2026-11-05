@@ -52,6 +52,8 @@ const (
 // shell string, inherited stdin, arbitrary environment map, or undeclared
 // cache inputs.
 type WorkBatchManifest struct {
+	Workload      string               `json:"workload,omitempty"`
+	Cohort        string               `json:"cohort,omitempty"`
 	SchemaVersion int                  `json:"schema_version"`
 	Class         WorkClass            `json:"class"`
 	Steps         []WorkBatchStep      `json:"steps"`
@@ -262,6 +264,9 @@ func normalizeBatchStringSet(values []string, cleanPath bool) []string {
 }
 
 func (manifest WorkBatchManifest) Validate() error {
+	if err := ValidateWorkload(manifest.Workload, manifest.Cohort); err != nil {
+		return err
+	}
 	if manifest.SchemaVersion != WorkBatchSchemaVersion {
 		return fmt.Errorf("unsupported work batch schema_version %d; want %d", manifest.SchemaVersion, WorkBatchSchemaVersion)
 	}
@@ -567,7 +572,7 @@ func runLeasedWorkBatch(coordinator *WorkCoordinator, options WorkBatchOptions, 
 		return result.CompletedSteps
 	}
 	return RunWorkCommand(coordinator, WorkRunOptions{
-		Class: manifest.Class, Wait: options.Wait, Progress: progress, RetentionDays: options.RetentionDays,
+		Workload: manifest.Workload, Cohort: manifest.Cohort, Class: manifest.Class, Wait: options.Wait, Progress: progress, RetentionDays: options.RetentionDays,
 		Command:        []string{helper, WorkBatchChildMode, "--file", manifestPath, "--result", resultPath, "--progress", string(progress)},
 		BatchStepCount: len(manifest.Steps), CompletedSteps: completedSteps,
 		ReuseStatus:        map[bool]string{true: "miss", false: "off"}[manifest.Reuse.Mode == WorkBatchReuseSuccessful],
@@ -656,7 +661,20 @@ func executeWorkBatch(manifest WorkBatchManifest, repoRoot, resultPath string, p
 		command.Stdin = nullInput
 		command.Stdout = stdout
 		command.Stderr = stderr
-		if err := command.Run(); err != nil {
+		started := time.Now()
+		runErr := command.Run()
+		if progress != WorkProgressQuiet {
+			outcome := "completed"
+			if runErr != nil {
+				outcome = "failed"
+			}
+			if progress == WorkProgressJSONL {
+				_ = json.NewEncoder(stderr).Encode(map[string]any{"schema_version": 1, "stage": "batch_step_finished", "step_id": step.ID, "step_index": index + 1, "runtime_ms": time.Since(started).Milliseconds(), "outcome": outcome})
+			} else {
+				fmt.Fprintf(stderr, "ndev pressure work: batch step id=%s outcome=%s runtime=%s\n", step.ID, outcome, time.Since(started).Round(time.Millisecond))
+			}
+		}
+		if err := runErr; err != nil {
 			if exitError, ok := err.(*exec.ExitError); ok {
 				return exitError.ExitCode()
 			}
@@ -1157,7 +1175,7 @@ func recordReusedWorkBatch(coordinator *WorkCoordinator, options WorkBatchOption
 		return fmt.Errorf("prune work event telemetry: %w", err)
 	}
 	return store.AppendDurable(WorkEvent{
-		Event: WorkEventReused, OperationID: operationID, Class: manifest.Class, Weight: weight,
+		Workload: manifest.Workload, Cohort: manifest.Cohort, Event: WorkEventReused, OperationID: operationID, Class: manifest.Class, Weight: weight,
 		SessionDigest: DetectedAgentSessionDigest(os.Environ()), CommandDigest: CommandShapeDigest(helper, len(manifest.Steps)),
 		Outcome: "successful_receipt_reused", SchedulingPolicy: coordinator.schedulingPolicy(), SelectorSchemaVersion: workSelectorSchemaVersion,
 		BatchStepCount: len(manifest.Steps), BatchCompletedSteps: len(manifest.Steps), ReuseStatus: "hit",

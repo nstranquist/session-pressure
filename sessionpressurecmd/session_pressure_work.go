@@ -40,7 +40,7 @@ Subcommands:
   cancel --operation-id ID --confirm  Signal the live lease tree and release the lease
   reschedule --operation-id ID --confirm  Cancel a scheduled lease, then ndev schedule run-now
   handoff --operation-id ID        Write an operator brief for an interactive agent
-  run [--class <express-test|express-build|test|build|install|emulator|browser|heavy|benchmark|benchmark-exclusive|reclaim>] [--exclusive] [--no-reuse] [--priority] [--wait DURATION] [--progress <human|jsonl|quiet>] -- COMMAND [ARGS...]
+  run [--class <express-test|express-build|test|build|install|emulator|browser|heavy|benchmark|benchmark-exclusive|reclaim>] [--workload ID] [--cohort warm|cold|cached|fixture|live] [--profile-go-test] [--exclusive] [--no-reuse] [--priority] [--wait DURATION] [--progress <human|jsonl|quiet>] -- COMMAND [ARGS...]
   batch --file <MANIFEST.json|-> [--wait DURATION] [--progress <human|jsonl|quiet>]
 
 Batch manifests use strict schema_version 1 argv steps and hold one lease across
@@ -92,12 +92,15 @@ var resolvePressureWorkHelper = func() (string, error) {
 }
 
 type pressureWorkRunOptions struct {
-	class    sessionpressure.WorkClass
-	wait     time.Duration
-	progress sessionpressure.WorkProgressMode
-	command  []string
-	noReuse  bool
-	priority bool
+	workload      string
+	cohort        string
+	profileGoTest bool
+	class         sessionpressure.WorkClass
+	wait          time.Duration
+	progress      sessionpressure.WorkProgressMode
+	command       []string
+	noReuse       bool
+	priority      bool
 }
 
 func parsePressureWorkRunArgs(args []string) (pressureWorkRunOptions, error) {
@@ -105,7 +108,7 @@ func parsePressureWorkRunArgs(args []string) (pressureWorkRunOptions, error) {
 	if err != nil {
 		return pressureWorkRunOptions{}, err
 	}
-	return pressureWorkRunOptions{class: options.Class, wait: options.Wait, progress: options.Progress, command: options.Command, noReuse: options.NoReuse, priority: options.Priority}, nil
+	return pressureWorkRunOptions{workload: options.Workload, cohort: options.Cohort, profileGoTest: options.ProfileGoTest, class: options.Class, wait: options.Wait, progress: options.Progress, command: options.Command, noReuse: options.NoReuse, priority: options.Priority}, nil
 }
 
 func cmdSessionPressureWork(g *Flags, args []string) int {
@@ -618,6 +621,7 @@ func cmdSessionPressureWorkReport(g *Flags, dir string, policy sessionpressure.P
 	if err != nil {
 		return sessionPressureError(err.Error(), 1)
 	}
+	runtimeReport := sessionpressure.BuildWorkRuntimeReport(events)
 	calibration := sessionpressure.BuildWorkCalibrationReport(events, options.since, time.Now().UTC())
 	calibration.SuppressIfAlreadyApplied(policy)
 	payload := map[string]any{"ok": true, "action": "work.report", "output_scope": "compact", "calibration": compactPressureWorkCalibration(calibration)}
@@ -625,6 +629,12 @@ func cmdSessionPressureWorkReport(g *Flags, dir string, policy sessionpressure.P
 		payload["output_scope"] = "full"
 		payload["calibration"] = calibration
 	}
+	runtimePayload := runtimeReport
+	if !options.full && len(runtimePayload.LongRuns) > 20 {
+		runtimePayload.LongRuns = runtimePayload.LongRuns[:20]
+		runtimePayload.Truncated = true
+	}
+	payload["runtime"] = runtimePayload
 	addWorkEventDiagnostics(payload, diagnostics)
 	text := fmt.Sprintf(
 		"work report operations=%d express_test=%d/%d share=%.2f express_build=%d/%d share=%.2f reuse_hits=%d cache_hits=%d cache_misses=%d wrapper_interrupts=%d\n  retune=%s\n",
@@ -637,6 +647,9 @@ func cmdSessionPressureWorkReport(g *Flags, dir string, policy sessionpressure.P
 		applyArgs := strings.TrimSpace(calibration.SuggestedPolicyProfile + " " + strings.Join(calibration.SuggestedPolicyProfileFlags, " "))
 		text += fmt.Sprintf("  suggested_profile=%s reason=%s  # advisory only; try: session-pressure policy profile apply %s --dry-run\n",
 			calibration.SuggestedPolicyProfile, calibration.SuggestedPolicyProfileReason, applyArgs)
+	}
+	for _, row := range runtimePayload.LongRuns {
+		text += fmt.Sprintf("  slow op=%s workload=%s cohort=%s outcome=%s runtime=%s queue=%s pressure=%s budget_exceeded=%v\n", row.OperationID, row.Workload, row.Cohort, row.Outcome, time.Duration(row.RuntimeMS)*time.Millisecond, time.Duration(row.QueueMS)*time.Millisecond, time.Duration(row.PressureMS)*time.Millisecond, row.BudgetExceeded)
 	}
 	text += workEventDiagnosticsText(diagnostics)
 	return emitPressure(g, payload, text, 0)
@@ -752,7 +765,7 @@ func runPressureWorkHelperMode(mode string, args []string) int {
 // full-size ndev process in the production wait path.
 func runPressureWorkCommand(coordinator *sessionpressure.WorkCoordinator, options pressureWorkRunOptions) int {
 	code, err := sessionpressure.RunWorkCommandWithExpressReuse(coordinator, sessionpressure.WorkRunOptions{
-		Class: options.class, Wait: options.wait, Progress: options.progress, Command: options.command, NoReuse: options.noReuse, Priority: options.priority,
+		Workload: options.workload, Cohort: options.cohort, ProfileGoTest: options.profileGoTest, Class: options.class, Wait: options.wait, Progress: options.progress, Command: options.command, NoReuse: options.noReuse, Priority: options.priority,
 	}, WorkHostAdmissionCheck, pressureWorkAdmissionRetryInterval, sessionpressure.WorkRunStreams{
 		Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, CommandFactory: pressureWorkCommandFactory,
 	})

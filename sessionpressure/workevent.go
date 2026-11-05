@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	WorkEventSchemaVersion        = 4
+	WorkEventSchemaVersion        = 5
 	minimumWorkEventSchemaVersion = 1
 )
 
@@ -92,6 +92,8 @@ const (
 // CommandDigest covers only the resolved executable identity and argument
 // count; arguments, environment, cwd, and prompts are never serialized.
 type WorkEvent struct {
+	Workload                            string                    `json:"workload,omitempty"`
+	Cohort                              string                    `json:"cohort,omitempty"`
 	SchemaVersion                       int                       `json:"schema_version"`
 	EventID                             string                    `json:"event_id"`
 	RequestID                           string                    `json:"request_id,omitempty"`

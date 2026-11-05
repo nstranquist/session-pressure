@@ -1349,6 +1349,13 @@ type expressReuseReceipt struct {
 // express work and full Go tests. Host red admission remains fail-closed inside
 // RunWorkCommand for every class.
 func RunWorkCommandWithExpressReuse(coordinator *WorkCoordinator, options WorkRunOptions, admissionCheck func() Admission, retryInterval time.Duration, streams WorkRunStreams) (int, error) {
+	// A profile must execute the child rather than replay an exit-only receipt.
+	if options.ProfileGoTest {
+		options.NoReuse = true
+	}
+	if err := ValidateWorkload(options.Workload, options.Cohort); err != nil {
+		return 2, err
+	}
 	if options.RequestedClass == "" {
 		options.RequestedClass = options.Class
 	}
@@ -1677,7 +1684,7 @@ func recordExpressReuseEvent(coordinator *WorkCoordinator, options WorkRunOption
 		return fmt.Errorf("resolve reused command shape: %w", resolveErr)
 	}
 	event := WorkEvent{
-		Event: WorkEventReused, OperationID: operationID, Class: options.Class, Weight: weight,
+		Workload: options.Workload, Cohort: options.Cohort, Event: WorkEventReused, OperationID: operationID, Class: options.Class, Weight: weight,
 		Outcome: outcome, ExitCode: &exit, ReuseKeyDigest: fingerprint.KeyDigest, ReceiptDigest: fingerprint.KeyDigest,
 		ReuseStatus: "hit", ReuseDecision: ExpressReuseDecisionReused, SingleflightWaitMS: max(int64(0), singleflightWait.Milliseconds()),
 		CommandDigest:         CommandShapeDigest(resolvedExecutable, max(0, len(options.Command)-1)),

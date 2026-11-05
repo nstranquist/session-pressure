@@ -1399,6 +1399,12 @@ func (coordinator *WorkCoordinator) withState(ctx context.Context, mutate func(*
 	if err != nil {
 		return WorkStatus{}, err
 	}
+	beforeCapacity := workCapacitySignature(state)
+	defer func() {
+		if beforeCapacity != workCapacitySignature(state) {
+			notifyWorkCapacity(coordinator.Dir)
+		}
+	}()
 	prunedLeases, prunedWaiters, reconciled, err := coordinator.reconcile(&state)
 	if err != nil {
 		return WorkStatus{}, fmt.Errorf("validate work lease state: %w", err)
@@ -1991,6 +1997,8 @@ func (waiter *WorkWaiter) WaitAcquireWithCapacity(ctx context.Context, effective
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	wake, stopWatching := watchWorkCapacity(waiter.coordinator.Dir)
+	defer stopWatching()
 	var status WorkStatus
 	cancelWaiter := func() error {
 		cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -2037,6 +2045,13 @@ func (waiter *WorkWaiter) WaitAcquireWithCapacity(ctx context.Context, effective
 			}
 			return nil, status, errors.Join(waitErr, cancelErr)
 		case <-timer.C:
+		case <-wake:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 		}
 	}
 }
