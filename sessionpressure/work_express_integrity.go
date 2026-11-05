@@ -163,14 +163,13 @@ func snapshotExpressSource(command []string, cwdOverride string) (expressSourceS
 		return snapshotCanonicalMakeBuildSource(target, workdir, expressCommandEnvironment(command))
 	}
 	tokens := normalizeGoArgv(command)
-	if len(tokens) < 2 || !isGoToolchainBinary(tokens[0]) {
+	verb, rest, ok := splitGoWorkArgv(tokens)
+	if !ok {
 		return expressSourceSnapshot{}, errors.New("express source snapshot requires a Go command")
 	}
-	verb := tokens[1]
 	if verb != "build" && verb != "test" && verb != "vet" {
 		return expressSourceSnapshot{}, fmt.Errorf("express successful reuse is unavailable for go %s", verb)
 	}
-	rest := tokens[2:]
 	workdir, ok := expressEffectiveWorkDir(rest, cwdOverride)
 	if !ok {
 		return expressSourceSnapshot{}, errors.New("resolve express source workdir")
@@ -569,11 +568,10 @@ func expressDeclaredArtifactPaths(command []string, cwdOverride string) ([]strin
 		return []string{}, true, nil
 	}
 	tokens := normalizeGoArgv(command)
-	if len(tokens) < 2 || !isGoToolchainBinary(tokens[0]) {
+	verb, rest, ok := splitGoWorkArgv(tokens)
+	if !ok {
 		return nil, false, nil
 	}
-	verb := tokens[1]
-	rest := tokens[2:]
 	if verb != "build" && verb != "test" && verb != "vet" {
 		return nil, false, nil
 	}
@@ -630,10 +628,10 @@ func expressDeclaredArtifactPaths(command []string, cwdOverride string) ([]strin
 // the refusal; it never widens what is cacheable.
 func expressWritesUndeclaredBinary(command []string, cwdOverride string) bool {
 	tokens := normalizeGoArgv(command)
-	if len(tokens) < 2 || !isGoToolchainBinary(tokens[0]) || tokens[1] != "build" {
+	verb, rest, ok := splitGoWorkArgv(tokens)
+	if !ok || verb != "build" {
 		return false
 	}
-	rest := tokens[2:]
 	for index := 0; index < len(rest); index++ {
 		if rest[index] == "--" {
 			break
