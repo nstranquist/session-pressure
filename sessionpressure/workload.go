@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -21,7 +22,12 @@ var workloadBudgets = map[string]int64{
 func ValidateWorkload(workload, cohort string) error {
 	if workload != "" {
 		if _, ok := workloadBudgets[workload]; !ok {
-			return fmt.Errorf("unregistered workload %q", workload)
+			ids := make([]string, 0, len(workloadBudgets))
+			for id := range workloadBudgets {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			return fmt.Errorf("unregistered workload %q; want one of %s", workload, strings.Join(ids, ", "))
 		}
 	}
 	switch cohort {

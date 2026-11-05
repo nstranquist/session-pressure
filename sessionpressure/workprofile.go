@@ -143,6 +143,9 @@ func pruneGoTestProfiles(root string, now time.Time) error {
 			continue
 		}
 		info, err := e.Info()
+		if os.IsNotExist(err) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
