@@ -45,11 +45,15 @@ struct NDevPressureApp: App {
                     .keyboardShortcut("7", modifiers: [.command])
                 Button("Telemetry") { store.selectedSection = .telemetry }
                     .keyboardShortcut("8", modifiers: [.command])
+                Button("Settings") { store.selectedSection = .settings }
+                    .keyboardShortcut("9", modifiers: [.command])
             }
         }
 
         Settings {
             AppSettingsView()
+                .frame(width: 420)
+                .fixedSize(horizontal: false, vertical: true)
         }
 
         MenuBarExtra(isInserted: $showMenuBarExtra) {

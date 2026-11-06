@@ -130,6 +130,9 @@ public enum PressureHelp {
     public static let binaryPath =
         "Path to the ndev binary this app shells out to. Override with NDEV_BIN or NDEV_PATH."
 
+    public static let showMenuBarExtra =
+        "Show or hide the NDev Pressure icon in the menu bar. This setting is saved and takes effect immediately."
+
     public static func section(_ name: String) -> String {
         switch name {
         case "Overview":
@@ -148,6 +151,8 @@ public enum PressureHelp {
             return "Old low-CPU trees eligible for operator-confirmed graceful stop. Lives under Storage → Idle trees."
         case "Telemetry":
             return "Recent pressure transitions, heartbeats, and audited relief actions."
+        case "Settings":
+            return "App preferences, including the saved menu bar visibility setting."
         case "Storage":
             return "Disk reclaim and idle trees. ⌘4. Disk tab is typed storage apply; Idle trees is operator-confirmed SIGTERM. The Overview storage card opens this pane."
         default:

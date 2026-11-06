@@ -21,9 +21,10 @@ Native macOS desktop app for visualizing and controlling **`ndev session pressur
 | **Disk Writes** | Internal-SSD device rate and 15m/24h totals, adaptive anomaly confidence, likely process writers, bounded hourly history, policy controls, and operator-confirmed path tracing |
 | **Storage** | Typed disk reclaim (Begin safe reclaim) and idle-tree SIGTERM as tabs. Overview storage card and ⌘4 open this pane. |
 | **Work Queue** | Shared capacity bar, active leases, waiter queue (2.5s busy / 10s idle visible focus poll), class weights, unconfirmed **Run now** / **Run all** queue promotion, and a lifecycle detail drawer that retains completed work as read-only history |
-| **Policy** | Full protection / admission-only / observe-only, thresholds, budgets, storage policy, and Keyboard (⌘1–⌘8; remap via System Settings App Shortcuts) |
+| **Policy** | Full protection / admission-only / observe-only, thresholds, budgets, storage policy, and Keyboard (⌘1–⌘9; remap via System Settings App Shortcuts) |
 | **Monitor** | LaunchAgent install/status/uninstall, resident health, sample cost, copy-only unclean-start recovery evidence |
 | **Telemetry** | Bounded state transitions, heartbeats, audited relief actions |
+| **Settings** | Saved app preferences, including **Show in menu bar** (⌘9) |
 
 Process CPU is measured from native cumulative CPU-time deltas using stable
 PID/start-time identity. A real zero is distinct from unavailable evidence;
@@ -38,7 +39,8 @@ can alert and never changes pressure level, admission, or process authority.
 
 Also: **menu bar extra** with level badge, compact metrics, and quick access to the confirmed policy controls; dock badge at warning/red/critical. The compact surface never changes process authority directly.
 
-Choose **NDev Pressure → Settings…** (⌘,) or **Settings…** in the menu bar panel
+Select **Settings** at the bottom of the sidebar (⌘9), choose
+**NDev Pressure → Settings…** (⌘,), or use **Settings…** in the menu bar panel
 to change **Show in menu bar**. The icon is shown by default. Changes take
 effect immediately and are saved across app launches. When the icon is hidden,
 open the app from the Dock or Applications to show it again in Settings.

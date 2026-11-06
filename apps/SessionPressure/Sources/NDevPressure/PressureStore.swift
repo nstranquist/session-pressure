@@ -14,6 +14,7 @@ final class PressureStore: ObservableObject {
         case policy = "Policy"
         case monitor = "Monitor"
         case telemetry = "Telemetry"
+        case settings = "Settings"
 
         var id: String { rawValue }
 
@@ -27,6 +28,7 @@ final class PressureStore: ObservableObject {
             case .policy: "slider.horizontal.3"
             case .monitor: "heart.text.square"
             case .telemetry: "waveform.path.ecg"
+            case .settings: "gearshape"
             }
         }
 
@@ -42,6 +44,7 @@ final class PressureStore: ObservableObject {
             case .policy: "6"
             case .monitor: "7"
             case .telemetry: "8"
+            case .settings: "9"
             }
         }
 

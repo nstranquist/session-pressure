@@ -1,4 +1,5 @@
 import SwiftUI
+import NDevPressureCore
 
 enum AppSettings {
     static let showMenuBarExtraKey = "showMenuBarExtra"
@@ -12,13 +13,13 @@ struct AppSettingsView: View {
             Section {
                 Toggle("Show in menu bar", isOn: $showMenuBarExtra)
                     .toggleStyle(.checkbox)
-                    .help("Show or hide the NDev Pressure icon in the menu bar. This setting is saved and takes effect immediately.")
+                    .help(PressureHelp.showMenuBarExtra)
+            } header: {
+                Text("Appearance")
             } footer: {
-                Text("To show the icon again, open NDev Pressure from the Dock or Applications, then choose Settings… (⌘,).")
+                Text("To show the icon again, open NDev Pressure from the Dock or Applications, then select Settings in the sidebar or choose Settings… (⌘,).")
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420)
-        .fixedSize(horizontal: false, vertical: true)
     }
 }
