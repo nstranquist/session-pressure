@@ -145,6 +145,14 @@ struct MenuBarContent: View {
 
             Divider()
 
+            SettingsLink {
+                Label("Settings…", systemImage: "gearshape")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+
             Button("Quit NDev Pressure") {
                 NSApp.terminate(nil)
             }
