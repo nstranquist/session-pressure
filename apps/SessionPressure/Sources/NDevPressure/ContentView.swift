@@ -118,6 +118,8 @@ struct ContentView: View {
         case .policy: PolicyView()
         case .monitor: MonitorView()
         case .telemetry: TelemetryView()
+        case .settings: AppSettingsView()
+                .navigationTitle("Settings")
         }
     }
 
