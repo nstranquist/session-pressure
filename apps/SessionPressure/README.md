@@ -38,10 +38,15 @@ can alert and never changes pressure level, admission, or process authority.
 
 Also: **menu bar extra** with level badge, compact metrics, and quick access to the confirmed policy controls; dock badge at warning/red/critical. The compact surface never changes process authority directly.
 
+Choose **NDev Pressure → Settings…** (⌘,) or **Settings…** in the menu bar panel
+to change **Show in menu bar**. The icon is shown by default. Changes take
+effect immediately and are saved across app launches. When the icon is hidden,
+open the app from the Dock or Applications to show it again in Settings.
+
 ## Build & run
 
 ```bash
-cd apps/desktop/ndev-pressure
+cd apps/SessionPressure
 make build      # release .app under .build/release/
 make run        # install to /Applications and open
 make test       # unit tests (JSON decode, formatters, policy labels)

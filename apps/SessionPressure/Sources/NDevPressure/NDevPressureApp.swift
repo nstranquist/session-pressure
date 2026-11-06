@@ -5,6 +5,7 @@ import SwiftUI
 struct NDevPressureApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = PressureStore()
+    @AppStorage(AppSettings.showMenuBarExtraKey) private var showMenuBarExtra = true
 
     var body: some Scene {
         Window("NDev Pressure", id: "main") {
@@ -47,7 +48,11 @@ struct NDevPressureApp: App {
             }
         }
 
-        MenuBarExtra {
+        Settings {
+            AppSettingsView()
+        }
+
+        MenuBarExtra(isInserted: $showMenuBarExtra) {
             MenuBarContent()
                 .environmentObject(store)
         } label: {
