@@ -41,3 +41,21 @@ func TestObserveRefusesShortSampleAsAcceptance(t *testing.T) {
 		t.Fatal("underpowered sample accepted")
 	}
 }
+
+func TestDarwinReleaseRejectsDisabledNativeReader(t *testing.T) {
+	t.Setenv("CGO_ENABLED", "0")
+	if _, e := releaseEnvironment("darwin", "arm64"); e == nil {
+		t.Fatal("incomplete Darwin release accepted")
+	}
+	dir := t.TempDir()
+	m := manifest{Revision: strings.Repeat("a", 40), OS: "darwin", Arch: "arm64", Files: map[string]string{}}
+	for _, name := range names {
+		m.Files[name] = strings.Repeat("0", 64)
+	}
+	if e := writeJSON(filepath.Join(dir, "release.json"), m); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := verify(dir); e == nil || !strings.Contains(e.Error(), "native SMART") {
+		t.Fatalf("disabled native feature was not rejected: %v", e)
+	}
+}

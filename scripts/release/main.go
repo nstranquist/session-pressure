@@ -21,11 +21,12 @@ import (
 )
 
 type manifest struct {
-	Revision string            `json:"revision"`
-	OS       string            `json:"os"`
-	Arch     string            `json:"arch"`
-	BuiltAt  time.Time         `json:"built_at"`
-	Files    map[string]string `json:"files"`
+	Revision   string            `json:"revision"`
+	OS         string            `json:"os"`
+	Arch       string            `json:"arch"`
+	BuiltAt    time.Time         `json:"built_at"`
+	CGOEnabled bool              `json:"cgo_enabled"`
+	Files      map[string]string `json:"files"`
 }
 
 var names = []string{"session-pressure", "session-pressure-api", "session-pressure-helper", "gocache-lru", "session-pressure-release"}
@@ -122,6 +123,22 @@ func syncDir(path string) error {
 	defer d.Close()
 	return d.Sync()
 }
+
+// Darwin releases require the native NVMe reader. A portable CGO-disabled
+// binary can run, but is not a complete product release.
+func releaseEnvironment(goos, goarch string) ([]string, error) {
+	cgo := "0"
+	if goos == "darwin" {
+		if os.Getenv("CGO_ENABLED") == "0" {
+			return nil, errors.New("Darwin releases require CGO_ENABLED=1 for native SMART support")
+		}
+		if (runtime.GOOS != goos || runtime.GOARCH != goarch) && os.Getenv("CC") == "" {
+			return nil, errors.New("Darwin cross releases require an explicit target C compiler in CC")
+		}
+		cgo = "1"
+	}
+	return append(os.Environ(), "GOWORK=off", "CGO_ENABLED="+cgo, "GOOS="+goos, "GOARCH="+goarch), nil
+}
 func build(out, platform string) error {
 	parts := strings.Split(platform, "/")
 	if len(parts) != 2 || (parts[0] != "darwin" && parts[0] != "linux") || (parts[1] != "arm64" && parts[1] != "amd64") {
@@ -129,6 +146,10 @@ func build(out, platform string) error {
 	}
 	if out == "" {
 		return errors.New("--out is required")
+	}
+	buildEnv, e := releaseEnvironment(parts[0], parts[1])
+	if e != nil {
+		return e
 	}
 	abs, e := filepath.Abs(out)
 	if e != nil {
@@ -155,14 +176,14 @@ func build(out, platform string) error {
 	if e = os.MkdirAll(abs, 0700); e != nil {
 		return e
 	}
-	m := manifest{Revision: rev, OS: parts[0], Arch: parts[1], BuiltAt: time.Now().UTC(), Files: map[string]string{}}
+	m := manifest{Revision: rev, OS: parts[0], Arch: parts[1], BuiltAt: time.Now().UTC(), CGOEnabled: parts[0] == "darwin", Files: map[string]string{}}
 	for _, name := range names {
 		pkg := "./cmd/" + name
 		if name == "session-pressure-release" {
 			pkg = "./scripts/release"
 		}
 		c := exec.Command("go", "build", "-trimpath", "-buildvcs=true", "-o", filepath.Join(abs, name), pkg)
-		c.Env = append(os.Environ(), "GOWORK=off", "CGO_ENABLED=0", "GOOS="+parts[0], "GOARCH="+parts[1])
+		c.Env = buildEnv
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr
 		if e = c.Run(); e != nil {
@@ -196,6 +217,9 @@ func verify(dir string) (manifest, error) {
 	if e != nil || len(rev) != 20 || len(m.Files) != len(names) {
 		return m, errors.New("invalid release identity")
 	}
+	if m.OS == "darwin" && !m.CGOEnabled {
+		return m, errors.New("Darwin release lacks native SMART support")
+	}
 	for _, name := range names {
 		path := filepath.Join(dir, name)
 		info, e := os.Lstat(path)
@@ -216,6 +240,9 @@ func verify(dir string) (manifest, error) {
 		settings := map[string]string{}
 		for _, s := range bi.Settings {
 			settings[s.Key] = s.Value
+		}
+		if m.OS == "darwin" && settings["CGO_ENABLED"] != "1" {
+			return m, fmt.Errorf("native SMART support missing: %s", name)
 		}
 		if bi.Main.Path != "github.com/nstranquist/session-pressure" || settings["vcs.revision"] != m.Revision || settings["vcs.modified"] != "false" || settings["GOOS"] != m.OS || settings["GOARCH"] != m.Arch {
 			return m, fmt.Errorf("release provenance mismatch: %s", name)
