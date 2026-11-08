@@ -5,13 +5,17 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
-Current checkpoint (19:05 UTC): the standalone implementation is committed through
-`3e5da8f`. The installed unified native release is `cc23fb2`, independently
-verified across all five binaries and the real Swift/Unix API contract. Its
-resident passes current budgets. The latest control optimization awaits the
-concurrent remote owner's combined promotion. Four factory deliveries remain
-accepted, not landed. Historical writer/scheduler performance and elapsed
-acceptance remain open; WORK-41 stays in progress.
+Current checkpoint (19:34 UTC): the installed resident bundle is `8e6cb978`,
+which includes the explicit release authority guard. The factory front door has
+already moved to product stamp `9cf2a30`; this mismatch remains visible and must
+be closed by a single forward promotion. The read-only coordinator probe fix
+did not meet the unchanged normal-state CPU duty limit. A concurrent owner is
+replacing the measured browser enforcement child scan with native lookup. The
+acceptance collector stays stopped. Factory integration `aa7b8fa9` is landed and
+its native installation was verified; five later factory deliveries remain
+accepted, including the newly found failure-filter and legacy promotion-path
+corrections. Historical writer/scheduler performance and elapsed acceptance
+remain open. WORK-41 stays in progress.
 
 ## Product contract
 
@@ -25,9 +29,9 @@ Remote work uses existing Hetzner jobs and receipts. This program does not add a
 
 | Area | Implemented result | Acceptance state |
 | --- | --- | --- |
-| Installation identity | Capabilities expose product version, revision, executable and platform. Five-binary promotion verifies hashes, clean source, Darwin CGO and identity before switching one authority link; previous authority and first-migration files are preserved. | Installed; release receipts retained. Factory front door update is accepted, not landed. |
-| Readiness | Admission-only is a valid ready mode; persisted policy, storage, monitor freshness and resident baseline remain explicit gates. | Installed. A resident restart requires four new normal samples; the 18:16 resident later passed its resource budgets. |
-| Telemetry | Real product writer and reader; privacy validation, closed fields, failure classes, attempted/written/failed/gap counters and freshness; bounded sharding and full lock-to-append timing. Factory correlation and product-owned registry fragment implemented. | Product installed; factory integration queued. Historical gaps and factory latency failures remain visible. |
+| Installation identity | Capabilities expose product version, revision, executable and platform. Five-binary promotion verifies hashes, clean source, Darwin CGO and identity before switching one authority link; previous authority and first-migration files are preserved. | Installed; all five release hashes verified. Factory front door `483b1def` is landed and installed. Explicit promotion authority guard is built, awaiting forward promotion. |
+| Readiness | Admission-only is a valid ready mode; persisted policy, storage, monitor freshness and resident baseline remain explicit gates. | Installed. Four fresh normal samples are required after restart. The longer 19:18 Automatic-mode baseline failed normal-state CPU duty; a forward fix is building. |
+| Telemetry | Real product writer and reader; privacy validation, closed fields, failure classes, attempted/written/failed/gap counters and freshness; bounded sharding and full lock-to-append timing. Factory correlation and product-owned registry fragment implemented. | Product and factory integration installed. Historical gaps and factory latency failures remain visible. |
 | Retention | Owned JSONL, writer health, disk maintenance and monitor streams have bounded retention; pruning and append failures are reported. Helper artifacts retain active plus two rollback revisions. | Implemented and tested. Unique legacy install backups are preserved. |
 | Work coordinator | Private host identity and OS/architecture/CPU/revision cohorts, explicit legacy counts and reuse miss reasons. Mixed-cohort retunes fail closed. Current CPU/fairness/capacity gates remain in force. | Installed. Replay promotion and live slowdown SLO still fail; no unsupported weight increase applied. |
 | Native desktop | Ten sections, including concurrent WORK-82 Process Incidents, refresh on entry; requests coalesce and have time/output bounds; per-section age/errors retain prior results. Settings show executing identity. SMART age and native write-window units are correct. | 59 tests pass; signed app installed and all ten sections inspected. Idle budget is an elapsed gate. |
@@ -37,7 +41,7 @@ Remote work uses existing Hetzner jobs and receipts. This program does not add a
 | Local API | Product owns CLI/Unix API contracts. Unix socket permissions/peer UID, request deadlines and response bounds; native client has CLI fallback and loopback redirect limits. | Real installed Swift/Unix-API contract passes, including capabilities, SMART and live query. |
 | Privileged trace | Signed helper verifies Team ID; administrator authorization, PID identity, XPC completion and independent trace wall time are bounded. Restricted entitlement without provisioning profile removed after a real launch failure. | Signed app launches. Administrator-approved trace is not exercised by this audit. |
 | Validation | Entire Go race suite, targeted boundary/race tests, fresh Swift tests, GPUI tests/build, real installed API contract, native SMART read and UI review. | Immediate checks pass. Warm latency, idle and 24/72-hour evidence are recorded independently below. |
-| Delivery | Product changes published with guarded exact-path commits. Four factory deliveries accepted. Clean native bundle built on Hetzner and promoted with receipts. | Factory landing/install and long observation remain open. |
+| Delivery | Product changes published with guarded exact-path commits. One factory delivery landed and three remain accepted. Clean native bundle built on Hetzner and promoted with receipts. | Three factory deliveries, their installed builder/helper state and long observation remain open. |
 
 ## Baseline evidence (2026-11-08)
 
@@ -218,7 +222,7 @@ promotion or resident/app PID change must remain visible. No 24-hour, 72-hour or
 
 | Delivery | Owned paths / result | Current state |
 | --- | --- | --- |
-| `aa7b8fa9-4821-45c1-874b-85265d691db0` | Canonical standalone binary priority, trace context, exact-once tests, product registry fragment and owner | Accepted 17:08 UTC, not landed |
+| `aa7b8fa9-4821-45c1-874b-85265d691db0` | Canonical standalone binary priority, trace context, exact-once tests, product registry fragment and owner | Landed 19:05 UTC as `483b1def`; native factory installation independently verified 19:15 UTC |
 | `64c635e4-3fae-4254-bcd6-24e913bbaba0` | Committed export explicit target / CGO native compiler support and receipt | Accepted 17:21 UTC, not landed |
 | `2aca8f87-72ad-4d63-95cb-58f5a7248b90` | Export receipt canonical source digest required by atomic binary publisher | Accepted 17:43 UTC, stacked after prior builder delivery, not landed |
 | `be3a3593-6e93-482c-8901-1b9c4289e446` | Exact owned staging isolation for fallback commit helper, regression tests and workflow reference | Accepted 18:30 UTC, capture gates PASS, not landed |
@@ -243,7 +247,7 @@ telemetry queries after promotion.
 
 | Gate | Owner / next action | Acceptance |
 | --- | --- | --- |
-| Factory delivery + install | Agent: retain delivery wait, inspect terminal receipts, export committed native candidate and use atomic publisher | Four deliveries landed; installed wrapper/registry/trace contract and source digest receipt match |
+| Factory delivery + install | Agent: retain delivery wait, inspect terminal receipts, export committed native candidate and use atomic publisher | All six deliveries landed; installed wrapper/registry/trace/filter contract and source digest receipt match |
 | Factory and product writer latency / preserved gaps | Agent: profile authority registration and primary append under a matched current cohort; retain gap evidence | p95 <=100 ms with no new unexplained loss, without weakening durability/privacy |
 | Work coordinator performance | Agent: collect enough revision/host-attributed samples, replay calibrated reservation candidates and dogfood the passing candidate | Existing 25% replay gap-closure gate and live p95 slowdown <=5, without violating host floors |
 | Resident recovery CPU | Agent: reduce measured loop overhead at the 5/15-second recovery cadence, preserve policy thresholds | Normal-state duty <=0.5%, pressure-state and other resource budgets pass |
@@ -502,3 +506,190 @@ stopped or queue priority changed.
     queued. Commands and receipts must always bind the intended repository.
     Repeated length assertions prevented overlong board submissions; keep
     coordination summaries below 240 characters before invoking the CLI.
+
+
+### Final combined runtime handoff
+
+The control optimization's native release build passed on Hetzner, job
+`20261108T190403Z-3876991`, 12 s execution, exit 0. Its ancestor bundle was not
+promoted. The concurrent release owner instead promoted combined
+`828b1ea7bb400423557648cfb84d033dcae07db7`, including `3e5da8f` and fail-closed
+remote routing. The owner reports an unsupported GOFLAGS profile now exits 1
+without local fallback; that command receipt is the owner's evidence.
+
+At 19:10 UTC, this audit independently verified all five installed executables:
+SHA-256 manifest parity, one authority directory, exact clean VCS revision and
+native CGO enabled. An ancestry check confirms `3e5da8f` is included. The real
+installed Swift/Unix API contract passed again: one test, 2.639 s. Private
+receipts are `release-828b1ea-verification.json` and
+`828b1ea-installed-contract.log`.
+
+Resident PID 8526, helper SHA
+`b883b94978b54b6023ff08ecb13ee6d5575ce98b966bc485611b80d2e38f2859`, passed
+monitor health, freshness and admission-only operator readiness with five normal
+samples. Baseline duty 0.255%, sample CPU p95 50.385 ms, RSS 15.828 MiB and
+projected telemetry 528,384 bytes/day pass unchanged limits. No browser or remote
+routing setting was changed by this audit; the concurrent owner set automatic
+recovery under their user instructions.
+
+The 19:10 full audit still returns FAIL. Policy/resident/readings/cleanup/artifacts
+pass. Product writer p95 is 152.833 ms across 3,261 attempts/written, zero failures
+or gaps. Factory two-hour writer p95 upper bound is 250 ms, one preserved gap;
+its new activation-hour cohort is 209/209, zero gaps, p95 upper bound 50 ms.
+The latter is a short cohort, not a replacement for historical acceptance.
+Factory 24-hour authority retains three gaps. JSONL scans: product 4,162 rows and
+factory 38,476 rows, zero parse/privacy/mode violations. Current scheduler cohort
+contains two terminal operations and is insufficient data. Historical end-to-end
+slowdown breaches remain; the pressure-excluded view is informational only.
+`audit-828b1ea.json` retains all findings and denominators.
+
+Factory telemetry integration `aa7b8fa9-4821-45c1-874b-85265d691db0` landed at
+19:05:22 UTC as `483b1def839b3dd1650bf52747e7bebf32a59e62`; the typed terminal
+receipt is `factory-telemetry-landed.json`. This does not establish installed
+factory integration. Builder deliveries `64c635e4` and `2aca8f87`, and guarded
+commit delivery `be3a3593`, remain accepted. One retained 20-minute factory wait
+is active. No priority change, duplicate capture or unauthorized push was used.
+
+After baseline readiness passed, the normal-priority acceptance LaunchAgent was
+started once with unique output `observation-828b1ea.json`, 72-hour duration,
+one-minute health sampling and 100 warm reads per endpoint. Previous failed runs
+remain intact. Actual start/deadline/read gates are recorded separately below;
+a running collector does not prove elapsed acceptance.
+
+
+### Release regression found by acceptance
+
+The first `828b1ea` observation started at 19:10:37.477107 UTC, with planned
+end 2026-11-11 at the same time. All three warm-read gates passed over 100 reads
+with zero failures: status p95 96.184 ms, board 81.545 ms, rich 268.065 ms.
+At 19:11:04, another promotion changed the authority to ancestor `3e5da8f`.
+The collector correctly recorded `installed revision changed`. It was stopped;
+`observation-828b1ea.json` and its separate interruption receipt remain intact.
+That run is failed acceptance despite its passing read gates.
+
+The verified combined `828b1ea` authority was restored, including the remote
+fail-closed fix. This actual regression justified a further release correction:
+`d2e57df433200daa800b1b67204f2e37b14033a6` requires an explicit
+`--expected-current` revision (or `none` for first install), checks it under the
+same install lock, and refuses older build timestamps without `--allow-rollback`.
+The receipt records both intent fields. A stale compare-and-swap cannot be
+bypassed by the rollback flag. Build time is only a downgrade fence, not a Git
+ancestry proof. Old retained installer executables predate this contract; the
+runbook requires the current installer for promotion and rollback.
+
+The complete candidate race suite passed in runner job
+`20261108T191348Z-4026154`, wall 81 s, core 29.345 s, release 1.115 s. Tests
+cover a delayed A-to-B job after C won, explicit rollback with the correct
+current revision, rejection of an unpinned or missing authority, idempotent
+same-revision install, and unknown build timestamp. Native build and installed
+negative checks are recorded below.
+
+A concurrent factory owner published the landed telemetry integration as a
+clean native `ndev` at 19:11:31 UTC. This audit independently verified SHA-256
+`1789e1f726b67ec8dbf882310380319d69e182018bad594c2b48b18e30f5cfe1` across
+all three installed targets against the atomic publisher receipt. It records
+clean VCS `483b1def`, native CGO and source digest
+`1ddc3abda6c2d18c0ff7ee2bbca6ddbd8227d0109c4e2b830660d2e1d3e14d99`.
+Its embedded product stamp is `828b1ea`. This is independent verification of
+that installed receipt, not authorship of the peer's build. Strict telemetry
+coverage passes: 131 covered entities, 13 exemptions, 144 total, 57 sources.
+The three builder/guard helper deliveries remain separate queued work.
+
+16. A kernel install lock prevented overlapping writes but did not protect a
+    newer release from a late older build. Actual acceptance caught this. The
+    new explicit authority check binds the user's observed release to promotion;
+    the older-build fence adds an explicit rollback boundary. Durable observation
+    failures were preserved rather than rewritten as a clean cohort.
+
+
+### Promotion guard validation and longer resident baseline
+
+The final clean native `d2e57df` build passed in job
+`20261108T191556Z-4031329` (12 s, exit 0). The five-executable bundle is retained
+without promotion. Using its actual Darwin installer against installed `828b1ea`,
+a stale expected-current revision failed before changing authority. An older
+`3e5da8f` candidate with the correct expected-current also failed before changing
+authority. The two negative checks and unchanged authority are recorded in
+`promotion-guard-installed-negative.json`; native output is in
+`d2e57df4-native-build.log`.
+
+The initial green resident sample did not establish sustained acceptance. At
+19:18 UTC PID 18210 had 25 samples, including 23 normal samples, and normal-state
+CPU duty 0.539% against 0.5%; it later rose to about 0.66%. Sample CPU p95
+15.532 ms, RSS 15.859 MiB and projected telemetry 528,384 bytes/day still passed.
+A ten-second native sampling profile is retained in
+`resident-828b1ea.sample.txt`. Normal-state idle acceptance cannot be inferred
+from a later warning-pressure sample whose applicable guard budget passes.
+
+The concurrent WORK-87 owner committed `8e6cb978` to use read-only coordinator
+status for recovery-demand probes, with a held-lock/nonmutation regression test.
+The owner reports remote full three-package tests, focused race tests and vet
+passing, and is building the forward native release. This is the owner's test
+evidence until independent installed verification below. Browser Automatic mode,
+remote routing, CPU thresholds and resource budgets were preserved. This audit
+will not install its older bundle while that forward promotion is in flight.
+
+
+### Telemetry triage contract correction
+
+At 19:25 UTC the current projection's operation-scoped 24-hour usage report
+(`--operation-id session.pressure --full --no-refresh`) contains 933 typed
+parent invocations, 202 nonzero results: 731 success, 142 command failure,
+33 user input, 15 timeout, seven expected negative and five policy block.
+These counts are all-revision observations, not a clean final-release cohort;
+latency includes admitted work execution. The source projection's latest event
+was 19:24:31 UTC. A concurrent projection writer held its normal lease, so
+explicit no-refresh reads were used; no writer was stopped and no history rebuilt.
+
+Command-name filters `ndev session pressure` and `session pressure` both returned
+zero usage because the canonical parent is `ndev session` with operation identity
+`session.pressure`. That zero is a filter mismatch, not evidence of zero usage
+or failure. A further live defect was found: `usage --failures` silently ignored
+`--operation-id` and returned board, workspace and other unrelated failure
+clusters. The pressure cluster itself contains 142 command failures. Overall
+cluster totals from that unfiltered response must not be attributed to pressure.
+
+The correction adds operation and surface predicates to both failure aggregation
+and burst annotation, and passes them through the CLI. Regression coverage
+separates pressure from board under their shared parent command, separates
+surfaces, checks a missing operation, and exercises actual dispatcher plumbing.
+Four owned factory paths are source changes until remote tests, delivery and
+installed behavior are proven below. Private evidence: `usage-operation-id.json`,
+`failure-clusters-operation-id.json` and the retained command-filter mismatch
+reports. A matched full-summary baseline is unavailable, so no synthetic
+telemetry diff or improvement claim is made.
+
+
+### Further delivery and supported-promotion closure
+
+The failure-filter correction passed focused remote race tests in job
+`20261108T192801Z-4125172`: package time 1.904 s, execution 56 s, exit 0.
+Its four owned paths were captured as `b20237d3-8823-4e62-a034-9dd63b815231`
+at 19:32 UTC. Capture was accepted but its producer gate was inconclusive:
+the installed pressure router correctly refused the sealed GOFLAGS profile
+without a supported remote compiler profile. The delivery owner is integrating
+the explicit Mac-only producer placement contract. This is not a passing gate.
+
+A downstream audit found `nicos-dev/Makefile`'s supported
+`promote-session-pressure` target still replaced individual product artifacts
+through the old builder. That bypassed the new bundle authority fence. Its
+replacement requires `SESSION_PRESSURE_RELEASE_DIR` and the pre-build
+`SESSION_PRESSURE_EXPECTED_CURRENT`, then invokes the verified bundle installer,
+restarts the canonical resident, and checks artifact identity through `ndev`.
+It does not run a heavy Go build on the Mac. Missing inputs fail before mutation;
+a dry run verifies the quoted bundle path, expected-current argument and absence
+of the old builder. `factory-promotion-target-checks.json` retains both checks.
+The one-path factory delivery is `196ac71c-82d8-4e09-83b8-0f890c054fbe`, accepted
+19:33 UTC with the same inconclusive producer gate. The product runbook documents
+the new target contract and the separate front-door native export boundary.
+
+The retained factory wait ended at 19:30 UTC with WAIT_TIMEOUT: the original
+three deliveries were still accepted at queue positions 28, 54 and 85. Their
+producer continues. A single new 15-minute owned wait covers all five queued
+deliveries; captures were not duplicated or reprioritized.
+
+The WORK-87 owner then measured 42–45 ms child CPU per browser enforcement scan,
+about 0.3% at a 15-second cadence. Resident duty includes child CPU, which the
+main-process native sampling profile could not explain. The owner is replacing
+that all-process subprocess scan with native root lookup, retaining termination
+and recovery safety. This finding does not yet prove installed improvement.
