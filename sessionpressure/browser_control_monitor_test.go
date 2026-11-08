@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/nstranquist/session-pressure/internal/filelock"
 )
 
 func BenchmarkPausedBrowserControlRead(b *testing.B) {
@@ -126,5 +128,35 @@ func TestResidentSleepCancellation(t *testing.T) {
 	cancel()
 	if waitForResidentSample(ctx, t.TempDir(), DefaultPolicy(16*1024), 120*time.Second) {
 		t.Fatal("canceled wait requested another sample")
+	}
+}
+
+func TestRecoveryDemandDoesNotWaitOnWorkMutation(t *testing.T) {
+	policy := DefaultPolicy(16 * 1024)
+	coordinator := NewWorkCoordinator(t.TempDir(), policy.WorkLimits)
+	ctx := context.Background()
+	if _, err := BrowserControlStatus(ctx, coordinator.Dir, "paused"); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.HoldAdmission(ctx, holdTestOperationA, WorkClassExpressTest, WorkAdmissionObservation{Red: true, Dimension: "cpu"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(coordinator.statePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := filelock.Acquire(coordinator.statePath(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	probeCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	if got := recoverySampleDelay(probeCtx, coordinator.Dir, policy, 120*time.Second); got != 5*time.Second {
+		t.Fatalf("waiting work was hidden by the mutation lock: delay=%s", got)
+	}
+	after, err := os.Stat(coordinator.statePath())
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatalf("diagnostic recovery probe replaced work state: %v", err)
 	}
 }
