@@ -1,6 +1,9 @@
 package sessionpressure
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRemoteProfileProtectsLocalInputsAndBuildABI(t *testing.T) {
 	for _, tc := range []struct {
@@ -36,6 +39,13 @@ func TestRemoteClassificationDoesNotHideProfileDeclines(t *testing.T) {
 		}
 		return ""
 	}) == "" {
-		t.Fatal("local-only profile must retain local admission")
+		t.Fatal("local-only profile must be rejected")
+	}
+}
+
+func TestRemoteRejectionCannotFallBackToLocalWork(t *testing.T) {
+	handled, code, err := rejectRemoteWork(t.TempDir(), "build", "GOFLAGS needs an explicit runner profile")
+	if !handled || code != 1 || err == nil || !strings.Contains(err.Error(), "local fallback is disabled") {
+		t.Fatalf("rejection must stop local execution: handled=%v code=%d err=%v", handled, code, err)
 	}
 }
