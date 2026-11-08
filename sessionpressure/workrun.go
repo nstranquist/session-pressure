@@ -58,8 +58,15 @@ type WorkRunOptions struct {
 	SingleflightWaitMS  int64
 	NoReuse             bool
 	Priority            bool
-	reusePreparer       func() ExpressReuseRefusalReason
-	reuseFinalizer      func() ExpressReuseRefusalReason
+	// Placement is where the command may run. auto routes eligible Go work
+	// to the remote runner when remote work is enabled and rejects the rest.
+	// local declares work that is only correct on this Mac (a darwin cgo
+	// producer, for example); it keeps local admission and is recorded with
+	// PlacementReason.
+	Placement       WorkPlacement
+	PlacementReason string
+	reusePreparer   func() ExpressReuseRefusalReason
+	reuseFinalizer  func() ExpressReuseRefusalReason
 }
 
 type WorkProgressMode string
@@ -235,6 +242,20 @@ func ParseWorkRunArgs(args []string) (WorkRunOptions, error) {
 		case "--priority":
 			options.Priority = true
 			args = args[1:]
+		case "--placement", "--placement-reason":
+			if len(args) < 2 {
+				return WorkRunOptions{}, fmt.Errorf("%s requires a value", args[0])
+			}
+			if args[0] == "--placement" {
+				placement, err := ParseWorkPlacement(args[1])
+				if err != nil {
+					return WorkRunOptions{}, err
+				}
+				options.Placement = placement
+			} else {
+				options.PlacementReason = strings.TrimSpace(args[1])
+			}
+			args = args[2:]
 		case "--wait":
 			if len(args) < 2 {
 				return WorkRunOptions{}, errors.New("--wait requires a duration or 0")
@@ -292,6 +313,9 @@ func ParseWorkRunArgs(args []string) (WorkRunOptions, error) {
 		return WorkRunOptions{}, errors.New("--priority requires a positive --wait so the request can enter the audited queue")
 	}
 	if err := ValidateWorkload(options.Workload, options.Cohort); err != nil {
+		return WorkRunOptions{}, err
+	}
+	if err := ValidateWorkPlacement(options.Placement, options.PlacementReason); err != nil {
 		return WorkRunOptions{}, err
 	}
 	options.RequestedClass = options.Class
@@ -916,7 +940,12 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		options.RequestedClass = options.Class
 	}
 	options.Class = ResolveWorkClass(options.Class, options.Exclusive, options.Command)
-	if handled, code, err := TryRemoteWork(coordinator.Dir, options, streams); handled {
+	if err := ValidateWorkPlacement(options.Placement, options.PlacementReason); err != nil {
+		return 2, err
+	}
+	if options.Placement == WorkPlacementLocal {
+		recordLocalPlacement(coordinator.Dir, options, streams)
+	} else if handled, code, err := TryRemoteWork(coordinator.Dir, options, streams); handled {
 		return code, err
 	}
 	if options.Class == WorkClassBrowser {
