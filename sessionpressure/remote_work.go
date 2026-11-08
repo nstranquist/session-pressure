@@ -167,7 +167,22 @@ const remoteSourceLimit = 512 << 20
 // once. Both the pre-upload size check and the upload use this one filter.
 func walkRemoteSources(modules []string, common string, visit func(rel, path string, info os.FileInfo) error) error {
 	seen := map[string]bool{}
+	repositories := remoteRepositoryRoots(modules)
 	for _, module := range modules {
+		// Git's candidate inventory below includes tracked inputs and pending
+		// unignored files. Do not walk ignored binaries, virtual environments
+		// and caches first: those are not repository source inputs.
+		inRepository := false
+		for _, repo := range repositories {
+			rel, err := filepath.Rel(repo, module)
+			if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				inRepository = true
+				break
+			}
+		}
+		if inRepository {
+			continue
+		}
 		err := filepath.WalkDir(module, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -206,7 +221,7 @@ func walkRemoteSources(modules []string, common string, visit func(rel, path str
 			return err
 		}
 	}
-	for _, repo := range remoteRepositoryRoots(modules) {
+	for _, repo := range repositories {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		cmd := exec.CommandContext(ctx, "git", "-C", repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
 		body, err := cmd.Output()
