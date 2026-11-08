@@ -18,3 +18,12 @@ func TestAuditAcceptsAdmissionOnlyPolicy(t *testing.T) {
 		t.Fatalf("observation mode: %+v", report)
 	}
 }
+
+func TestManualCleanupDoesNotRequireAutomaticPerformanceSample(t *testing.T) {
+	if findings := auditCleanupBridgePerformance(false, sessionpressure.Snapshot{}, true); len(findings) != 0 {
+		t.Fatal(findings)
+	}
+	if findings := auditCleanupBridgePerformance(true, sessionpressure.Snapshot{}, true); len(findings) != 1 || findings[0].Code != "cleanup_bridge_performance_warmup" {
+		t.Fatal(findings)
+	}
+}
