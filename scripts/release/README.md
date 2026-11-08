@@ -28,7 +28,11 @@ Run the installed release helper's `observe --binary /absolute/session-pressure
 --out /absolute/evidence.json --duration 72h`. Keep it under a user launch agent
 for a durable run. The JSON records 100 warm reads for status, board and rich
 board; p95 budgets are 250, 500 and 1,000 ms. It then checks identity and status
-each minute. App CPU and peak RSS use the same PID over at least 30 minutes;
+each minute. A successful JSON read alone does not pass health: the resident
+must be installed, loaded, verified, healthy, fresh and within its resource
+budget, with persisted policy. Resident PID changes count as failures.
+`health_passed` requires continuous sampling and zero failures.
+App CPU and peak RSS use the same PID over at least 30 minutes;
 the budget is 1% CPU and 128 MiB RSS. An app restart starts a new app window.
 Use a parked app for the idle budget. Interactive use is an activity sample.
 The 24/72-hour flags require actual elapsed time and continuous sampling, with

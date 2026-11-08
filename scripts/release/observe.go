@@ -34,7 +34,10 @@ type observation struct {
 	Reads               map[string]readGate `json:"reads"`
 	Checks              int                 `json:"checks"`
 	Failures            int                 `json:"failures"`
+	HealthPassed        bool                `json:"health_passed"`
 	LastFailure         string              `json:"last_failure,omitempty"`
+	ResidentPID         int                 `json:"resident_pid"`
+	ResidentRestarts    int                 `json:"resident_restarts"`
 	MaxSampleGapSeconds float64             `json:"max_sample_gap_seconds"`
 	ContinuityPassed    bool                `json:"continuity_passed"`
 	Observed24H         bool                `json:"observed_24h"`
@@ -169,13 +172,26 @@ func observe(args []string) error {
 			}
 		}
 		if err == nil {
-			_, err = readCLI(*binary, "status")
+			var status []byte
+			status, err = readCLI(*binary, "status")
+			if err == nil {
+				var pid int
+				pid, err = observedResident(status)
+				if err == nil {
+					if s.ResidentPID != 0 && s.ResidentPID != pid {
+						s.ResidentRestarts++
+						err = errors.New("resident restarted during observation")
+					}
+					s.ResidentPID = pid
+				}
+			}
 		}
 		s.Checks++
 		if err != nil {
 			s.Failures++
 			s.LastFailure = err.Error()
 		}
+		s.HealthPassed = s.Checks > 0 && s.Failures == 0 && s.ContinuityPassed
 		if pid, cpu, rss, ok := appSample(); ok {
 			if pid != s.AppPID {
 				s.AppPID = pid
@@ -208,6 +224,35 @@ func observe(args []string) error {
 		}
 		time.Sleep(min(*interval, time.Until(s.Deadline)))
 	}
+}
+
+// A successful read can still report a missing or stale monitor. Require the
+// installed resident's actual health, identity verification and resource budget.
+func observedResident(raw []byte) (int, error) {
+	var status struct {
+		HasLatest       bool `json:"has_latest_monitor"`
+		PolicyPersisted bool `json:"policy_persisted"`
+		Health          struct {
+			Healthy bool `json:"monitor_healthy"`
+			Fresh   bool `json:"latest_monitor_fresh"`
+		} `json:"health"`
+		Latest struct {
+			BudgetOK bool `json:"guard_budget_ok"`
+		} `json:"latest_monitor_summary"`
+		Launchd struct {
+			Installed bool `json:"installed"`
+			Loaded    bool `json:"loaded"`
+			Verified  bool `json:"artifact_verified"`
+			PID       int  `json:"pid"`
+		} `json:"launchd_summary"`
+	}
+	if e := json.Unmarshal(raw, &status); e != nil {
+		return 0, e
+	}
+	if !status.HasLatest || !status.PolicyPersisted || !status.Health.Healthy || !status.Health.Fresh || !status.Latest.BudgetOK || !status.Launchd.Installed || !status.Launchd.Loaded || !status.Launchd.Verified || status.Launchd.PID <= 0 {
+		return 0, errors.New("resident health, freshness, identity or resource budget failed")
+	}
+	return status.Launchd.PID, nil
 }
 
 func startObservation(path string, initial observation) error {
