@@ -45,8 +45,16 @@ public struct ProcessIncident: Decodable, Sendable, Identifiable {
         case sustainedSeconds = "sustained_seconds"
     }
 
-    public var canStop: Bool { state == "active" || state == "stop_requested" }
-    public var canForceStop: Bool { state == "stop_requested" }
+    public var canStop: Bool { source != "operator_record" && pid > 1 && !startIdentity.isEmpty && (state == "active" || state == "stop_requested") }
+    public var canForceStop: Bool { canStop && state == "stop_requested" }
+
+    public var reasonLabel: String {
+        switch reason {
+        case "orphaned_sustained_cpu", "init_parent_sustained_cpu": return "High CPU in a command with an init-owned parent"
+        case "sustained_cpu": return "Sustained high CPU"
+        default: return reason.replacingOccurrences(of: "_", with: " ")
+        }
+    }
 }
 
 public struct ProcessIncidentAction: Decodable, Sendable {
@@ -54,5 +62,6 @@ public struct ProcessIncidentAction: Decodable, Sendable {
     public let signal: String
     public let result: String
     public let error: String?
+    public var signalLabel: String { signal.isEmpty || signal == "NONE" ? "No signal" : signal }
 }
 

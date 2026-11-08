@@ -26,7 +26,7 @@ func TestProcessGuardSustainedOrphanAndAlertDedup(t *testing.T) {
 	alerts := 0
 	g.Notify = func(p ProcessIncident) error {
 		alerts++
-		if p.Reason != "orphaned_sustained_cpu" {
+		if p.Reason != "init_parent_sustained_cpu" {
 			t.Fatal(p.Reason)
 		}
 		return nil
@@ -111,7 +111,7 @@ func TestProcessGuardOrphanedShellAndNormalLongWork(t *testing.T) {
 			if len(r.Incidents) != 1 {
 				t.Fatal(r)
 			}
-			if shell && r.Incidents[0].Reason != "orphaned_sustained_cpu" {
+			if shell && r.Incidents[0].Reason != "init_parent_sustained_cpu" {
 				t.Fatal(r)
 			}
 		})
@@ -516,7 +516,7 @@ func TestProcessIncidentInstalledCLIStopsOwnedChild(t *testing.T) {
 	guard := NewProcessGuard(t.TempDir())
 	row := Process{PID: child.Process.Pid, PPID: 1, Executable: "sleep", CPUAvailable: true, CPUPercent: 76, ElapsedSeconds: 10800}
 	now := time.Now().UTC()
-	for _, at := range []time.Time{now.Add(-2 * time.Minute), now} {
+	for _, at := range []time.Time{now.Add(-6 * time.Minute), now.Add(-3 * time.Minute), now} {
 		if err := guard.Observe(context.Background(), at, []Process{row}); err != nil {
 			t.Fatal(err)
 		}

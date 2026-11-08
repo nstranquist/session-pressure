@@ -154,8 +154,9 @@ func incidentKey(pid int, identity string) string {
 }
 
 // Observe requires distinct inventory timestamps and continuous evidence.
-// A gap beyond the configured inventory tolerance resets the streak. PPID 1 alone is common for
-// daemons: require ten minutes of age and two minutes above 60% of one core.
+// A gap beyond the configured inventory tolerance resets the streak. PPID 1
+// is normal for GUI apps and services, and does not establish an orphan.
+// Known commands with an init-owned parent get the shorter evidence window.
 // Other long-running processes require thirty minutes of age and five hot minutes.
 func (guard *ProcessGuard) Observe(ctx context.Context, at time.Time, processes []Process) error {
 	if at.IsZero() || !at.After(guard.lastInventory) {
@@ -177,10 +178,10 @@ func (guard *ProcessGuard) Observe(ctx context.Context, at time.Time, processes 
 		if hasParent {
 			parent = processes[parentIndex]
 		}
-		orphan := p.PPID == 1 || (hasParent && parent.PPID == 1 && isProcessShell(parent.Executable))
+		initOwnedCommand := (p.PPID == 1 && isProcessCommand(p.Executable)) || (hasParent && parent.PPID == 1 && isProcessShell(parent.Executable))
 		age, window, reason := int64(1800), 5*time.Minute, "sustained_cpu"
-		if orphan {
-			age, window, reason = 600, 2*time.Minute, "orphaned_sustained_cpu"
+		if initOwnedCommand {
+			age, window, reason = 600, 2*time.Minute, "init_parent_sustained_cpu"
 		}
 		elapsed := p.ElapsedSeconds
 		if elapsed == 0 {
@@ -226,7 +227,7 @@ func (guard *ProcessGuard) Observe(ctx context.Context, at time.Time, processes 
 		}
 		needsRecovery := false
 		for _, incident := range report.Incidents {
-			if incident.State == "active" {
+			if incident.State == "active" || incident.State == "stop_requested" {
 				needsRecovery = true
 				break
 			}
@@ -265,8 +266,17 @@ func (guard *ProcessGuard) Observe(ctx context.Context, at time.Time, processes 
 			report.Incidents[index] = candidate
 		}
 		for i := range report.Incidents {
-			if !active[report.Incidents[i].ID] && report.Incidents[i].State == "active" {
-				report.Incidents[i].State = "recovered"
+			p := &report.Incidents[i]
+			if p.State == "stop_requested" {
+				birth, _, err := guard.identity(p.PID)
+				if processGuardGone(err) || (err == nil && birth != p.StartIdentity) {
+					p.State = "stopped"
+					if len(p.Actions) < 20 {
+						p.Actions = append(p.Actions, ProcessIncidentAction{At: at, Signal: "NONE", Result: "exit_observed_after_request"})
+					}
+				}
+			} else if !active[p.ID] && p.State == "active" {
+				p.State = "recovered"
 			}
 		}
 		return nil
@@ -302,6 +312,22 @@ func isProcessShell(executable string) bool {
 		return true
 	}
 	return false
+}
+
+func isProcessCommand(executable string) bool {
+	name := filepath.Base(executable)
+	if isProcessShell(name) || name == "python" || strings.HasPrefix(name, "python3") {
+		return true
+	}
+	switch name {
+	case "node", "rg", "fd", "find", "grep", "du", "go", "swift", "swiftc", "clang", "gcc", "ruby", "perl", "git", "rsync", "tar":
+		return true
+	}
+	return false
+}
+
+func processGuardGone(err error) bool {
+	return errors.Is(err, errProcessGuardExited) || errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH)
 }
 
 // StopProcessIncident signals only the selected PID. It never expands to a
@@ -342,7 +368,7 @@ func stopProcessIncident(ctx context.Context, dir, id string, force bool, identi
 		start, uid, err := identity(p.PID)
 		if err != nil || start != p.StartIdentity || uid != p.UID {
 			actionErr = fmt.Errorf("process identity changed or unavailable; no signal sent")
-			p.Actions = append(p.Actions, ProcessIncidentAction{At: time.Now().UTC(), Result: "revalidation_rejected", Error: actionErr.Error()})
+			p.Actions = append(p.Actions, ProcessIncidentAction{At: time.Now().UTC(), Signal: "NONE", Result: "revalidation_rejected", Error: actionErr.Error()})
 			selected = *p
 			return nil
 		}
@@ -365,8 +391,10 @@ func stopProcessIncident(ctx context.Context, dir, id string, force bool, identi
 		start, uid, err = identity(p.PID)
 		if err != nil || start != p.StartIdentity || uid != p.UID {
 			actionErr = fmt.Errorf("process identity changed or exited; no signal sent")
+			p.Actions[len(p.Actions)-1].Signal = "NONE"
 		} else if ctx.Err() != nil {
 			actionErr = ctx.Err()
+			p.Actions[len(p.Actions)-1].Signal = "NONE"
 		} else {
 			actionErr = signal(p.PID, sig)
 		}
@@ -389,7 +417,7 @@ func stopProcessIncident(ctx context.Context, dir, id string, force bool, identi
 					break wait
 				case <-tick.C:
 					current, _, e := identity(p.PID)
-					if errors.Is(e, errProcessGuardExited) || errors.Is(e, os.ErrNotExist) || errors.Is(e, syscall.ESRCH) || (e == nil && current != p.StartIdentity) {
+					if processGuardGone(e) || (e == nil && current != p.StartIdentity) {
 						a.Result = "exit_confirmed"
 						p.State = "stopped"
 						break wait

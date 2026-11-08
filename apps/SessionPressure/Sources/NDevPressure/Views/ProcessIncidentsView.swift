@@ -41,7 +41,7 @@ struct ProcessIncidentsView: View {
                                 Text(incident.state.replacingOccurrences(of: "_", with: " ")).font(.caption)
                                     .foregroundStyle(incident.canStop ? Color.orange : Color.secondary)
                             }
-                            Text("PID \(incident.pid) · \(incident.reason.replacingOccurrences(of: "_", with: " "))")
+                            Text("PID \(incident.pid) · \(incident.reasonLabel)")
                                 .font(.caption).foregroundStyle(.secondary)
                             Text(incident.lastSeen, style: .date).font(.caption2)
                         }.padding(.vertical, 5).tag(incident.id)
@@ -102,8 +102,8 @@ struct ProcessIncidentsView: View {
             if let memory = incident.rssMb { LabeledContent("Memory at observation", value: String(format: "%.0f MiB", memory)) }
             if let hot = incident.sustainedSeconds { LabeledContent("Sustained CPU", value: "\(hot) seconds") }
             }
-            LabeledContent("First evidence") { Text(incident.firstSeen, style: .time) }
-            LabeledContent("Last evidence") { Text(incident.lastSeen, style: .time) }
+            LabeledContent("First evidence", value: incident.firstSeen.formatted(date: .abbreviated, time: .standard))
+            LabeledContent("Last evidence", value: incident.lastSeen.formatted(date: .abbreviated, time: .standard))
             if let session = incident.sessionID { LabeledContent("Session", value: session).textSelection(.enabled) }
             HStack {
                 Button("Stop", role: .destructive) { force = false; pending = incident }
@@ -117,8 +117,8 @@ struct ProcessIncidentsView: View {
             if incident.actions?.isEmpty ?? true { Text("No stop action requested.").foregroundStyle(.secondary) }
             ForEach(Array((incident.actions ?? []).enumerated()), id: \.offset) { _, action in
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(action.signal == "NONE" ? "No signal" : action.signal) · \(action.result.replacingOccurrences(of: "_", with: " "))")
-                    Text(action.at, style: .time).font(.caption).foregroundStyle(.secondary)
+                    Text("\(action.signalLabel) · \(action.result.replacingOccurrences(of: "_", with: " "))")
+                    Text(action.at.formatted(date: .abbreviated, time: .standard)).font(.caption).foregroundStyle(.secondary)
                     if let error = action.error { Text(error).font(.caption).foregroundStyle(.red) }
                 }
             }
