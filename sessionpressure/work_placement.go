@@ -10,10 +10,11 @@ import (
 // WorkPlacement says where a work-run command may execute.
 //
 // Remote routing must not silently fall back onto the Mac (828b1ea), and some
-// work is only correct on the Mac: a darwin binary that links cgo, or a build
-// that reads Mac-local module files. Rejecting that work does not move it to
-// the runner; it fails it everywhere. On 2026-11-08 that rejection paused
-// seven commit deliveries in 90 seconds. The caller that knows the work is
+// work is only correct on the Mac: a build that reads Mac-local module files
+// or tools. (Darwin cgo builds are not in that set: the runner builds them
+// with its pinned Darwin compiler, remote_build_profile.go.) Rejecting that
+// work does not move it to the runner; it fails it everywhere. On 2026-11-08
+// that rejection paused seven commit deliveries in 90 seconds. The caller that knows the work is
 // Mac-only declares it, with a reason that telemetry records. Nothing else
 // changes placement implicitly.
 type WorkPlacement string

@@ -336,7 +336,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if reason := remoteProfileReason(options.Command, os.Getenv); reason != "" {
 		return reject(reason)
 	}
-	if reason := remoteWorkIneligibleReason(cwd, options.Command, os.Getenv); reason != "" {
+	if reason := remoteWorkIneligibleReason(options.Command, os.Getenv); reason != "" {
 		return reject(reason)
 	}
 	modules, common, err := remoteModuleClosure(cwd)
@@ -357,9 +357,10 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if err != nil {
 		return true, 1, err
 	}
+	profile := remoteBuildProfile(argv[1], os.Getenv("CGO_ENABLED"))
 	started := time.Now()
 	defer func() {
-		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "operation": options.Command[1], "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0})
+		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "operation": options.Command[1], "profile": profile, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0})
 	}()
 	remote := "/srv/build/candidates/pressure-" + job
 	for i := range argv {
@@ -391,16 +392,13 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		_ = exec.CommandContext(cleanupCtx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "builder@100.106.202.89", "rm -rf -- "+shellQuote(remote)).Run()
 	}()
 	rel, _ := filepath.Rel(common, cwd)
-	command := "cd " + shellQuote(remote+"/source/"+filepath.ToSlash(rel)) + " && exec env GOWORK=off GOMAXPROCS=2 GOMEMLIMIT=3GiB GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p=2"))
-	if argv[1] == "build" {
-		command += " GOOS=darwin GOARCH=arm64 CGO_ENABLED=0"
-	}
+	command := remoteBuildPreflight(profile, remote) + "cd " + shellQuote(remote+"/source/"+filepath.ToSlash(rel)) + " && exec env GOWORK=off GOMAXPROCS=2 GOMEMLIMIT=3GiB GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p=2")) + remoteBuildEnvironment(profile, remote)
 	for _, arg := range argv {
 		command += " " + shellQuote(arg)
 	}
 	command = "flock -w 1800 /srv/build/global-work.lock timeout --kill-after=5s 1800s bash -c " + shellQuote(command)
 	if streams.Stderr != nil {
-		fmt.Fprintln(streams.Stderr, "session-pressure: routing Go work to gaterunner-1 (global slot, parallelism 2)")
+		fmt.Fprintln(streams.Stderr, "session-pressure: routing Go work to gaterunner-1 ("+profile+", global slot, parallelism 2)")
 	}
 	child := ssh(command)
 	child.Stdin = streams.Stdin

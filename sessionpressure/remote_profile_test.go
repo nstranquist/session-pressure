@@ -15,7 +15,10 @@ func TestRemoteProfileProtectsLocalInputsAndBuildABI(t *testing.T) {
 		{"plain test", []string{"go", "test", "./..."}, nil, false},
 		{"producer modfile", []string{"go", "build", "-o", "app", "."}, map[string]string{"GOFLAGS": "-modfile=/var/folders/producer.mod"}, true},
 		{"argument overlay", []string{"go", "test", "-overlay=patch.json", "./..."}, nil, true},
-		{"default cgo build", []string{"go", "build", "-o", "app", "."}, nil, true},
+		{"default cgo build", []string{"go", "build", "-o", "app", "."}, nil, false},
+		{"explicit cgo build", []string{"go", "build", "-o", "app", "."}, map[string]string{"CGO_ENABLED": "1"}, false},
+		{"malformed cgo setting", []string{"go", "build", "-o", "app", "."}, map[string]string{"CGO_ENABLED": "yes"}, true},
+		{"local compiler", []string{"go", "build", "-o", "app", "."}, map[string]string{"CC": "/opt/homebrew/bin/clang"}, true},
 		{"explicit portable build", []string{"go", "build", "-o", "app", "."}, map[string]string{"CGO_ENABLED": "0"}, false},
 		{"test target", []string{"go", "test", "./..."}, map[string]string{"GOOS": "darwin"}, true},
 	} {
