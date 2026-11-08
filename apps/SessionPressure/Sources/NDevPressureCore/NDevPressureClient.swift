@@ -145,6 +145,15 @@ public struct NDevPressureClient: Sendable {
         return result
     }
 
+    public func capabilities() async throws -> CapabilitiesEnvelope {
+        if let api: CapabilitiesEnvelope = try await apiProjection(CapabilitiesEnvelope.self, route: "/v1/pressure/capabilities") { return api }
+        return try await runJSON(CapabilitiesEnvelope.self, arguments: ["--json", "session", "pressure", "capabilities"])
+    }
+
+    public func diskHealth() async throws -> DiskHealthEnvelope {
+        return try await runJSON(DiskHealthEnvelope.self, arguments: ["--json", "session", "pressure", "io", "health"])
+    }
+
     // MARK: - Reads
 
     public func status(live: Bool = false, full: Bool = false) async throws -> StatusEnvelope {
@@ -499,9 +508,9 @@ public struct NDevPressureClient: Sendable {
 
     // MARK: - Mutations
 
-    public func policyEnable(autoShed: Bool = true) async throws -> PolicyEnvelope {
+    public func policyEnable(autoShed: Bool = false) async throws -> PolicyEnvelope {
         var args = ["--json", "session", "pressure", "policy", "enable"]
-        if !autoShed { args.append("--no-auto-shed") }
+        if autoShed { args.append("--with-auto-shed") }
         return try await runJSON(PolicyEnvelope.self, arguments: args)
     }
 

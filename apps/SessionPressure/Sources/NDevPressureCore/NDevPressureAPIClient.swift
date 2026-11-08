@@ -22,19 +22,26 @@ public enum NDevPressureAPIError: Error, LocalizedError, Sendable {
     }
 }
 
-/// Small loopback client for the explicit SessionPressure API. The Unix socket
-/// remains the default server transport; URLSession is used here only when an
+/// Small local client for the explicit SessionPressure API. The Unix socket
+/// is the default transport; URLSession is used only when an
 /// operator explicitly configures NDEV_PRESSURE_API_URL, with the existing CLI
 /// path as the bounded fallback for an unavailable endpoint.
 public struct NDevPressureAPIClient: Sendable {
     private static let apiVersion = "nicos.session.pressure.control.v1"
     private let baseURL: URL
+    private let socketPath: String?
     private let token: String?
     private let timeout: TimeInterval
 
     public init?(environment: [String: String] = ProcessInfo.processInfo.environment) {
-        guard let raw = environment["NDEV_PRESSURE_API_URL"],
-              let url = URL(string: raw),
+        let configuredURL = environment["NDEV_PRESSURE_API_URL"]
+        let home = environment["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let state = environment["NDEV_SESSION_PRESSURE_HOME"] ?? environment["SESSION_PRESSURE_HOME"] ?? "\(home)/.nicos-dev/session-pressure"
+        let socket = environment["NDEV_PRESSURE_API_SOCKET"] ?? "\(state)/api/session-pressure.sock"
+        // Default to the local socket only if it exists. CLI fallback stays
+        // cheap when the optional API service is not installed.
+        if configuredURL == nil && !FileManager.default.fileExists(atPath: socket) { return nil }
+        guard let url = URL(string: configuredURL ?? "http://localhost"),
               let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https",
               let host = url.host?.lowercased(),
@@ -46,6 +53,7 @@ public struct NDevPressureAPIClient: Sendable {
             return nil
         }
         self.baseURL = url
+        self.socketPath = configuredURL == nil ? socket : nil
         self.timeout = min(max(Double(environment["NDEV_PRESSURE_API_TIMEOUT_SECONDS"] ?? "10") ?? 10, 1), 30)
         if let inline = environment["NDEV_PRESSURE_API_TOKEN"], !inline.isEmpty {
             self.token = inline
@@ -100,17 +108,33 @@ public struct NDevPressureAPIClient: Sendable {
         }
 
         let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await URLSession.shared.data(for: request)
-        } catch {
-            throw NDevPressureAPIError.unavailable(error.localizedDescription)
-        }
-        guard let http = response as? HTTPURLResponse else {
-            throw NDevPressureAPIError.unavailable("non-HTTP response")
-        }
-        guard data.count <= 2 * 1024 * 1024 else {
-            throw NDevPressureAPIError.malformed("response exceeds 2 MiB")
+        let status: Int
+        if let socketPath {
+            let target = (components?.percentEncodedPath.isEmpty == false ? components!.percentEncodedPath : "/") + (components?.percentEncodedQuery.map { "?" + $0 } ?? "")
+            let task = Task.detached {
+                try UnixHTTP.request(path: socketPath, target: target, method: method, body: body, token: token, timeout: timeout)
+            }
+            (data, status) = try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
+        } else {
+            do {
+                let configuration = URLSessionConfiguration.ephemeral
+                configuration.timeoutIntervalForRequest = timeout
+                configuration.timeoutIntervalForResource = timeout
+                let session = URLSession(configuration: configuration, delegate: LocalOnlyRedirectDelegate(), delegateQueue: nil)
+                defer { session.invalidateAndCancel() }
+                let (stream, response) = try await session.bytes(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw NDevPressureAPIError.unavailable("non-HTTP response")
+                }
+                status = http.statusCode
+                var bytes = Data()
+                for try await byte in stream {
+                    guard bytes.count < 2 * 1024 * 1024 else { throw NDevPressureAPIError.malformed("response exceeds 2 MiB") }
+                    bytes.append(byte)
+                }
+                data = bytes
+            } catch let error as NDevPressureAPIError { throw error }
+            catch { throw NDevPressureAPIError.unavailable(error.localizedDescription) }
         }
         let envelope: APIEnvelope<T>
         do {
@@ -122,10 +146,10 @@ public struct NDevPressureAPIClient: Sendable {
             throw NDevPressureAPIError.malformed("unsupported API version \(envelope.apiVersion)")
         }
         if let error = envelope.error {
-            throw NDevPressureAPIError.server(status: http.statusCode, code: error.code, message: error.message)
+            throw NDevPressureAPIError.server(status: status, code: error.code, message: error.message)
         }
-        guard (200..<300).contains(http.statusCode), let payload = envelope.data else {
-            throw NDevPressureAPIError.server(status: http.statusCode, code: "http_error", message: "request failed")
+        guard (200..<300).contains(status), let payload = envelope.data else {
+            throw NDevPressureAPIError.server(status: status, code: "http_error", message: "request failed")
         }
         return payload
     }
@@ -151,5 +175,11 @@ private struct AnyEncodable: Encodable {
 
     func encode(to encoder: Encoder) throws {
         try encodeValue(encoder)
+    }
+}
+
+private final class LocalOnlyRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }

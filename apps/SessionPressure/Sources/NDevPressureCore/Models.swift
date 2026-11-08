@@ -838,6 +838,13 @@ public struct BoardEnvelope: Codable, Sendable {
     public var events: [TelemetryEvent]?
     public var actions: [PressureAction]?
     public var workError: String?
+    public var sampleError: String?
+    public var monitorError: String?
+    public var doctorError: String?
+    public var calibrationError: String?
+    public var idleError: String?
+    public var telemetryError: String?
+    public var coverageError: String?
 
     enum CodingKeys: String, CodingKey {
         case ok, action, health, coverage, snapshot, work, admission, policy, launchd
@@ -851,6 +858,13 @@ public struct BoardEnvelope: Codable, Sendable {
         case recoveryHint = "recovery_hint"
         case idleSource = "idle_source"
         case workError = "work_error"
+        case sampleError = "sample_error"
+        case monitorError = "monitor_error"
+        case doctorError = "doctor_error"
+        case calibrationError = "calibration_error"
+        case idleError = "idle_error"
+        case telemetryError = "telemetry_error"
+        case coverageError = "coverage_error"
     }
 
     /// The richest snapshot this read carries, preferring a fresh sample over
@@ -2247,6 +2261,23 @@ public extension PressureBoard {
             refreshedAt: Date(),
             liveSample: live
         )
+        sectionErrors = previous?.sectionErrors ?? [:]
+        sectionRefreshedAt = previous?.sectionRefreshedAt ?? [:]
+        let sections: [(String, Bool, String?)] = [
+            ("status", sampled != nil, env.sampleError),
+            ("work", env.work != nil, env.workError),
+            ("policy", env.policy != nil, nil),
+            ("monitor", env.effectiveLaunchd != nil, env.monitorError),
+            ("doctor", env.doctor != nil, env.doctorError),
+            ("calibration", env.calibration != nil, env.calibrationError),
+            ("idle", env.inventory != nil, env.idleError),
+            ("telemetry", env.events != nil, env.telemetryError),
+            ("coverage", env.coverage != nil, env.coverageError),
+        ]
+        for (section, present, error) in sections {
+            if let error { sectionErrors[section] = error }
+            else if present { sectionErrors.removeValue(forKey: section); sectionRefreshedAt[section] = Date() }
+        }
     }
 }
 
@@ -2268,6 +2299,8 @@ public struct PressureBoard: Sendable, Hashable {
     public var binaryPath: String
     public var refreshedAt: Date
     public var liveSample: Bool
+    public var sectionErrors: [String: String] = [:]
+    public var sectionRefreshedAt: [String: Date] = [:]
 
     public init(
         snapshot: PressureSnapshot = PressureSnapshot(),

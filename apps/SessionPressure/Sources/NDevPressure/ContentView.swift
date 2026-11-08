@@ -81,7 +81,7 @@ struct ContentView: View {
                     Circle()
                         .fill(store.isRefreshing ? PressureTheme.levelColor(.warning) : PressureTheme.levelColor(.normal))
                         .frame(width: 7, height: 7)
-                    Text(store.isRefreshing ? "Refreshing…" : "Live")
+                    Text(store.isRefreshing ? "Refreshing…" : store.lastError == nil ? "Polling" : "Read failed")
                         .font(.caption)
                     Spacer()
                     if store.isRefreshing {
@@ -126,6 +126,14 @@ struct ContentView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
+            if let at = store.board.sectionRefreshedAt[store.selectedSection.freshnessKey] {
+                Text(at, style: .relative)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .help("Time since this section was read successfully. Using \(store.binaryPath)")
+            } else {
+                Text("No successful read").font(.caption).foregroundStyle(.secondary)
+            }
             if let message = store.statusMessage ?? store.busyAction {
                 Text(message)
                     .font(.caption)

@@ -107,4 +107,21 @@ struct BoardContractTests {
         #expect(board.calibration?.operationCount == 11)
         #expect(board.work?.capacity == 8)
     }
+    @Test("failed section retains prior data and age until a successful read")
+    func failedSectionRetainsFreshness() throws {
+        let full = try PressureJSON.decode(BoardEnvelope.self, from: recordedBoard())
+        let previous = PressureBoard(composite: full, previous: nil, binaryPath: "/recorded", live: true)
+        var raw = try #require(JSONSerialization.jsonObject(with: recordedBoard()) as? [String: Any])
+        raw.removeValue(forKey: "work")
+        raw["work_error"] = "test unavailable"
+        let failed = try PressureJSON.decode(BoardEnvelope.self, from: JSONSerialization.data(withJSONObject: raw))
+        let retained = PressureBoard(composite: failed, previous: previous, binaryPath: "/recorded", live: true)
+        #expect(retained.sectionErrors["work"] == "test unavailable")
+        #expect(retained.sectionRefreshedAt["work"] == previous.sectionRefreshedAt["work"])
+        #expect(retained.work?.capacity == previous.work?.capacity)
+        let recovered = PressureBoard(composite: full, previous: retained, binaryPath: "/recorded", live: true)
+        #expect(recovered.sectionErrors["work"] == nil)
+        #expect(recovered.sectionRefreshedAt["work"] != nil)
+    }
+
 }

@@ -46,6 +46,18 @@ final class PrivilegedTraceClient {
 
         return try await withCheckedThrowingContinuation { continuation in
             let completion = TraceCompletion(continuation)
+            connection.interruptionHandler = {
+                completion.fail(PrivilegedTraceError.connection("helper connection interrupted"))
+            }
+            connection.invalidationHandler = {
+                completion.fail(PrivilegedTraceError.connection("helper connection invalidated"))
+            }
+            let deadline = DispatchWorkItem {
+                completion.fail(PrivilegedTraceError.connection("bounded trace deadline exceeded"))
+                connection.invalidate()
+            }
+            completion.setDeadline(deadline)
+            DispatchQueue.global().asyncAfter(deadline: .now() + Double(min(max(durationSeconds, 5), 30) + 10), execute: deadline)
             guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
                 completion.fail(PrivilegedTraceError.connection(error.localizedDescription))
             }) as? NDevPressureTraceXPC else {
@@ -125,6 +137,12 @@ final class PrivilegedTraceClient {
 private final class TraceCompletion: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<DiskPathTraceResult, Error>?
+    private var deadline: DispatchWorkItem?
+
+    func setDeadline(_ item: DispatchWorkItem) {
+        lock.lock(); defer { lock.unlock() }
+        if continuation == nil { item.cancel() } else { deadline = item }
+    }
 
     init(_ continuation: CheckedContinuation<DiskPathTraceResult, Error>) {
         self.continuation = continuation
@@ -142,6 +160,8 @@ private final class TraceCompletion: @unchecked Sendable {
         lock.lock()
         let current = continuation
         continuation = nil
+        deadline?.cancel()
+        deadline = nil
         lock.unlock()
         current?.resume(with: result)
     }

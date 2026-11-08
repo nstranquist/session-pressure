@@ -1,4 +1,6 @@
 use std::io::Read;
+use std::os::fd::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -13,11 +15,13 @@ pub enum ClientError {
     Empty,
     Json(String),
     TimedOut(u64),
+    OutputLimit,
 }
 
 impl std::fmt::Display for ClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::OutputLimit => write!(f, "session-pressure response exceeds the bounded output limit"),
             Self::BinaryNotFound => write!(f, "session-pressure not found. Build it or set SESSION_PRESSURE_BIN."),
             Self::Launch(s) => write!(f, "failed to launch session-pressure: {s}"),
             Self::NonZero { code, stderr } => {
@@ -181,8 +185,8 @@ impl PressureClient {
 
     pub fn policy_enable(&self, auto_shed: bool) -> Result<serde_json::Value, ClientError> {
         let mut args = vec!["policy".into(), "enable".into()];
-        if !auto_shed {
-            args.push("--no-auto-shed".into());
+        if auto_shed {
+            args.push("--with-auto-shed".into());
         }
         self.run_json_value(&args, true)
     }
@@ -243,9 +247,6 @@ impl PressureClient {
         args.extend(leaf.iter().cloned());
         let (code, stdout, stderr) = self.run(&args)?;
         if code != 0 && !accept_nonzero {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                return Ok(v);
-            }
             return Err(ClientError::NonZero { code, stderr });
         }
         if stdout.trim().is_empty() {
@@ -254,13 +255,17 @@ impl PressureClient {
             }
             return Err(ClientError::Empty);
         }
-        serde_json::from_str(&stdout).or_else(|e| {
-            if code != 0 {
-                Err(ClientError::NonZero { code, stderr })
-            } else {
-                Err(ClientError::Json(e.to_string()))
-            }
-        })
+        let mut value: serde_json::Value = match serde_json::from_str(&stdout) {
+            Ok(value) => value,
+            Err(error) => return Err(if code != 0 { ClientError::NonZero { code, stderr } } else { ClientError::Json(error.to_string()) }),
+        };
+        if code != 0 {
+            if let Some(object) = value.as_object_mut() {
+                object.insert("_cli_exit_code".into(), code.into());
+                object.insert("ok".into(), false.into());
+            } else { return Err(ClientError::NonZero { code, stderr }); }
+        }
+        Ok(value)
     }
 
     fn run(&self, args: &[String]) -> Result<(i32, String, String), ClientError> {
@@ -270,45 +275,72 @@ impl PressureClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         apply_sanitized_env(&mut cmd);
+        cmd.process_group(0);
         let mut child = cmd.spawn().map_err(|e| ClientError::Launch(e.to_string()))?;
-        // Drain pipes on side threads. A --full board is >64KiB; waiting for
-        // exit before read() fills the OS pipe and deadlocks the child.
-        let mut stdout_pipe = child.stdout.take();
-        let mut stderr_pipe = child.stderr.take();
-        let stdout_h = std::thread::spawn(move || {
-            let mut buf = String::new();
-            if let Some(mut pipe) = stdout_pipe.take() {
-                let _ = pipe.read_to_string(&mut buf);
+        let mut stdout_pipe = child.stdout.take().unwrap();
+        let mut stderr_pipe = child.stderr.take().unwrap();
+        let group = child.id() as i32;
+        for fd in [stdout_pipe.as_raw_fd(), stderr_pipe.as_raw_fd()] {
+            if unsafe { libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) } < 0 {
+                unsafe { libc::kill(-group, libc::SIGKILL); }
+                let _ = child.wait();
+                return Err(ClientError::Launch("could not bound CLI pipes".into()));
             }
-            buf
-        });
-        let stderr_h = std::thread::spawn(move || {
-            let mut buf = String::new();
-            if let Some(mut pipe) = stderr_pipe.take() {
-                let _ = pipe.read_to_string(&mut buf);
-            }
-            buf
-        });
-        let timeout = self.timeout;
+        }
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let mut output_eof = false;
+        let mut error_eof = false;
         let started = std::time::Instant::now();
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => {
-                    if started.elapsed() > timeout {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(ClientError::TimedOut(timeout.as_secs()));
-                    }
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                Err(e) => return Err(ClientError::Launch(e.to_string())),
+        let mut status = None;
+        let mut exited_at = None;
+        let result = loop {
+            if let Err(error) = drain(&mut stdout_pipe, &mut stdout, 8 * 1024 * 1024, &mut output_eof)
+                .and_then(|_| drain(&mut stderr_pipe, &mut stderr, 64 * 1024, &mut error_eof)) {
+                break Err(error);
             }
+            if status.is_none() {
+                match child.try_wait() {
+                    Ok(Some(value)) => { status = Some(value); exited_at = Some(std::time::Instant::now()); }
+                    Ok(None) => (),
+                    Err(error) => break Err(ClientError::Launch(error.to_string())),
+                }
+            }
+            if let Some(status) = status {
+                if output_eof && error_eof {
+                    break Ok((status.code().unwrap_or(1), String::from_utf8_lossy(&stdout).into_owned(), String::from_utf8_lossy(&stderr).into_owned()));
+                }
+            }
+            if started.elapsed() >= self.timeout || exited_at.is_some_and(|at| at.elapsed() >= Duration::from_secs(1)) {
+                break Err(ClientError::TimedOut(self.timeout.as_secs()));
+            }
+            std::thread::sleep(Duration::from_millis(10));
         };
-        let stdout = stdout_h.join().unwrap_or_default();
-        let stderr = stderr_h.join().unwrap_or_default();
-        Ok((status.code().unwrap_or(1), stdout, stderr))
+        if result.is_err() {
+            // A descendant must not retain the pipes or survive a timeout.
+            unsafe { libc::kill(-group, libc::SIGKILL); }
+            let _ = child.wait();
+        }
+        result
     }
+}
+
+fn drain<R: Read>(pipe: &mut R, output: &mut Vec<u8>, limit: usize, eof: &mut bool) -> Result<(), ClientError> {
+    let mut buffer = [0u8; 8192];
+    // Each turn is bounded even when a producer writes continuously.
+    for _ in 0..8 {
+        match pipe.read(&mut buffer) {
+            Ok(0) => { *eof = true; break; }
+            Ok(n) => {
+                if output.len() + n > limit { return Err(ClientError::OutputLimit); }
+                output.extend_from_slice(&buffer[..n]);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(ClientError::Launch(error.to_string())),
+        }
+    }
+    Ok(())
 }
 
 fn is_exec(path: &Path) -> bool {
@@ -348,5 +380,47 @@ fn apply_sanitized_env(cmd: &mut Command) {
                 cmd.env(key, v);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    struct Fixture(PathBuf);
+    impl Drop for Fixture { fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); } }
+    fn fixture(script: &str, timeout: Duration) -> (Fixture, PressureClient) {
+        let path = std::env::temp_dir().join(format!("pressure-client-{}-{}.sh", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        (Fixture(path.clone()), PressureClient { binary_path: path, timeout })
+    }
+    #[test]
+    fn nonzero_json_is_explicit() {
+        let (_fixture, client) = fixture("printf '{\"ok\":true}'; exit 11", Duration::from_secs(2));
+        let value = client.run_json_value(&[], true).unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["_cli_exit_code"], 11);
+        assert!(matches!(client.run_json_value(&[], false), Err(ClientError::NonZero { code: 11, .. })));
+    }
+    #[test]
+    fn output_is_bounded() {
+        let (_fixture, client) = fixture("/usr/bin/yes x", Duration::from_secs(5));
+        assert!(matches!(client.run(&[]), Err(ClientError::OutputLimit)));
+    }
+    #[test]
+    fn child_with_inherited_pipes_cannot_hold_client() {
+        let (_fixture, client) = fixture("sleep 30 & exit 0", Duration::from_millis(100));
+        let start = std::time::Instant::now();
+        assert!(matches!(client.run(&[]), Err(ClientError::TimedOut(_))));
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+    #[test]
+    fn executable_mode_is_required() {
+        let (fixture, _) = fixture("exit 0", Duration::from_secs(1));
+        std::fs::set_permissions(&fixture.0, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(!is_exec(&fixture.0));
     }
 }
