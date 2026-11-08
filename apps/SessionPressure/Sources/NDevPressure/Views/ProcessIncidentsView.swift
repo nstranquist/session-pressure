@@ -29,7 +29,7 @@ struct ProcessIncidentsView: View {
             HStack {
                 Label("Detection sends alerts. Stop requires your confirmation.", systemImage: "checkmark.shield")
                 Spacer()
-                if let at = refreshedAt { Text("Read \(at, style: .relative) ago").font(.caption) }
+                if let at = refreshedAt { ReadAgeView(date: at).font(.caption) }
             }.help(PressureHelp.processIncidents)
             HSplitView {
                 List(selection: $selectedID) {

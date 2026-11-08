@@ -1057,3 +1057,29 @@ bounded authority stores hour buckets, not revision-tagged individual timings.
 The private receipt is `writer-hour-cohorts-2052.json`. The next accepted runtime
 needs its own natural load observations; preserve the existing failure and all
 historical write gaps. No limit was raised and no telemetry was removed.
+
+
+### Native app idle CPU follow-through (20:55 UTC)
+
+The corrected observer exposed valid app CPU above the 1% idle target: 2.566%
+over 482 seconds, with PID 56895 unchanged, zero sampling failures and peak RSS
+58.3125 MiB. This is an early observation, not a completed 30-minute verdict.
+A private five-second `sample` of that exact PID succeeded without privilege.
+It shows most time waiting in the main event loop, with repeated AppKit layout
+and SwiftUI dynamic relative-time text work. This identifies a plausible cost,
+not a measured causal allocation of all CPU. The raw private evidence is
+`app-sample-2053.txt`.
+
+All three native age labels now use shared `ReadAgeView` with a 15-second
+TimelineView cadence and explicit string formatting, instead of SwiftUI's
+per-second dynamic relative text. Dates and read freshness remain visible.
+The candidate is 1.4.1 build 8. Only the owned ContentView toolbar hunk is staged;
+the peer Hetzner navigation hunk remains unclaimed. Existing unrelated app code
+is preserved in the combined verification snapshot.
+
+The first verification attempt copied an old Swift build cache, which failed
+because its PCH embeds the old absolute module-cache path. Only this run's
+redundant generated copy was removed; the original evidence was preserved.
+A clean, serial `make verify` is running with the real installed CLI contract.
+Do not claim the candidate is installed or the CPU target passed until the
+separate installation and elapsed observation receipts exist.

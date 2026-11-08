@@ -129,7 +129,7 @@ struct ContentView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             if let at = store.selectedSectionRefreshedAt {
-                Text(at, style: .relative)
+                ReadAgeView(date: at)
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .help("Time since this section was read successfully. Using \(store.binaryPath)")
