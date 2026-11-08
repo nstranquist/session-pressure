@@ -2,6 +2,8 @@ package sessionpressurecmd
 
 import (
 	"context"
+	"os"
+	"runtime"
 	"testing"
 	"time"
 
@@ -53,6 +55,9 @@ func (fake *fakePressureLaunchdController) Status(context.Context) sessionpressu
 
 func installFakePressureLaunchd(t *testing.T, fake *fakePressureLaunchdController) {
 	t.Helper()
+	previousMemory := ReadPhysicalMemoryMB
+	ReadPhysicalMemoryMB = func(context.Context, *sessionpressure.Sampler) (float64, error) { return 16 * 1024, nil }
+	t.Cleanup(func() { ReadPhysicalMemoryMB = previousMemory })
 	previousFactory := NewLaunchdController
 	previousAllowed := LaunchdManagementAllowed
 	NewLaunchdController = func(string) (LaunchdController, error) { return fake, nil }
@@ -82,4 +87,13 @@ func installFakePressureMonitorOnce(t *testing.T, run func(context.Context, *ses
 	previous := RunMonitorOnce
 	RunMonitorOnce = run
 	t.Cleanup(func() { RunMonitorOnce = previous })
+}
+
+// Command contracts use a declared 16 GiB host on non-macOS gate runners.
+// Native sampler behavior is tested separately in sessionpressure.
+func TestMain(m *testing.M) {
+	if runtime.GOOS != "darwin" {
+		ReadPhysicalMemoryMB = func(context.Context, *sessionpressure.Sampler) (float64, error) { return 16 * 1024, nil }
+	}
+	os.Exit(m.Run())
 }

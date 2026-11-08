@@ -51,7 +51,7 @@ Subcommands:
                                    apply flags: --multi-agent (earlier soft-launch warnings), --with-auto-shed, --dry-run
   policy init [--force]            Write the tuned observe-only default policy
   policy migrate                   Persist filled default work weights (express/benchmark) without changing enforcement
-  policy enable [--no-auto-shed]   Block launches at red; gracefully shed a quiescent tree at sustained critical
+  policy enable [--with-auto-shed] Block growing work at red; automatic relief requires explicit opt-in
   policy observe                   Keep monitoring but disable admission blocks and automatic shedding
   monitor once                     Sample once and persist a manual telemetry event
   monitor run                      Run a foreground diagnostic loop (never automatic relief)
@@ -255,6 +255,10 @@ var LaunchdManagementAllowed = func() bool {
 	return !aliased
 }
 
+var ReadPhysicalMemoryMB = func(ctx context.Context, sampler *sessionpressure.Sampler) (float64, error) {
+	return sampler.PhysicalMemoryMB(ctx)
+}
+
 var SampleSnapshot = func(ctx context.Context, sampler *sessionpressure.Sampler, policy sessionpressure.Policy) (sessionpressure.Snapshot, error) {
 	return sampler.Sample(ctx, policy)
 }
@@ -275,7 +279,7 @@ func loadPressureRuntime(ctx context.Context) (pressureRuntime, error) {
 		return pressureRuntime{}, err
 	}
 	sampler := sessionpressure.NewSampler()
-	physicalMB, err := sampler.PhysicalMemoryMB(ctx)
+	physicalMB, err := ReadPhysicalMemoryMB(ctx, sampler)
 	if err != nil {
 		return pressureRuntime{}, err
 	}
@@ -905,7 +909,7 @@ func cmdSessionPressurePolicy(g *Flags, args []string) int {
 		if runtime.persisted && !force {
 			return sessionPressureError("policy already exists; pass --force to replace it", 1)
 		}
-		physicalMB, err := runtime.sampler.PhysicalMemoryMB(mutation.Context)
+		physicalMB, err := ReadPhysicalMemoryMB(mutation.Context, runtime.sampler)
 		if err != nil {
 			return sessionPressureError(err.Error(), 1)
 		}
@@ -939,9 +943,10 @@ func cmdSessionPressurePolicy(g *Flags, args []string) int {
 			"ok": true, "action": "policy.migrate", "policy": runtime.policy, "path": runtime.path,
 		}, "migrated effective policy weights to "+runtime.path+"\n", 0)
 	case "enable":
-		noAutoShed := len(args) == 1 && args[0] == "--no-auto-shed"
-		if len(args) > 1 || (len(args) == 1 && !noAutoShed) {
-			return sessionPressureError("policy enable accepts only --no-auto-shed", 2)
+		withAutoShed := len(args) == 1 && args[0] == "--with-auto-shed"
+		legacyNoAutoShed := len(args) == 1 && args[0] == "--no-auto-shed"
+		if len(args) > 1 || (len(args) == 1 && !withAutoShed && !legacyNoAutoShed) {
+			return sessionPressureError("policy enable accepts only --with-auto-shed or --no-auto-shed", 2)
 		}
 		mutation, err := beginPressurePolicyMutation(runtime.dir)
 		if err != nil {
@@ -951,7 +956,9 @@ func cmdSessionPressurePolicy(g *Flags, args []string) int {
 		runtime = mutation.Runtime
 		runtime.policy.Enabled = true
 		runtime.policy.EnforceAdmission = true
-		runtime.policy.AutoShedCritical = !noAutoShed
+		runtime.policy.AutoShedCritical = withAutoShed
+		runtime.policy.Storage.Enabled = true
+		runtime.policy.Storage.EnforceAdmission = true
 		runtime.policy.Profile = sessionpressure.PolicyProfileBalanced
 		runtime.policy.WorkLimits.WarningCapacityEnabled = false
 		if err := sessionpressure.SavePolicy(runtime.path, runtime.policy); err != nil {
@@ -1049,17 +1056,21 @@ func cmdSessionPressureMonitor(g *Flags, args []string) int {
 		policyWasEnabled := runtime.policy.Enabled
 		enforceWasEnabled := runtime.policy.EnforceAdmission
 		autoShedWasEnabled := runtime.policy.AutoShedCritical
+		storageWasEnabled := runtime.policy.Storage.Enabled
+		storageAdmissionWasEnabled := runtime.policy.Storage.EnforceAdmission
 		runtime.policy.Enabled = true
 		if !runtime.persisted {
 			runtime.policy.EnforceAdmission = enforce
-			runtime.policy.AutoShedCritical = enforce
+			runtime.policy.AutoShedCritical = false
+			runtime.policy.Storage.EnforceAdmission = enforce
 			if err := sessionpressure.SavePolicy(runtime.path, runtime.policy); err != nil {
 				return sessionPressureError(err.Error(), 1)
 			}
 		} else {
 			if enforce {
 				runtime.policy.EnforceAdmission = true
-				runtime.policy.AutoShedCritical = true
+				runtime.policy.Storage.Enabled = true
+				runtime.policy.Storage.EnforceAdmission = true
 			}
 			if err := sessionpressure.SavePolicy(runtime.path, runtime.policy); err != nil {
 				return sessionPressureError(err.Error(), 1)
@@ -1067,7 +1078,9 @@ func cmdSessionPressureMonitor(g *Flags, args []string) int {
 		}
 		policyChanged := runtime.policy.Enabled != policyWasEnabled ||
 			runtime.policy.EnforceAdmission != enforceWasEnabled ||
-			runtime.policy.AutoShedCritical != autoShedWasEnabled
+			runtime.policy.AutoShedCritical != autoShedWasEnabled ||
+			runtime.policy.Storage.Enabled != storageWasEnabled ||
+			runtime.policy.Storage.EnforceAdmission != storageAdmissionWasEnabled
 		priorStatus := manager.Status(mutation.Context)
 		status, err := manager.Install(mutation.Context)
 		if err == nil && policyChanged && priorStatus.OK && status.PID == priorStatus.PID {
@@ -1093,6 +1106,14 @@ func cmdSessionPressureMonitor(g *Flags, args []string) int {
 					return sessionPressureError(fmt.Sprintf("monitor install failed: %v; admission-only fallback also failed: %v", err, fallbackErr), 1)
 				}
 				return sessionPressureError("monitor install failed; policy reverted to admission-only: "+err.Error(), 1)
+			}
+			if policyChanged && status.Loaded && status.PID > 0 {
+				fallbackCtx, fallbackCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				_, reloadErr := manager.Restart(fallbackCtx)
+				fallbackCancel()
+				if reloadErr != nil {
+					return sessionPressureError(fmt.Sprintf("monitor install failed: %v; policy reload failed: %v", err, reloadErr), 1)
+				}
 			}
 			return sessionPressureError(err.Error(), 1)
 		}

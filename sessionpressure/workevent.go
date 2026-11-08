@@ -12,6 +12,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -92,6 +93,11 @@ const (
 // CommandDigest covers only the resolved executable identity and argument
 // count; arguments, environment, cwd, and prompts are never serialized.
 type WorkEvent struct {
+	HostID                              string                    `json:"host_id,omitempty"`
+	HostOS                              string                    `json:"host_os,omitempty"`
+	HostArch                            string                    `json:"host_arch,omitempty"`
+	LogicalCPUs                         int                       `json:"logical_cpus,omitempty"`
+	SourceRevision                      string                    `json:"source_revision,omitempty"`
 	Workload                            string                    `json:"workload,omitempty"`
 	Cohort                              string                    `json:"cohort,omitempty"`
 	SchemaVersion                       int                       `json:"schema_version"`
@@ -230,6 +236,12 @@ func (event WorkEvent) Validate() error {
 		if event.RequestedClass == event.Class {
 			return errors.New("work requested_class must be omitted when it matches class")
 		}
+	}
+	if event.HostID != "" && !validPrivateID(event.HostID) {
+		return errors.New("work host_id must be an opaque private identity")
+	}
+	if event.LogicalCPUs < 0 || (event.HostOS != "" && event.HostOS != "darwin" && event.HostOS != "linux") || (event.HostArch != "" && event.HostArch != "arm64" && event.HostArch != "amd64") {
+		return errors.New("invalid work host cohort")
 	}
 	if event.RequestID != "" && !validPrivateID(event.RequestID) {
 		return errors.New("work event request_id must be a 32-character lowercase hex identity")
@@ -403,6 +415,13 @@ func (store *WorkEventStore) AppendDurable(event WorkEvent) error {
 	event.Outcome = boundedText(event.Outcome, 64)
 	if err := event.Validate(); err != nil {
 		return err
+	}
+	if event.HostID == "" {
+		hostID, err := workHostIdentity(store.Dir)
+		if err != nil {
+			return err
+		}
+		event.HostID, event.HostOS, event.HostArch, event.LogicalCPUs, event.SourceRevision = hostID, runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), SourceRevision()
 	}
 	body, err := json.Marshal(event)
 	if err != nil {
@@ -1690,4 +1709,43 @@ func durationStats(values []int64) WorkDurationStats {
 	}
 	p95 := (len(ordered)*95 + 99) / 100
 	return WorkDurationStats{AverageMS: total / int64(len(ordered)), P95MS: ordered[p95-1], MaximumMS: ordered[len(ordered)-1]}
+}
+
+// Random per-state identity separates hosts without recording a hostname,
+// user name, network address, or hardware serial number.
+func workHostIdentity(dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "work-host-id")
+	unlock, err := filelock.AcquireContext(context.Background(), path, time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	if info, err := os.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 64 {
+			return "", errors.New("invalid work host identity authority")
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		id := strings.TrimSpace(string(raw))
+		if !validPrivateID(id) {
+			return "", errors.New("invalid work host identity")
+		}
+		return id, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", err
+	}
+	value := hex.EncodeToString(id[:])
+	if err := atomicWrite(path, []byte(value+"\n"), 0600); err != nil {
+		return "", err
+	}
+	return value, nil
 }

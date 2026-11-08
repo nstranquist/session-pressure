@@ -389,6 +389,8 @@ func (monitor *Monitor) annotateOperationalTelemetry(snapshot *Snapshot, cleanup
 	switch {
 	case monitor.Cleaner == nil:
 		snapshot.ResourceCleanupStatus = "disabled"
+	case !monitor.Policy.AutoShedCritical:
+		snapshot.ResourceCleanupStatus = "disabled_by_policy"
 	case cleanup.lastError != "":
 		snapshot.ResourceCleanupStatus = "failing"
 	default:
@@ -484,6 +486,7 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 	lastErrorPersist := time.Time{}
 	lastProcessCPUTotalMS := 0.0
 	lastPrune := time.Time{}
+	maintenanceError := monitor.Store.ReadMaintenanceError()
 	lastStorageLevel := LevelNormal
 	cleanupTelemetry := resourceCleanupTelemetryState{}
 	memoryHistory := make([]memoryObservation, 0, memoryMomentumWindow)
@@ -559,6 +562,7 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 				lastProcessCPUTotalMS = snapshot.processCPUTotalMS
 			}
 			stats.add(snapshot, observedInterval)
+			snapshot.MaintenanceError = maintenanceError
 			monitor.annotateOperationalTelemetry(&snapshot, cleanupTelemetry, stats)
 			if snapshot.Level == lastLevel {
 				consecutive++
@@ -595,7 +599,7 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 					lastTransitionPersist = now
 				}
 			}
-			resourceReliefAllowed := true
+			resourceReliefAllowed := monitor.Policy.AutoShedCritical
 			if action, acted := monitor.maybeRelieveExcluding(snapshot, lastAttempt, lastRevalidationAttempt, rejectedCandidates); acted {
 				resourceReliefAllowed = false
 				beforeBytes := monitor.Store.BytesForDay(action.Timestamp)
@@ -611,6 +615,7 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 				}
 			}
 			snapshot = monitor.runResourceCleanup(ctx, snapshot, resourceReliefAllowed, &cleanupTelemetry, &stats)
+			snapshot.MaintenanceError = maintenanceError
 			monitor.annotateOperationalTelemetry(&snapshot, cleanupTelemetry, stats)
 			snapshot.TelemetryBytesToday = monitor.Store.BytesForDay(snapshot.Timestamp)
 			stats.apply(&snapshot, monitor.Policy)
@@ -625,7 +630,14 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 				// Treat an attempted prune as scheduled even if it fails. Retrying an
 				// I/O failure every five seconds would itself amplify pressure; the
 				// next bounded housekeeping window can try again.
-				_ = monitor.Store.Prune(monitor.Policy.RetentionDays)
+				if err := monitor.Store.Prune(monitor.Policy.RetentionDays); err != nil {
+					maintenanceError = boundedText(err.Error(), durableTextLimit)
+				} else {
+					maintenanceError = ""
+				}
+				if err := monitor.Store.WriteMaintenanceError(maintenanceError); err != nil {
+					return fmt.Errorf("persist retention maintenance outcome: %w", err)
+				}
 				lastPrune = pruneAt
 			}
 		}
@@ -667,7 +679,7 @@ func (monitor *Monitor) runResourceCleanup(ctx context.Context, snapshot Snapsho
 	}
 	// If core agent-tree relief owned this sample, preserve an earlier cleanup
 	// failure until the extension itself completes a successful check.
-	if !allowed {
+	if !allowed || !monitor.Policy.AutoShedCritical {
 		snapshot.ResourceCleanupError = state.lastError
 		return snapshot
 	}

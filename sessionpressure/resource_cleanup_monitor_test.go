@@ -18,7 +18,7 @@ func TestRunResourceCleanupSurfacesDeduplicatedErrorAndRecovery(t *testing.T) {
 	dir := t.TempDir()
 	store := NewTelemetryStore(dir)
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
-	monitor := NewMonitor(nil, store, DefaultPolicy(16<<10))
+	monitor := NewMonitor(nil, store, automaticCleanupTestPolicy())
 	monitor.Cleaner = resourceCleanerFunc(func(context.Context, Snapshot) (ResourceCleanupResult, error) {
 		return ResourceCleanupResult{}, errors.New("claim state is corrupt")
 	})
@@ -60,7 +60,7 @@ func TestRunResourceCleanupSurfacesDeduplicatedErrorAndRecovery(t *testing.T) {
 
 func TestRunResourceCleanupRetainsLastControlPerformance(t *testing.T) {
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
-	monitor := &Monitor{}
+	monitor := &Monitor{Policy: automaticCleanupTestPolicy()}
 	called := 0
 	monitor.Cleaner = resourceCleanerFunc(func(context.Context, Snapshot) (ResourceCleanupResult, error) {
 		called++
@@ -83,7 +83,7 @@ func TestRunResourceCleanupEventuallyPersistsRateLimitedTransitions(t *testing.T
 	dir := t.TempDir()
 	store := NewTelemetryStore(dir)
 	now := time.Date(2026, 7, 21, 13, 0, 0, 0, time.UTC)
-	monitor := NewMonitor(nil, store, DefaultPolicy(16<<10))
+	monitor := NewMonitor(nil, store, automaticCleanupTestPolicy())
 	failing := true
 	monitor.Cleaner = resourceCleanerFunc(func(context.Context, Snapshot) (ResourceCleanupResult, error) {
 		if failing {
@@ -141,4 +141,10 @@ func TestAssessGuardHealthReportsResourceCleanupFailure(t *testing.T) {
 	if health.MonitorHealthy || health.DailyDriverReady || !strings.Contains(strings.Join(health.HealthReasons, "\n"), "typed resource cleanup is failing") {
 		t.Fatalf("health=%+v", health)
 	}
+}
+
+func automaticCleanupTestPolicy() Policy {
+	p := DefaultPolicy(16 * 1024)
+	p.AutoShedCritical = true
+	return p
 }

@@ -299,6 +299,7 @@ type Snapshot struct {
 	ResourceCleanupError       string             `json:"resource_cleanup_error,omitempty"`
 	GuardSampleErrors          int                `json:"guard_sample_errors,omitempty"`
 	ResourceCleanupFailures    int                `json:"resource_cleanup_failures,omitempty"`
+	MaintenanceError           string             `json:"maintenance_error,omitempty"`
 	ResourceCleanupStatus      string             `json:"resource_cleanup_status,omitempty"`
 	ResourceCleanupExecutedAt  time.Time          `json:"resource_cleanup_control_executed_at,omitempty,omitzero"`
 	ResourceCleanupDurationMS  float64            `json:"resource_cleanup_control_duration_ms,omitempty"`

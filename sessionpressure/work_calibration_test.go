@@ -116,3 +116,29 @@ func TestWorkCalibrationReportSuppressesAlreadyAppliedSuggestion(t *testing.T) {
 		t.Fatalf("applied policy must hide suggestion: %+v", report)
 	}
 }
+
+func TestCalibrationSeparatesHostCohortsAndWindow(t *testing.T) {
+	now := time.Now().UTC()
+	events := []WorkEvent{
+		{Timestamp: now, HostID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", HostOS: "darwin", HostArch: "arm64", LogicalCPUs: 10, ReuseRefusalReason: ExpressReuseDisabled},
+		{Timestamp: now, HostID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", HostOS: "linux", HostArch: "arm64", LogicalCPUs: 4},
+		{Timestamp: now.Add(-48 * time.Hour), Outcome: "express_reuse_hit"},
+	}
+	r := BuildWorkCalibrationReport(events, now.Add(-time.Hour), now)
+	if len(r.HostCohorts) != 2 || r.ReuseHits != 0 || len(r.CacheRefusals) != 1 || r.CacheRefusals[0].Outcome != "disabled" || r.ThresholdRetuneHint != "mixed host cohorts; compare each host separately before changing reservations or thresholds" {
+		t.Fatalf("%+v", r)
+	}
+	a, err := workHostIdentity(t.TempDir())
+	if err != nil || !validPrivateID(a) {
+		t.Fatalf("%q %v", a, err)
+	}
+	dir := t.TempDir()
+	b, err := workHostIdentity(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := workHostIdentity(dir)
+	if err != nil || b != c || a == b {
+		t.Fatal("host identity unstable")
+	}
+}

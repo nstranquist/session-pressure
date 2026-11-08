@@ -163,6 +163,7 @@ func TestCmdSessionPressureSelfTestFullHydratesDiagnostics(t *testing.T) {
 func TestCmdSessionPressureSelfTestDoesNotProbeUnreadyResident(t *testing.T) {
 	dir, policy := seedReadyPressureSelfTest(t)
 	policy.AutoShedCritical = false
+	policy.EnforceAdmission = false
 	if err := sessionpressure.SavePolicy(sessionpressure.PolicyPath(dir), policy); err != nil {
 		t.Fatal(err)
 	}

@@ -1,5 +1,13 @@
 package sessionpressurecmd
 
+import (
+	"fmt"
+	"github.com/nstranquist/session-pressure/internal/telemetry"
+	"github.com/nstranquist/session-pressure/sessionpressure"
+	"os"
+	"time"
+)
+
 // ProductCLIMarker is embedded in the product CLI binary so the nicos-tools
 // wrapper can refuse the old ndev-pressure forwarder.
 const ProductCLIMarker = "github.com/nstranquist/session-pressure/sessionpressurecmd"
@@ -11,7 +19,13 @@ type Flags struct {
 
 // Main runs the SessionPressure dispatcher. jsonOutput is the ndev --json flag.
 func Main(jsonOutput bool, args []string) int {
-	return cmdSessionPressure(&Flags{JSON: jsonOutput}, StripSessionPressurePrefix(args))
+	started := time.Now()
+	args = StripSessionPressurePrefix(args)
+	code := cmdSessionPressure(&Flags{JSON: jsonOutput}, args)
+	if err := telemetry.RecordCommand(sessionpressure.CommandLeaf(args), started, code); err != nil {
+		fmt.Fprintln(os.Stderr, "session-pressure: command telemetry could not be recorded; inspect telemetry audit")
+	}
+	return code
 }
 
 // HelpText is the product CLI help. The ndev wrapper prints the same text.

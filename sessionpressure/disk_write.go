@@ -90,6 +90,7 @@ type DiskWriter struct {
 }
 
 type DiskWriteSummary struct {
+	MaintenanceErrors        []string            `json:"maintenance_errors,omitempty"`
 	SchemaVersion            int                 `json:"schema_version"`
 	ModelVersion             string              `json:"model_version"`
 	CapturedAt               time.Time           `json:"captured_at"`
@@ -277,7 +278,8 @@ func (histogram diskHistogram) p99() uint64 {
 }
 
 type DiskWriteObserver struct {
-	mu sync.RWMutex
+	maintenanceErrors map[string]bool
+	mu                sync.RWMutex
 
 	policy        DiskWritePolicy
 	store         *DiskWriteStore
@@ -487,16 +489,19 @@ func (observer *DiskWriteObserver) Latest(limit int) DiskWriteReport {
 	}
 	observer.mu.RLock()
 	report := cloneDiskWriteReport(observer.lastReport)
+	codes := observer.maintenanceCodesLocked()
 	observer.mu.RUnlock()
 	if report.Summary.SchemaVersion == 0 {
 		report.Summary = disabledDiskWriteSummary(observer.now().UTC(), observer.policy.Enabled)
 	}
+	report.Summary.MaintenanceErrors = codes
 	return limitDiskWriteReport(report, limit)
 }
 
 func cloneDiskWriteReport(report DiskWriteReport) DiskWriteReport {
 	report.Writers = append([]DiskWriter(nil), report.Writers...)
 	report.Summary.Reasons = append([]string(nil), report.Summary.Reasons...)
+	report.Summary.MaintenanceErrors = append([]string(nil), report.Summary.MaintenanceErrors...)
 	if report.Summary.TopWriter != nil {
 		top := *report.Summary.TopWriter
 		report.Summary.TopWriter = &top
@@ -794,6 +799,7 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	if processes.AccessibleCount < processes.TotalPIDCount {
 		summary.Reasons = append(summary.Reasons, "process_attribution_partial")
 	}
+	summary.MaintenanceErrors = observer.maintenanceCodesLocked()
 	report := limitDiskWriteReport(DiskWriteReport{Summary: summary, Writers: writers, AvailableCount: writerAvailable}, diskWriteMaxWriters)
 	transition := observer.transitionLocked(summary)
 	alert := observer.alertLocked(summary)
@@ -1185,13 +1191,13 @@ func (observer *DiskWriteObserver) flushHourLocked() {
 		observer.currentHour = nil
 		return
 	}
-	if observer.store.appendRecord(record) != nil {
-		_ = observer.store.writeCheckpoint(record)
+	if err := observer.store.appendRecord(record); observer.recordMaintenanceLocked("history_append", err) {
+		observer.recordMaintenanceLocked("checkpoint_write", observer.store.writeCheckpoint(record))
 		observer.currentHour = nil
 		return
 	}
-	_ = observer.store.removeCheckpoint()
-	_ = observer.store.Prune(observer.policy.BaselineRetentionDays)
+	observer.recordMaintenanceLocked("checkpoint_remove", observer.store.removeCheckpoint())
+	observer.recordMaintenanceLocked("history_retention", observer.store.Prune(observer.policy.BaselineRetentionDays))
 	observer.currentHour = nil
 }
 
@@ -1203,7 +1209,7 @@ func (observer *DiskWriteObserver) checkpointHourLocked() {
 	if !ok {
 		return
 	}
-	_ = observer.store.writeCheckpoint(record)
+	observer.recordMaintenanceLocked("checkpoint_write", observer.store.writeCheckpoint(record))
 }
 
 func (observer *DiskWriteObserver) currentHourRecordLocked() (diskWriteHistoryRecord, bool) {
@@ -1293,4 +1299,24 @@ func roundRatio(value float64) float64 {
 		return 0
 	}
 	return math.Round(value*100) / 100
+}
+
+func (observer *DiskWriteObserver) recordMaintenanceLocked(code string, err error) bool {
+	if observer.maintenanceErrors == nil {
+		observer.maintenanceErrors = map[string]bool{}
+	}
+	if err != nil {
+		observer.maintenanceErrors[code] = true
+	} else {
+		delete(observer.maintenanceErrors, code)
+	}
+	return err != nil
+}
+func (observer *DiskWriteObserver) maintenanceCodesLocked() []string {
+	var codes []string
+	for code := range observer.maintenanceErrors {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	return codes
 }

@@ -17,8 +17,10 @@ func CommandLeaf(args []string) string {
 	switch sub {
 	case "help", "--help", "-h":
 		return "help"
-	case "snapshot", "check", "doctor", "status", "self-test", "telemetry", "idle", "audit", "board":
+	case "capabilities", "snapshot", "check", "doctor", "status", "self-test", "telemetry", "idle", "audit", "board":
 		return sub
+	case "api":
+		return AllowedLeaf("api", args[1:], "help", []string{"help", "serve", "status"})
 	case "recovery":
 		if len(args) > 1 && args[1] == "clear" {
 			return "recovery.clear"

@@ -482,7 +482,7 @@ func (store *TelemetryStore) Prune(retentionDays int) error {
 	}
 	cutoff := store.Now().AddDate(0, 0, -retentionDays)
 	cutoffDay := time.Date(cutoff.Year(), cutoff.Month(), cutoff.Day(), 0, 0, 0, 0, time.Local)
-	for _, prefix := range []string{"snapshots-", "actions-"} {
+	for _, prefix := range []string{"snapshots-", "actions-", "storage-actions-", "work-events-"} {
 		matches, err := filepath.Glob(filepath.Join(store.Dir, prefix+"*.jsonl"))
 		if err != nil {
 			return err
@@ -534,4 +534,32 @@ func (store *TelemetryStore) pruneLegacyActions(cutoff time.Time) error {
 		return err
 	}
 	return atomicWrite(path, retained.Bytes(), 0o600)
+}
+
+// WriteMaintenanceError retains housekeeping faults across monitor restarts.
+func (store *TelemetryStore) WriteMaintenanceError(message string) error {
+	path := filepath.Join(store.Dir, "maintenance-error.txt")
+	if message == "" {
+		err := os.Remove(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return atomicWrite(path, []byte(boundedText(message, durableTextLimit)), 0600)
+}
+func (store *TelemetryStore) ReadMaintenanceError() string {
+	path := filepath.Join(store.Dir, "maintenance-error.txt")
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return ""
+	}
+	if err != nil || info.Size() > durableTextLimit {
+		return "retention maintenance authority unreadable"
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "retention maintenance authority unreadable"
+	}
+	return string(raw)
 }

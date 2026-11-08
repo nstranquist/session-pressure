@@ -89,7 +89,7 @@ func TestCmdSessionPressureEnableRequiresLiveMonitor(t *testing.T) {
 		t.Fatalf("enable rc=%d ensure_calls=%d stderr=%s", rc, fake.ensureCalls, stderr)
 	}
 	policy, persisted, err := sessionpressure.LoadPolicy(sessionpressure.PolicyPath(dir), 16*1024)
-	if err != nil || !persisted || !policy.EnforceAdmission || !policy.AutoShedCritical {
+	if err != nil || !persisted || !policy.EnforceAdmission || policy.AutoShedCritical || !policy.Storage.EnforceAdmission {
 		t.Fatalf("enabled policy=%+v persisted=%v err=%v", policy, persisted, err)
 	}
 }
@@ -242,6 +242,8 @@ func TestCmdSessionPressureRepeatedInstallPreservesHealthyResident(t *testing.T)
 	policy := sessionpressure.DefaultPolicy(16 * 1024)
 	policy.EnforceAdmission = true
 	policy.AutoShedCritical = true
+	policy.Storage.Enabled = true
+	policy.Storage.EnforceAdmission = true
 	if err := sessionpressure.SavePolicy(sessionpressure.PolicyPath(dir), policy); err != nil {
 		t.Fatal(err)
 	}

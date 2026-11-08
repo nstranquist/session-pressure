@@ -25,7 +25,7 @@ const (
 
 // AgentIdentityRule is one coding-agent host identity.
 type AgentIdentityRule struct {
-	// Agent is the stable agent id projected on trees (codex, claude, grok, kimi).
+	// Agent is the stable agent id projected on trees (codex, claude, grok, kimi, muse).
 	Agent string `json:"agent"`
 	// ExactBasenames match p_comm / argv basenames without a path syscall.
 	ExactBasenames []string `json:"exact_basenames,omitempty"`
@@ -95,6 +95,14 @@ var (
 // hard-coded; only install layout shapes and stable names are.
 func DefaultAgentIdentityRules() []AgentIdentityRule {
 	return []AgentIdentityRule{
+		{
+			Agent:                        "muse",
+			ExactBasenames:               []string{"muse"},
+			PathProbePrefixes:            []string{"muse-bin-"},
+			PathProbePrefixRequiresDigit: true,
+			InstallPathPrefixes:          []string{".local/bin/"},
+			InstallPathExact:             []string{".local/bin/muse"},
+		},
 		{
 			Agent:               "codex",
 			ExactBasenames:      []string{"codex"},
@@ -436,7 +444,7 @@ func (catalog *AgentIdentityCatalog) MatchCommand(command string) (agent, execut
 			if catalog.NeedsPathProbe(filepath.Base(fields[index])) {
 				// Without a home path we can still treat path-probe prefixes
 				// that encode the agent name (grok-*) as that agent.
-				if agent = catalog.agentForPathProbeBasename(filepath.Base(fields[index])); agent != "" {
+				if agent = catalog.agentForPathProbeBasename(filepath.Base(fields[index])); agent != "" && agent != "muse" {
 					return agent, agent, true
 				}
 			}
@@ -447,7 +455,7 @@ func (catalog *AgentIdentityCatalog) MatchCommand(command string) (agent, execut
 		return agent, executable, true
 	}
 	if catalog.NeedsPathProbe(first) {
-		if agent = catalog.agentForPathProbeBasename(first); agent != "" {
+		if agent = catalog.agentForPathProbeBasename(first); agent != "" && agent != "muse" {
 			return agent, agent, true
 		}
 	}
@@ -526,8 +534,8 @@ func (catalog *AgentIdentityCatalog) InstallPresences(home string) []AgentInstal
 	if catalog == nil {
 		return nil
 	}
-	normalizedHome := normalizeHome(home)
-	if normalizedHome == "" {
+	normalizedHome := filepath.Clean(home)
+	if !filepath.IsAbs(normalizedHome) {
 		return nil
 	}
 	var out []AgentInstallPresence

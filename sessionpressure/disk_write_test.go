@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -764,4 +765,16 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestDiskWriteMaintenanceFailureIsVisibleUntilRecovered(t *testing.T) {
+	o := NewDiskWriteObserver(t.TempDir(), defaultDiskWritePolicy())
+	o.recordMaintenanceLocked("history_retention", fmt.Errorf("disk full"))
+	if got := o.Latest(5).Summary.MaintenanceErrors; len(got) != 1 || got[0] != "history_retention" {
+		t.Fatalf("missing fault: %v", got)
+	}
+	o.recordMaintenanceLocked("history_retention", nil)
+	if got := o.Latest(5).Summary.MaintenanceErrors; len(got) != 0 {
+		t.Fatalf("stale fault: %v", got)
+	}
 }

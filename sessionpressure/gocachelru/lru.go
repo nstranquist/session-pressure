@@ -5,6 +5,7 @@ package gocachelru
 import (
 	"bufio"
 	"bytes"
+	"container/heap"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -14,7 +15,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -68,6 +68,60 @@ type Cache struct {
 	offset     int64
 	journalID  os.FileInfo
 	total      int64
+	eviction   evictionHeap
+}
+
+// evictionHeap has one node per live entry; touches update in O(log n).
+// A pass examines at most 256 candidates, including pinned candidates. A busy
+// client may keep the cache over its soft target until later requests or close.
+type evictionHeap struct {
+	rows      []indexEntry
+	positions map[string]int
+}
+
+func (h evictionHeap) Len() int           { return len(h.rows) }
+func (h evictionHeap) Less(i, j int) bool { return h.rows[i].Access < h.rows[j].Access }
+func (h evictionHeap) Swap(i, j int) {
+	h.rows[i], h.rows[j] = h.rows[j], h.rows[i]
+	h.positions[h.rows[i].Key] = i
+	h.positions[h.rows[j].Key] = j
+}
+func (h *evictionHeap) Push(x any) {
+	r := x.(indexEntry)
+	h.positions[r.Key] = len(h.rows)
+	h.rows = append(h.rows, r)
+}
+func (h *evictionHeap) Pop() any {
+	n := len(h.rows) - 1
+	r := h.rows[n]
+	h.rows = h.rows[:n]
+	delete(h.positions, r.Key)
+	return r
+}
+func (c *Cache) applyRow(row indexEntry) {
+	if c.eviction.positions == nil {
+		c.eviction.positions = map[string]int{}
+	}
+	if old, ok := c.index[row.Key]; ok && !strings.HasPrefix(old.Key, "action-") {
+		c.total -= old.Size
+	}
+	if row.Deleted {
+		delete(c.index, row.Key)
+		if i, ok := c.eviction.positions[row.Key]; ok {
+			heap.Remove(&c.eviction, i)
+		}
+		return
+	}
+	c.index[row.Key] = row
+	if !strings.HasPrefix(row.Key, "action-") {
+		c.total += row.Size
+	}
+	if i, ok := c.eviction.positions[row.Key]; ok {
+		c.eviction.rows[i] = row
+		heap.Fix(&c.eviction, i)
+	} else {
+		heap.Push(&c.eviction, row)
+	}
 }
 
 func New(dir string, maxBytes int64) (*Cache, error) {
@@ -168,6 +222,7 @@ func (c *Cache) loadIndex() error {
 	}
 	if c.journalID == nil || !os.SameFile(info, c.journalID) || info.Size() < c.offset {
 		c.index = map[string]indexEntry{}
+		c.eviction = evictionHeap{positions: map[string]int{}}
 		c.total = 0
 		c.offset = 0
 	}
@@ -177,7 +232,7 @@ func (c *Cache) loadIndex() error {
 	}
 	r := bufio.NewReader(f)
 	for {
-		line, e := r.ReadBytes('\n')
+		line, e := r.ReadSlice('\n')
 		if e == io.EOF { // A killed append leaves no trusted transaction. Drop only the incomplete tail.
 			if len(line) > 0 {
 				return f.Truncate(c.offset)
@@ -194,19 +249,7 @@ func (c *Cache) loadIndex() error {
 		if err = json.Unmarshal(line, &row); err != nil {
 			return fmt.Errorf("invalid cache index: %w", err)
 		}
-		if old, ok := c.index[row.Key]; ok {
-			if !strings.HasPrefix(old.Key, "action-") {
-				c.total -= old.Size
-			}
-		}
-		if row.Deleted {
-			delete(c.index, row.Key)
-		} else {
-			c.index[row.Key] = row
-			if !strings.HasPrefix(row.Key, "action-") {
-				c.total += row.Size
-			}
-		}
+		c.applyRow(row)
 		c.offset += int64(len(line))
 	}
 }
@@ -228,19 +271,7 @@ func (c *Cache) record(row indexEntry) error {
 	if err != nil {
 		return err
 	}
-	if old, ok := c.index[row.Key]; ok {
-		if !strings.HasPrefix(old.Key, "action-") {
-			c.total -= old.Size
-		}
-	}
-	if row.Deleted {
-		delete(c.index, row.Key)
-	} else {
-		c.index[row.Key] = row
-		if !strings.HasPrefix(row.Key, "action-") {
-			c.total += row.Size
-		}
-	}
+	c.applyRow(row)
 	c.offset += int64(len(raw))
 	return nil
 }
@@ -414,31 +445,39 @@ func (c *Cache) evictLocked() error {
 	if c.total <= c.maxBytes && len(c.index) <= c.maxEntries() {
 		return nil
 	}
-	rows := make([]indexEntry, 0, len(c.index))
-	for _, r := range c.index {
-		rows = append(rows, r)
-	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Access < rows[j].Access })
-	for _, row := range rows {
+	var skipped []indexEntry
+	defer func() {
+		for _, row := range skipped {
+			heap.Push(&c.eviction, row)
+		}
+	}()
+	for scanned := 0; scanned < 256 && c.eviction.Len() > 0; scanned++ {
+		row := heap.Pop(&c.eviction).(indexEntry)
 		if c.total <= c.maxBytes && len(c.index) <= c.maxEntries() {
+			skipped = append(skipped, row)
 			break
 		}
 		if strings.HasPrefix(row.Key, "action-") && len(c.index) <= c.maxEntries() {
+			skipped = append(skipped, row)
 			continue
 		}
 		path := c.objectPath(row.Key)
 		info, err := os.Stat(path)
 		if err == nil {
 			if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Nlink > 1 {
+				skipped = append(skipped, row)
 				continue
 			}
 			if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+				skipped = append(skipped, row)
 				return err
 			}
 		} else if !os.IsNotExist(err) {
+			skipped = append(skipped, row)
 			return err
 		}
 		if err = c.record(indexEntry{Key: row.Key, Deleted: true}); err != nil {
+			skipped = append(skipped, row)
 			return err
 		}
 	}
@@ -481,12 +520,12 @@ func (c *Cache) Close() error {
 	c.lock.Close()
 	return err
 }
-func Serve(in io.Reader, out io.Writer, dir string, maxBytes int64) error {
+func Serve(in io.Reader, out io.Writer, dir string, maxBytes int64) (serveErr error) {
 	c, err := New(dir, maxBytes)
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	defer func() { serveErr = errors.Join(serveErr, c.Close()) }()
 	enc := json.NewEncoder(out)
 	if err = enc.Encode(Response{KnownCommands: []string{"get", "put", "close"}}); err != nil {
 		return err
