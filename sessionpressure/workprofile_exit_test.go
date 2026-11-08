@@ -42,6 +42,7 @@ func TestB(t *testing.T) {
 				err  error
 			}
 			finished := make(chan result, 1)
+			output := &profileExitOutput{ready: make(chan struct{}, 1)}
 			go func() {
 				timeout := "10s"
 				if mode == "timeout" {
@@ -50,7 +51,7 @@ func TestB(t *testing.T) {
 				code, err := RunWorkCommand(NewWorkCoordinator(state, testWorkLimits()),
 					WorkRunOptions{Class: WorkClassTest, Wait: 20 * time.Second, ProfileGoTest: true, Command: []string{"go", "test", "-json", "-count=1", "-timeout=" + timeout, "."}},
 					func() Admission { return Admission{Allowed: true, Level: LevelNormal} }, time.Millisecond,
-					WorkRunStreams{Stdout: io.Discard, Stderr: io.Discard, Signals: signals, CommandFactory: func(target string, args []string) (*exec.Cmd, io.WriteCloser, error) {
+					WorkRunStreams{Stdout: output, Stderr: io.Discard, Signals: signals, CommandFactory: func(target string, args []string) (*exec.Cmd, io.WriteCloser, error) {
 						cmd := exec.Command(target, args...)
 						cmd.Dir = root
 						return cmd, nil, nil
@@ -59,6 +60,13 @@ func TestB(t *testing.T) {
 			}()
 			if mode == "signal" {
 				waitForTestFile(t, marker, 15*time.Second)
+				// The child marker precedes the go command forwarding JSON.
+				// Wait for a completed timing event before testing persistence.
+				select {
+				case <-output.ready:
+				case <-time.After(15 * time.Second):
+					t.Fatal("go test did not forward the completed timing event")
+				}
 				signals <- syscall.SIGTERM
 			}
 			select {
@@ -90,4 +98,34 @@ func TestB(t *testing.T) {
 			}
 		})
 	}
+}
+
+// One exec stdout copier owns this writer. The test reads only the channel.
+type profileExitOutput struct {
+	line  []byte
+	ready chan struct{}
+}
+
+func (w *profileExitOutput) Write(p []byte) (int, error) {
+	n := len(p)
+	w.line = append(w.line, p...)
+	for {
+		at := bytes.IndexByte(w.line, '\n')
+		if at < 0 {
+			break
+		}
+		var event struct{ Action, Test string }
+		if json.Unmarshal(w.line[:at], &event) == nil && event.Action == "pass" && event.Test == "TestA" {
+			select {
+			case w.ready <- struct{}{}:
+			default:
+			}
+		}
+		w.line = w.line[at+1:]
+	}
+	// Output is discarded, and a malformed stream cannot grow the observer.
+	if len(w.line) > 64<<10 {
+		w.line = nil
+	}
+	return n, nil
 }

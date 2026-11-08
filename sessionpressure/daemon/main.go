@@ -336,6 +336,9 @@ func run(ctx context.Context) error {
 	monitor := sessionpressure.NewMonitor(sampler, store, policy)
 	monitor.DiskObserver = sessionpressure.NewDiskWriteObserver(dir, policy.DiskWrite)
 	monitor.DiskNotifier = notifyDiskWriteAlert
+	if monitor.ProcessGuard != nil {
+		monitor.ProcessGuard.Notify = notifyProcessIncident
+	}
 	monitor.ResidentStarts24h = starts24h
 	monitor.Cleaner = commandResourceCleaner{
 		dir: dir, controlBinary: os.Getenv(sessionpressure.ControlBinaryEnv),

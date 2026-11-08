@@ -48,7 +48,7 @@ struct PressureStoreTests {
     func storagePaneOwnsIdleTab() {
         let store = PressureStore()
         #expect(PressureStore.Section.allCases.map(\.rawValue) == [
-            "Overview", "Agent Trees", "Disk Writes", "Storage",
+            "Overview", "Agent Trees", "Process Incidents", "Disk Writes", "Storage",
             "Work Queue", "Policy", "Monitor", "Telemetry", "Settings",
         ])
         store.openStorage(tab: .idle)
@@ -69,6 +69,16 @@ struct PressureStoreTests {
             )
         ]
         #expect(store.canBeginAutoSafeReclaim == false)
+        store.stop()
+    }
+
+    @Test("process incident alerts only navigate; they cannot request a stop")
+    func processIncidentDeepLinkOnlyNavigates() throws {
+        let store = PressureStore()
+        let url = try #require(URL(string: "ndev-pressure://process-incidents/stop?pid=4242&force=true"))
+        store.handleDeepLink(url)
+        #expect(store.selectedSection == .processIncidents)
+        #expect(store.pendingDiskTraceRequest == nil)
         store.stop()
     }
 

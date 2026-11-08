@@ -1,0 +1,33 @@
+{
+  "ok": true,
+  "report": {
+    "schema_version": 1,
+    "updated_at": "2026-11-08T17:17:34.195340731Z",
+    "incidents": [
+      {
+        "source": "operator_record",
+        "id": "00087aeb273b9ddd7b83ef0d",
+        "pid": 8523,
+        "ppid": 8475,
+        "start_identity": "",
+        "executable": "python3",
+        "uid": 0,
+        "cpu_percent": 0,
+        "rss_mb": 0,
+        "age_seconds": 0,
+        "reason": "operator_recorded_stop",
+        "first_seen": "2026-11-08T16:17:23.646219Z",
+        "last_seen": "2026-11-08T16:17:23.646219Z",
+        "sustained_seconds": 0,
+        "state": "recorded_closed",
+        "actions": [
+          {
+            "at": "2026-11-08T16:17:23.646219Z",
+            "signal": "TERM",
+            "result": "operator_reported_exit"
+          }
+        ]
+      }
+    ]
+  }
+}

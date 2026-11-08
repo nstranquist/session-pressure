@@ -112,6 +112,7 @@ struct ContentView: View {
         switch store.selectedSection {
         case .overview: OverviewView()
         case .trees: TreesView()
+        case .processIncidents: ProcessIncidentsView()
         case .diskWrites: DiskWritesView()
         case .storage: StorageView()
         case .work: WorkView()

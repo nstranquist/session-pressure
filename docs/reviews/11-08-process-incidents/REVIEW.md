@@ -1,0 +1,32 @@
+# Runaway process controls — WORK-82
+
+Nico asked Session Pressure to detect scans like the orphaned Python scan, show evidence, stop a selected process, and retain the incident. The new Process Incidents page and `processes` command cover that path.
+
+## Contract
+
+- The existing resident inventory supplies CPU, memory, age, ancestry and session evidence. No recursive file scan or argv collection is added.
+- Orphaned work requires 10 minutes of age and two minutes at 60% of one CPU core. Other work requires 30 minutes of age and five hot minutes. The configured inventory cadence determines when evidence is available. Gaps beyond two inventory intervals plus one sample interval reset evidence, with a three-minute minimum tolerance.
+- Detection is advisory. Notifications open details. They cannot invoke Stop.
+- Stop persists intent, validates owner and kernel birth twice, signals exactly one PID, and distinguishes signal sent from confirmed exit. Force Stop requires a separate action after Stop. It does not terminate an entire agent tree.
+- `processes run --timeout D -- COMMAND` creates and supervises a private process group, limits the deadline to one hour, and records deadline/cancellation teardown. Ordinary command exit codes are preserved. It does not guard commands launched elsewhere or descendants that deliberately escape that group.
+- A private atomic ledger retains at most 200 incidents and 20 actions per incident. Reads and CLI receipt imports are bounded. Unchanged idle observations do not acquire a disk-writing lock. Detection can resend an alert after a crash between send and acknowledgement.
+- The approved stop of Python PID 8523 is imported from `orphan-scan.receipt.json`. It is an operator-reported historical record, not retrospective kernel proof. Historical records cannot authorize a stop.
+
+## Verification
+
+Go tests, race checks, vet and Darwin compilation run on gaterunner-1. Swift tests and the signed native build run on the Mac through work admission. Exact final commands, build identity and installed dogfood results are recorded in evidence.json at closeout.
+
+The tests cover sustained thresholds, normal and low-power inventory cadence, stale/repeated/unknown CPU evidence, PID reuse, owner mismatch, notification persistence and retry, exact-PID signalling, durable intent failure, force escalation, corrupt storage, concurrent mutation, file permissions, real owned child teardown, deadline/cancellation, fast nonzero exit status and strict CLI validation. Swift decodes a real CLI recording and verifies notification navigation does not invoke a stop.
+
+## Self-review and process corrections
+
+1. A fixed three-minute gap conflicted with the normal three-minute inventory interval and the four-minute low-power interval. Sampling jitter could prevent every alert. The guard now derives tolerance from the policy; regression tests cover both cadences.
+2. The first idle benchmark took 15.44 ms and 923 KB per 4,000-process inventory. The file lock fsynced metadata even when the ledger did not change. A read-only idle path and index-valued PID map reduced this to about 2.55 ms and 148 KB in the first rerun. Final benchmark evidence is retained separately.
+3. An existing profile persistence test sent TERM after a child marker, before the parent necessarily forwarded a completed JSON timing event. It failed twice. The test now synchronizes on the completed event instead of assuming output timing.
+4. One new test initially missed its io import. The remote compiler caught it; the import was fixed before publication. No failed check is treated as passing evidence.
+5. The first candidate transfer included ignored build output. That owned transfer was stopped. Later candidates enumerate Git-owned and unignored source files and record content hashes; they are about 4 MB.
+6. The installed standalone WIP initializer unexpectedly created an empty branch despite the main-only requirement. The lane was aborted and that unchanged branch ref was removed. Publication uses the canonical guarded serial helper with an exact path claim, immutable main/HEAD expectations, isolated index, preflight and compare-and-swap. The installed skill copy lacks its adjacent shared helpers, so the canonical repository helper is used. A delivery dry-run was also verified to be preview-only; it was not counted as accepted or landed.
+
+7. A second existing fixture discarded the closure that owns its lock file and waited forever with `select {}`. The full suite observed the lock released while the child should still be alive. The fixture now retains the unlock closure and has a one-minute deadline, avoiding finalizer release and runtime deadlock exit.
+
+Human guide: [Process Incidents](../../human/process-incidents.html).

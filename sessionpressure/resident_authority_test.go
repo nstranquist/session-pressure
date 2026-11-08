@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestResidentAuthorityIsExclusiveAndReleases(t *testing.T) {
@@ -71,9 +72,15 @@ func TestResidentAuthorityCrashHelper(t *testing.T) {
 	if dir == "" {
 		return
 	}
-	if _, err := AcquireResidentAuthority(dir); err != nil {
+	release, err := AcquireResidentAuthority(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
+	// Retain the file-owning closure until the parent kills this helper.
+	// Discarding it permits os.File's finalizer to release the live lock.
+	defer release()
 	fmt.Fprintln(os.Stdout, "ready")
-	select {}
+	// A timer prevents runtime deadlock detection and bounds an orphaned helper.
+	time.Sleep(time.Minute)
+	t.Fatal("parent did not stop the resident authority fixture within one minute")
 }
