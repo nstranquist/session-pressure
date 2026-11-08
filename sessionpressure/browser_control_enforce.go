@@ -80,8 +80,12 @@ func EnforceBrowserControl(ctx context.Context, dir string) error {
 }
 
 func recordControlEvent(dir string, event map[string]any) {
-	event["at"] = time.Now().UTC()
-	body, err := json.Marshal(event)
+	name, _ := event["event"].(string)
+	row := map[string]any{"schema_version": 1, "event": name, "ts": time.Now().UTC().Format(time.RFC3339Nano), "source": "session-pressure-work-control", "surface": "session-pressure", "command": "session pressure work control", "privacy": "local", "attrs": event}
+	if code, exists := event["exit_code"]; exists {
+		row["ok"] = code == 0
+	}
+	body, err := json.Marshal(row)
 	if err != nil {
 		return
 	}
