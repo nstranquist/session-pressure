@@ -8,12 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nstranquist/session-pressure/packages/processtree"
 )
 
 // observe keeps bounded evidence for one continuous run. Elapsed gates are never inferred
@@ -56,7 +57,7 @@ func readCLI(binary string, args ...string) ([]byte, error) {
 	if filepath.Base(binary) == "ndev" {
 		prefix = append(prefix, "session", "pressure")
 	}
-	c := exec.CommandContext(ctx, binary, append(prefix, args...)...)
+	c := processtree.CommandContext(ctx, binary, append(prefix, args...)...)
 	// Read-only endpoints must remain within the same 2 MiB client contract.
 	p, e := c.StdoutPipe()
 	if e != nil {
@@ -66,9 +67,11 @@ func readCLI(binary string, args ...string) ([]byte, error) {
 	if e = c.Start(); e != nil {
 		return nil, e
 	}
+	stopClose := context.AfterFunc(ctx, func() { _ = p.Close() })
+	defer stopClose()
 	raw, e := io.ReadAll(io.LimitReader(p, 2*1024*1024+1))
 	if e != nil || len(raw) > 2*1024*1024 {
-		_ = c.Process.Kill()
+		_ = c.Cancel()
 		_ = c.Wait()
 		return nil, errors.New("bounded read failed")
 	}
@@ -276,7 +279,9 @@ func startObservation(path string, initial observation) error {
 }
 
 func appSample() (int, float64, float64, bool) {
-	raw, e := exec.Command("pgrep", "-x", "NDevPressure").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	raw, e := processtree.CommandContext(ctx, "pgrep", "-x", "NDevPressure").Output()
 	if e != nil {
 		return 0, 0, 0, false
 	}
@@ -288,7 +293,7 @@ func appSample() (int, float64, float64, bool) {
 	if e != nil {
 		return 0, 0, 0, false
 	}
-	raw, e = exec.Command("ps", "-p", ids[0], "-o", "time=", "-o", "rss=").Output()
+	raw, e = processtree.CommandContext(ctx, "ps", "-p", ids[0], "-o", "time=", "-o", "rss=").Output()
 	fields := strings.Fields(string(raw))
 	if e != nil || len(fields) != 2 {
 		return 0, 0, 0, false

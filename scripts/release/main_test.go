@@ -8,6 +8,21 @@ import (
 	"testing"
 )
 
+func TestMain(m *testing.M) {
+	if os.Getenv("PRESSURE_OBSERVATION_TEST_CHILD") == "overflow" {
+		_, _ = os.Stdout.WriteString(strings.Repeat("x", 3*1024*1024))
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func TestObservationBoundsReadOutput(t *testing.T) {
+	t.Setenv("PRESSURE_OBSERVATION_TEST_CHILD", "overflow")
+	if _, e := readCLI(os.Args[0], "status"); e == nil || !strings.Contains(e.Error(), "bounded read") {
+		t.Fatalf("oversized child output was accepted: %v", e)
+	}
+}
+
 func TestObservationRejectsSuccessfulButUnhealthyStatus(t *testing.T) {
 	base := map[string]any{
 		"ok": true, "has_latest_monitor": true, "policy_persisted": true,
