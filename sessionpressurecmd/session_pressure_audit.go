@@ -734,6 +734,7 @@ func auditPressureTelemetry(runtime pressureRuntime, since, now time.Time, launc
 		currentControllerWriter = telemetry.ReadCLIWriterHealthSince(currentControllerSince)
 		currentControllerEvidence = currentControllerWriter.Known && currentControllerWriter.Attempted > 0
 	}
+	productWriter := telemetry.ReadProductWriterHealthSince(since)
 	writerReadDuration := time.Since(writerReadStarted)
 	eventReadStarted := time.Now()
 	eventReadSince := pressureCurrentControllerReadSince(since, now, launchd)
@@ -756,7 +757,7 @@ func auditPressureTelemetry(runtime pressureRuntime, since, now time.Time, launc
 	currentResident := auditCurrentControllerResident(events, now, launchd)
 	pressureCommandCount := eventCounts["session.pressure.command"] + eventCounts["session_pressure.command"]
 	metrics := map[string]any{
-		"sessionpressure_jsonl": storeAudit, "cli_jsonl": cliAudit, "cli_writer": writer, "cli_writer_recent_2h": recentWriter, "product_writer": telemetry.ReadProductWriterHealthSince(since),
+		"sessionpressure_jsonl": storeAudit, "cli_jsonl": cliAudit, "cli_writer": writer, "cli_writer_recent_2h": recentWriter, "product_writer": productWriter,
 		"cli_writer_current_controller": currentControllerWriter, "cli_writer_current_controller_since": currentControllerSince,
 		"cli_writer_current_controller_evidence": currentControllerEvidence,
 		"pressure_jsonl_scan_ms":                 float64(pressureScanDuration.Microseconds()) / 1000,
@@ -769,7 +770,7 @@ func auditPressureTelemetry(runtime pressureRuntime, since, now time.Time, launc
 		"resident_current_controller": currentResident,
 		"sample_errors":               sampleErrors, "cleanup_errors": cleanupErrors,
 	}
-	findings := []pressureAuditFinding{}
+	findings := auditProductWriterIntegrity(productWriter)
 	if storeAudit.ParseErrors+storeAudit.ValidationErrors+storeAudit.InsecureFiles > 0 {
 		findings = append(findings, pressureFinding(pressureAuditFail, "pressure_telemetry_integrity", "SessionPressure JSONL has parse, validation, or file-permission failures"))
 	}
@@ -825,6 +826,25 @@ func auditPressureTelemetry(runtime pressureRuntime, since, now time.Time, launc
 		findings = append(findings, pressureFinding(pressureAuditFail, "telemetry_budget_failed", "resident daily telemetry projection exceeds policy"))
 	}
 	return newPressureAuditCategory("telemetry", "durability, privacy, coverage, and resident lifecycle audit", metrics, findings...)
+}
+
+// Gaps include registered attempts that have not yet reached a terminal state.
+// They are evidence to inspect, not proof of lost rows while another writer runs.
+func auditProductWriterIntegrity(writer telemetry.CLIWriterHealthReport) []pressureAuditFinding {
+	var findings []pressureAuditFinding
+	if !writer.Known {
+		findings = append(findings, pressureFinding(pressureAuditWarn, "product_writer_coverage_unknown", "standalone writer coverage is unknown; inspect its authority and failure classes"))
+	}
+	if writer.Failed > 0 {
+		findings = append(findings, pressureFinding(pressureAuditFail, "product_writer_write_failed", fmt.Sprintf("standalone writer recorded %d terminal write failures", writer.Failed)))
+	}
+	if writer.Gaps > 0 {
+		findings = append(findings, pressureFinding(pressureAuditWarn, "product_writer_unresolved_attempts", fmt.Sprintf("%d registered standalone writer attempts have no terminal outcome; this includes writes still in progress", writer.Gaps)))
+	}
+	if writer.FailureClasses["retention_io"] > 0 {
+		findings = append(findings, pressureFinding(pressureAuditFail, "product_writer_retention_failed", "standalone writer retention maintenance failed"))
+	}
+	return findings
 }
 
 func pressureCurrentControllerWriterSince(now time.Time, launchd sessionpressure.LaunchdStatus) (time.Time, bool) {
@@ -896,15 +916,21 @@ func auditCLIWriterDropFinding(recent, current telemetry.CLIWriterHealthReport, 
 
 func auditPressurePerformance(runtime pressureRuntime, artifact sessionpressure.InstalledArtifact, latest sessionpressure.Snapshot, hasLatest bool) pressureAuditCategory {
 	evaluation := sessionpressure.EvaluateWorkSystem(runtime.policy)
-	writer := telemetry.ReadCLIWriterHealthSince(time.Now().UTC().Add(-2 * time.Hour))
+	since := time.Now().UTC().Add(-2 * time.Hour)
+	writer := telemetry.ReadCLIWriterHealthSince(since)
+	productWriter := telemetry.ReadProductWriterHealthSince(since)
 	metrics := map[string]any{
 		"resident_binary_bytes": artifact.SizeBytes, "resident_binary_target_bytes": residentBinaryTargetBytes,
 		"work_evaluation_ok": evaluation.OK, "selector_p95_us": evaluation.SelectorBenchmark.P95Microseconds,
 		"evaluation_runtime_ms": evaluation.RuntimeMilliseconds,
 		"cli_writer_known":      writer.Known, "cli_writer_latency_scope": writer.LatencyScope, "cli_writer_latency_samples": writer.LatencySamples,
 		"cli_writer_latency_p95_us": writer.LatencyP95US, "cli_writer_latency_max_us": writer.LatencyMaxUS,
+		"product_writer_known": productWriter.Known, "product_writer_latency_scope": productWriter.LatencyScope,
+		"product_writer_latency_samples": productWriter.LatencySamples, "product_writer_latency_p95_us": productWriter.LatencyP95US,
+		"product_writer_latency_max_us": productWriter.LatencyMaxUS,
 	}
 	findings := auditCLIWriterPerformance(writer)
+	findings = append(findings, auditWriterPerformance(productWriter, "product", "Standalone")...)
 	if artifact.SizeBytes <= 0 {
 		findings = append(findings, pressureFinding(pressureAuditFail, "resident_size_unknown", "installed resident binary size is unavailable"))
 	} else if artifact.SizeBytes > residentBinaryTargetBytes {
@@ -933,17 +959,21 @@ func auditPressurePerformance(runtime pressureRuntime, artifact sessionpressure.
 }
 
 func auditCLIWriterPerformance(writer telemetry.CLIWriterHealthReport) []pressureAuditFinding {
+	return auditWriterPerformance(writer, "cli", "CLI")
+}
+
+func auditWriterPerformance(writer telemetry.CLIWriterHealthReport, prefix, label string) []pressureAuditFinding {
 	if !writer.Known {
-		return []pressureAuditFinding{pressureFinding(pressureAuditWarn, "cli_writer_latency_unknown", "CLI writer latency authority does not cover the last two hours")}
+		return []pressureAuditFinding{pressureFinding(pressureAuditWarn, prefix+"_writer_latency_unknown", label+" writer latency authority does not cover the last two hours")}
 	}
 	if writer.LatencySamples < pressureAuditWriterLatencyMinSamples {
-		return []pressureAuditFinding{pressureFinding(pressureAuditWarn, "cli_writer_latency_warmup", fmt.Sprintf("%d/%d CLI writer latency samples collected", writer.LatencySamples, pressureAuditWriterLatencyMinSamples))}
+		return []pressureAuditFinding{pressureFinding(pressureAuditWarn, prefix+"_writer_latency_warmup", fmt.Sprintf("%d/%d %s writer latency samples collected", writer.LatencySamples, pressureAuditWriterLatencyMinSamples, label))}
 	}
 	if writer.LatencyP95US > pressureAuditWriterLatencyFailUS {
-		return []pressureAuditFinding{pressureFinding(pressureAuditFail, "cli_writer_latency_failed", fmt.Sprintf("CLI writer p95 is %dus above the %dus ceiling", writer.LatencyP95US, pressureAuditWriterLatencyFailUS))}
+		return []pressureAuditFinding{pressureFinding(pressureAuditFail, prefix+"_writer_latency_failed", fmt.Sprintf("%s writer p95 is %dus above the %dus ceiling", label, writer.LatencyP95US, pressureAuditWriterLatencyFailUS))}
 	}
 	if writer.LatencyP95US > pressureAuditWriterLatencyWarnUS {
-		return []pressureAuditFinding{pressureFinding(pressureAuditWarn, "cli_writer_latency_slow", fmt.Sprintf("CLI writer p95 is %dus above the %dus target", writer.LatencyP95US, pressureAuditWriterLatencyWarnUS))}
+		return []pressureAuditFinding{pressureFinding(pressureAuditWarn, prefix+"_writer_latency_slow", fmt.Sprintf("%s writer p95 is %dus above the %dus target", label, writer.LatencyP95US, pressureAuditWriterLatencyWarnUS))}
 	}
 	return nil
 }
