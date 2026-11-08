@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -27,27 +28,31 @@ type readGate struct {
 	Passed   bool    `json:"passed"`
 }
 type observation struct {
-	Started             time.Time           `json:"started"`
-	Updated             time.Time           `json:"updated"`
-	Deadline            time.Time           `json:"deadline"`
-	Binary              string              `json:"binary"`
-	Identity            json.RawMessage     `json:"identity,omitempty"`
-	Reads               map[string]readGate `json:"reads"`
-	Checks              int                 `json:"checks"`
-	Failures            int                 `json:"failures"`
-	HealthPassed        bool                `json:"health_passed"`
-	LastFailure         string              `json:"last_failure,omitempty"`
-	ResidentPID         int                 `json:"resident_pid"`
-	ResidentRestarts    int                 `json:"resident_restarts"`
-	MaxSampleGapSeconds float64             `json:"max_sample_gap_seconds"`
-	ContinuityPassed    bool                `json:"continuity_passed"`
-	Observed24H         bool                `json:"observed_24h"`
-	Observed72H         bool                `json:"observed_72h"`
-	AppPID              int                 `json:"app_pid"`
-	AppObservedSeconds  float64             `json:"app_observed_seconds"`
-	AppCPUPercent       float64             `json:"app_cpu_percent"`
-	AppPeakRSSMiB       float64             `json:"app_peak_rss_mib"`
-	AppBudgetPassed     bool                `json:"app_30m_budget_passed"`
+	Started              time.Time           `json:"started"`
+	Updated              time.Time           `json:"updated"`
+	Deadline             time.Time           `json:"deadline"`
+	Binary               string              `json:"binary"`
+	Identity             json.RawMessage     `json:"identity,omitempty"`
+	Reads                map[string]readGate `json:"reads"`
+	Checks               int                 `json:"checks"`
+	Failures             int                 `json:"failures"`
+	HealthPassed         bool                `json:"health_passed"`
+	LastFailure          string              `json:"last_failure,omitempty"`
+	ResidentPID          int                 `json:"resident_pid"`
+	ResidentRestarts     int                 `json:"resident_restarts"`
+	MaxSampleGapSeconds  float64             `json:"max_sample_gap_seconds"`
+	ContinuityPassed     bool                `json:"continuity_passed"`
+	Observed24H          bool                `json:"observed_24h"`
+	Observed72H          bool                `json:"observed_72h"`
+	AppSampleOK          bool                `json:"app_sample_ok"`
+	AppSampleFailures    int                 `json:"app_sample_failures"`
+	LastAppSampleError   string              `json:"last_app_sample_error,omitempty"`
+	LastAppSampleFailure time.Time           `json:"last_app_sample_failure,omitempty"`
+	AppPID               int                 `json:"app_pid"`
+	AppObservedSeconds   float64             `json:"app_observed_seconds"`
+	AppCPUPercent        float64             `json:"app_cpu_percent"`
+	AppPeakRSSMiB        float64             `json:"app_peak_rss_mib"`
+	AppBudgetPassed      bool                `json:"app_30m_budget_passed"`
 }
 
 func readCLI(binary string, args ...string) ([]byte, error) {
@@ -195,12 +200,14 @@ func observe(args []string) error {
 			s.LastFailure = err.Error()
 		}
 		s.HealthPassed = s.Checks > 0 && s.Failures == 0 && s.ContinuityPassed
-		if pid, cpu, rss, ok := appSample(); ok {
+		if pid, cpu, rss, sampleErr := appSample(); sampleErr == nil {
+			s.AppSampleOK = true
 			if pid != s.AppPID {
 				s.AppPID = pid
 				appStart = now
 				cpuStart = cpu
 				s.AppPeakRSSMiB = 0
+				s.AppCPUPercent = 0
 				s.AppBudgetPassed = false
 			}
 			s.AppObservedSeconds = now.Sub(appStart).Seconds()
@@ -212,9 +219,7 @@ func observe(args []string) error {
 			}
 			s.AppBudgetPassed = s.ContinuityPassed && s.AppObservedSeconds >= 1800 && s.AppCPUPercent <= 1 && s.AppPeakRSSMiB <= 128
 		} else {
-			s.AppPID = 0
-			s.AppObservedSeconds = 0
-			s.AppBudgetPassed = false
+			s.recordAppSampleFailure(now, sampleErr)
 		}
 		elapsed := now.Sub(started)
 		s.Observed24H = elapsed >= 24*time.Hour && s.ContinuityPassed
@@ -278,34 +283,101 @@ func startObservation(path string, initial observation) error {
 	return syncDir(filepath.Dir(path))
 }
 
-func appSample() (int, float64, float64, bool) {
+// Sampling failures are separate from product health and survive recovery.
+// Clear instantaneous values so a missing sample cannot show stale CPU as current.
+func (s *observation) recordAppSampleFailure(now time.Time, err error) {
+	s.AppSampleOK = false
+	s.AppSampleFailures++
+	s.LastAppSampleError = err.Error()
+	s.LastAppSampleFailure = now
+	s.AppPID = 0
+	s.AppObservedSeconds = 0
+	s.AppCPUPercent = 0
+	s.AppPeakRSSMiB = 0
+	s.AppBudgetPassed = false
+}
+
+func appSample() (int, float64, float64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	raw, e := processtree.CommandContext(ctx, "pgrep", "-x", "NDevPressure").Output()
-	if e != nil {
-		return 0, 0, 0, false
+	return sampleAppWith(func(name string, args ...string) ([]byte, error) {
+		return processtree.CommandContext(ctx, name, args...).Output()
+	})
+}
+
+func sampleAppWith(run func(string, ...string) ([]byte, error)) (int, float64, float64, error) {
+	raw, err := run("pgrep", "-x", "NDevPressure")
+	if err != nil {
+		return 0, 0, 0, errors.New("app_discovery_failed")
 	}
 	ids := strings.Fields(string(raw))
 	if len(ids) != 1 {
-		return 0, 0, 0, false
+		return 0, 0, 0, errors.New("app_discovery_requires_one_pid")
 	}
-	pid, e := strconv.Atoi(ids[0])
-	if e != nil {
-		return 0, 0, 0, false
+	pid, err := strconv.Atoi(ids[0])
+	if err != nil || pid <= 0 {
+		return 0, 0, 0, errors.New("app_discovery_invalid_pid")
 	}
-	raw, e = processtree.CommandContext(ctx, "ps", "-p", ids[0], "-o", "time=", "-o", "rss=").Output()
+	raw, err = run("ps", "-p", ids[0], "-o", "time=", "-o", "rss=")
+	if err != nil {
+		return 0, 0, 0, errors.New("app_process_read_failed")
+	}
 	fields := strings.Fields(string(raw))
-	if e != nil || len(fields) != 2 {
-		return 0, 0, 0, false
+	if len(fields) != 2 {
+		return 0, 0, 0, errors.New("app_process_fields_invalid")
 	}
-	var cpu float64
-	for _, part := range strings.Split(fields[0], ":") {
-		v, e := strconv.ParseFloat(part, 64)
-		if e != nil {
-			return 0, 0, 0, false
+	cpu, err := parseAppCPUTime(fields[0])
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	rss, err := strconv.ParseFloat(fields[1], 64)
+	if err != nil || rss < 0 || math.IsNaN(rss) || math.IsInf(rss, 0) {
+		return 0, 0, 0, errors.New("app_rss_invalid")
+	}
+	return pid, cpu, rss / 1024, nil
+}
+
+// BSD ps uses [[dd-]hh:]mm:ss, with fractional seconds on macOS.
+func parseAppCPUTime(value string) (float64, error) {
+	invalid := errors.New("app_cpu_time_invalid")
+	days := 0
+	hasDays := strings.Contains(value, "-")
+	if before, after, ok := strings.Cut(value, "-"); ok {
+		var err error
+		days, err = strconv.Atoi(before)
+		if err != nil || days < 0 || days > 36500 {
+			return 0, invalid
 		}
-		cpu = cpu*60 + v
+		value = after
 	}
-	rss, e := strconv.ParseFloat(fields[1], 64)
-	return pid, cpu, rss / 1024, e == nil
+	parts := strings.Split(value, ":")
+	if len(parts) < 2 || len(parts) > 3 || (hasDays && len(parts) != 3) {
+		return 0, invalid
+	}
+	cpu := float64(days) * 86400
+	// Without a day prefix ps may report hours above 23; minutes can exceed
+	// 59 in the two-field representation.
+	for i, part := range parts {
+		v, err := strconv.ParseFloat(part, 64)
+		if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) ||
+			(i > 0 && v >= 60) || (i < len(parts)-1 && math.Trunc(v) != v) ||
+			(hasDays && i == 0 && v >= 24) {
+			return 0, invalid
+		}
+		if i == 0 {
+			if len(parts) == 3 {
+				cpu += v * 3600
+			} else {
+				cpu += v * 60
+			}
+		} else if i == len(parts)-1 {
+			cpu += v
+		} else {
+			cpu += v * 60
+		}
+	}
+	if math.IsInf(cpu, 0) {
+		return 0, invalid
+	}
+	return cpu, nil
 }

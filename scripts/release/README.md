@@ -56,7 +56,12 @@ must be installed, loaded, verified, healthy, fresh and within its resource
 budget, with persisted policy. Resident PID changes count as failures.
 `health_passed` requires continuous sampling and zero failures.
 App CPU and peak RSS use the same PID over at least 30 minutes;
-the budget is 1% CPU and 128 MiB RSS. An app restart starts a new app window.
+the budget is 1% CPU and 128 MiB RSS. An app restart or failed process sample starts a new app window.
+`app_sample_ok` distinguishes a current sample from a missing one.
+`app_sample_failures`, `last_app_sample_error` and `last_app_sample_failure`
+preserve diagnostic history after recovery. Missing samples clear current CPU,
+RSS and elapsed values; they cannot pass the idle gate. Process discovery must
+find exactly one app PID. CPU parsing accepts long-running BSD process times.
 Use a parked app for the idle budget. Interactive use is an activity sample.
 The 24/72-hour flags require actual elapsed time and continuous sampling, with
 no gap greater than twice the sample interval plus 30 seconds. These flags
