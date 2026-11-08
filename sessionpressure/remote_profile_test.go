@@ -45,7 +45,7 @@ func TestRemoteClassificationDoesNotHideProfileDeclines(t *testing.T) {
 
 func TestRemoteRejectionCannotFallBackToLocalWork(t *testing.T) {
 	handled, code, err := rejectRemoteWork(t.TempDir(), "build", "GOFLAGS needs an explicit runner profile")
-	if !handled || code != 1 || err == nil || !strings.Contains(err.Error(), "local fallback is disabled") {
+	if !handled || code != workExitPolicyDenied || !IsWorkRefusal(err) || !strings.Contains(err.Error(), "kind=remote_profile") || !strings.Contains(err.Error(), "local fallback is disabled") {
 		t.Fatalf("rejection must stop local execution: handled=%v code=%d err=%v", handled, code, err)
 	}
 }

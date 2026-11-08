@@ -491,3 +491,13 @@ func TestPressureWorkInspectUnknownOperationJSON(t *testing.T) {
 		t.Fatalf("rc=%d stderr=%q", rc, stderr)
 	}
 }
+
+func TestPressureWorkAdapterKeepsPlacement(t *testing.T) {
+	options, err := parsePressureWorkRunArgs([]string{"--class", "build", "--placement", "local", "--placement-reason", "darwin-cgo-producer", "--", "go", "build", "./..."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.placement != sessionpressure.WorkPlacementLocal || options.placementReason != "darwin-cgo-producer" {
+		t.Fatalf("adapter dropped placement: %+v", options)
+	}
+}
