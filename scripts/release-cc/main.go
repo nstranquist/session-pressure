@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -27,10 +28,47 @@ func main() {
 	if stdin && compile && !output {
 		args = append(args, "-o", os.DevNull)
 	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	scratch, err := os.MkdirTemp("", "pressure-cc-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(scratch)
+	// Go and Zig also issue feature probes without -c. Isolate every compiler
+	// invocation, preserving relative include, input and explicit output paths.
+	args = append([]string(nil), args...)
+	for i, arg := range args {
+		if filepath.IsAbs(arg) || arg == "-" {
+			continue
+		}
+		if i > 0 && (args[i-1] == "-o" || args[i-1] == "-I" || args[i-1] == "-L") {
+			args[i] = filepath.Join(cwd, arg)
+			continue
+		}
+		if (strings.HasPrefix(arg, "-I") || strings.HasPrefix(arg, "-L")) && len(arg) > 2 {
+			if !filepath.IsAbs(arg[2:]) {
+				args[i] = arg[:2] + filepath.Join(cwd, arg[2:])
+			}
+			continue
+		}
+		if !strings.HasPrefix(arg, "-") {
+			if _, e := os.Stat(arg); e == nil {
+				args[i] = filepath.Join(cwd, arg)
+			}
+		}
+	}
+	args = append(args, "-I", cwd)
 	cmd := exec.Command(compiler, args...)
+	cmd.Dir = scratch
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
+			_ = os.RemoveAll(scratch)
 			os.Exit(exit.ExitCode())
 		}
 		fmt.Fprintln(os.Stderr, err)
