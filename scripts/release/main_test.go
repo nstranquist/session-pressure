@@ -1,11 +1,36 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestObservationRejectsSuccessfulButUnhealthyStatus(t *testing.T) {
+	base := map[string]any{
+		"ok": true, "has_latest_monitor": true, "policy_persisted": true,
+		"health":                 map[string]any{"monitor_healthy": true, "latest_monitor_fresh": true},
+		"latest_monitor_summary": map[string]any{"guard_budget_ok": true},
+		"launchd_summary":        map[string]any{"installed": true, "loaded": true, "artifact_verified": true, "pid": 42},
+	}
+	raw, _ := json.Marshal(base)
+	if pid, e := observedResident(raw); e != nil || pid != 42 {
+		t.Fatalf("healthy installed resident rejected: %d %v", pid, e)
+	}
+	for _, field := range []string{"has_latest_monitor", "policy_persisted", "health", "latest_monitor_summary", "launchd_summary"} {
+		t.Run(field, func(t *testing.T) {
+			var incomplete map[string]any
+			_ = json.Unmarshal(raw, &incomplete)
+			delete(incomplete, field)
+			b, _ := json.Marshal(incomplete)
+			if _, e := observedResident(b); e == nil {
+				t.Fatal("successful read without required resident evidence accepted")
+			}
+		})
+	}
+}
 
 func TestTamperedBundlePreservesInstalledAuthority(t *testing.T) {
 	dir := t.TempDir()
