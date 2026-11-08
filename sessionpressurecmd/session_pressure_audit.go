@@ -34,8 +34,9 @@ const (
 	pressureAuditCleanupDurationFailMS         = 15_000.0
 	pressureAuditCleanupRSSWarnMB              = 64.0
 	pressureAuditCleanupRSSFailMB              = 128.0
-	cliAuditCacheSchemaVersion                 = 5
-	cliAuditCacheMaximumBytes                  = 4 << 20
+	// Version 6 invalidates privacy verdicts from before closed factory mode labels.
+	cliAuditCacheSchemaVersion = 6
+	cliAuditCacheMaximumBytes  = 4 << 20
 )
 
 type pressureAuditFinding struct {
