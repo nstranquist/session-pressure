@@ -50,7 +50,8 @@ public struct ProcessIncident: Decodable, Sendable, Identifiable {
 
     public var reasonLabel: String {
         switch reason {
-        case "orphaned_sustained_cpu", "init_parent_sustained_cpu": return "High CPU in a command with an init-owned parent"
+        case "orphaned_sustained_cpu": return "Sustained high CPU (legacy detection)"
+        case "init_parent_sustained_cpu": return "High CPU in a command with an init-owned parent"
         case "sustained_cpu": return "Sustained high CPU"
         default: return reason.replacingOccurrences(of: "_", with: " ")
         }
