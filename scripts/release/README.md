@@ -74,3 +74,21 @@ goes to `/dev/null`. This prevents Zig's `-.o` probe artifact from making
 later binaries report modified source. Build checks source cleanliness after
 each target and stops before producing a promotable bundle if it changes.
 For the current Zig toolchain, use `GOFLAGS=-ldflags=-linkmode=internal`.
+
+
+The factory compatibility target uses the same installer contract. After building
+the native product bundle on the gate runner, invoke it with the current revision
+captured before that build:
+
+```sh
+make -C ~/dev/nicos-tools/nicos-dev promote-session-pressure \
+  SESSION_PRESSURE_RELEASE_DIR=/absolute/export \
+  SESSION_PRESSURE_EXPECTED_CURRENT=OBSERVED_REVISION
+```
+
+This target installs the complete product bundle and restarts the resident.
+The factory `ndev` front door still needs its own committed native export and
+atomic publish; its embedded product stamp is checked by `artifact status`.
+Do not use an older factory target that replaces individual product artifacts.
+`SESSION_PRESSURE_INSTALL_PREFIX` defaults to `~/.local/bin`, the authoritative
+standalone location. The target does not run a heavy Go build on the Mac.
