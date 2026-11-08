@@ -176,5 +176,5 @@ public enum PressureHelp {
 }
 
 extension PressureHelp {
-    public static let processIncidents = "The resident checks sustained CPU use without reading command arguments. Orphaned work alerts after 10 minutes of age and 2 minutes at 60% of one core. Other work needs 30 minutes of age and 5 hot minutes. Detection records incidents and sends an alert. Stop checks kernel birth identity and owner before sending TERM to one PID. Force Stop is a separate KILL action. The incident records the request, signal and observed result."
+    public static let processIncidents = "The resident checks sustained CPU use without reading command arguments. Known commands with an init-owned parent alert after 10 minutes of age and 2 minutes at 60% of one core. A parent PID of 1 does not prove that work is orphaned. Other work needs 30 minutes of age and 5 hot minutes. Detection records incidents and sends an alert. Stop checks kernel birth identity and owner before sending TERM to one PID. Force Stop is a separate KILL action. The incident records the request, signal and observed result. Bound new scans with processes run: its owned group is cleaned up on exit, deadline, cancellation or supervisor death."
 }

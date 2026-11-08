@@ -21,14 +21,17 @@ const processIncidentsHelp = `Usage: session-pressure [--json] processes <subcom
   stop --id ID --force --confirm  Escalate an earlier Stop to SIGKILL
   run --timeout D -- COMMAND [ARGS...]  Bound a scan to at most 1 hour
 
-The resident alerts after an orphaned process is at least 10 minutes old and
-uses >=60% of one core for 2 minutes. Other processes need 30 minutes of age
+Commands with an init-owned parent need 10 minutes of age and >=60% of one
+core for 2 minutes. PPID 1 alone does not prove an orphan. GUI apps and other
+processes need 30 minutes of age
 and 5 minutes of sustained CPU use. Gaps beyond two inventory intervals plus
 one sampling interval reset the evidence (minimum tolerance: 3 minutes).
 No process is stopped automatically by detection. Stop verifies kernel birth
 identity and ownership, records intent before signaling, and checks exit.
-Run creates a private process group. Its deadline or cancellation stops that
-owned group and records the incident. Use a narrow scan root as well:
+Run creates a private process group. It cleans up descendants on command exit,
+deadline, cancellation, or supervisor death. Deadlines and cancellation record
+an incident. Descendants that create a separate session escape this group.
+Use a narrow scan root as well:
   session-pressure processes run --timeout 2m -- rg --files /path/to/project
 For expensive scans, wrap this command in work run --class heavy --.
 Command arguments and output are not stored in incident history.
