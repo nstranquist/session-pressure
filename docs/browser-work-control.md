@@ -29,8 +29,9 @@ The enabled remote route sends eligible direct `go test`, `go build`, and
 `go vet` commands through the work wrapper to gaterunner-1 before Mac admission.
 Remote jobs share one host slot, two Go workers, a 3 GiB Go memory target, and a
 30-minute deadline. A remote failure never silently retries on the Mac.
-Mac-specific compiler profiles and external local-file arguments keep local
-admission and report a reason. Explicit executable builds require
+Mac-specific compiler profiles and external local-file arguments stop with a
+reason and require an explicit Hetzner runner profile. There is no local fallback.
+Explicit executable builds require
 `CGO_ENABLED=0` and `-o`; their Darwin arm64 output is fetched back atomically.
 
 Uploads preserve local replacement modules and repository fixtures, including

@@ -160,7 +160,7 @@ func remoteModuleClosure(start string) ([]string, string, error) {
 	return modules, common, nil
 }
 
-// remoteSourceLimit bounds one upload; larger closures keep local admission.
+// remoteSourceLimit bounds one upload; larger closures are rejected.
 const remoteSourceLimit = 512 << 20
 
 // walkRemoteSources visits each uploadable regular file of the module closure
@@ -328,31 +328,30 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if err != nil {
 		return true, 1, err
 	}
-	// Ineligible commands keep local admission before anything is uploaded.
-	keepLocal := func(reason string) (bool, int, error) {
-		fmt.Fprintln(streams.Stderr, "session-pressure: retaining local admission for Go work: "+reason)
-		recordControlEvent(dir, map[string]any{"event": "remote_work_declined", "operation": options.Command[1], "reason": reason})
-		return false, 0, nil
+	// Reject unsupported profiles before upload. Enabled remote routing must
+	// never turn an eligibility failure into heavy work on the Mac.
+	reject := func(reason string) (bool, int, error) {
+		return rejectRemoteWork(dir, options.Command[1], reason)
 	}
 	if reason := remoteProfileReason(options.Command, os.Getenv); reason != "" {
-		return keepLocal(reason)
+		return reject(reason)
 	}
 	if reason := remoteWorkIneligibleReason(cwd, options.Command, os.Getenv); reason != "" {
-		return keepLocal(reason)
+		return reject(reason)
 	}
 	modules, common, err := remoteModuleClosure(cwd)
 	if err != nil {
-		return keepLocal(err.Error())
+		return reject(err.Error())
 	}
 	if _, err = remoteSourceSize(modules, common, remoteSourceLimit); err != nil {
-		return keepLocal(err.Error())
+		return reject(err.Error())
 	}
 	// Explicit outputs can be returned without guessing package/main names.
 	argv := append([]string(nil), options.Command...)
 	argv[0] = "go"
 	argv, output, err := normalizeRemoteBuildArgv(argv)
 	if err != nil {
-		return keepLocal(err.Error())
+		return reject(err.Error())
 	}
 	job, err := NewWorkOperationID()
 	if err != nil {
@@ -441,4 +440,11 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		}
 	}
 	return true, 0, nil
+}
+
+// rejectRemoteWork marks the command handled so callers cannot enter local
+// admission after a profile or source rejection.
+func rejectRemoteWork(dir, operation, reason string) (bool, int, error) {
+	recordControlEvent(dir, map[string]any{"event": "remote_work_declined", "operation": operation, "reason": reason, "local_blocked": true})
+	return true, 1, fmt.Errorf("remote Go work blocked: %s; use the Hetzner gate-runner with an explicit compiler profile; local fallback is disabled", reason)
 }
