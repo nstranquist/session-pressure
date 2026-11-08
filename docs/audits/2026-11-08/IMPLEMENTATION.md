@@ -5,7 +5,23 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
-Current checkpoint (20:59 UTC): product release `0535927f` is installed at
+Current review checkpoint (21:44 UTC): the review corrections are committed:
+artifact-bound acceptance observer `b36ac47`, bounded gate-runner API
+`a20e450a`, and native app 1.4.2 build 10 `36f2a69e`. All 75 Swift tests pass,
+including actual candidate CLI, SSH health, a completed job log and installed
+CLI/Unix API contracts. The signed release build passes strict verification.
+The exact final Go race suite is queued on the canonical runner. These source
+and candidate results are not installation receipts. The app awaits the matching
+native API promotion; installed authority remains `0535927f` / app `c827a2d6`.
+
+The existing app passed its separate 30-minute resource gate at 0.30% CPU and
+114.219 MiB peak RSS. Its status read p95 still fails at 266.788/250 ms. Four
+factory deliveries remain nonterminal (one paused, one held, two accepted), and
+factory writer completeness and latency remain open. The detailed review,
+ownership and acceptance conditions are in [REVIEW.md](REVIEW.md). Historical
+checkpoints below retain their own times and artifact identities.
+
+Historical checkpoint (20:59 UTC): product release `0535927f` is installed at
 both CLI prefixes. Its exact committed full race suite and Darwin native build
 passed on Hetzner (job `20261108T195328Z-205269`, 88 seconds). The canonical
 resident is PID 90605. Its 20:21 monitor-scope self-test passed: normal CPU
