@@ -5,15 +5,16 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
-Current checkpoint (20:33 UTC): product release `0535927f` is installed at
+Current checkpoint (20:59 UTC): product release `0535927f` is installed at
 both CLI prefixes. Its exact committed full race suite and Darwin native build
 passed on Hetzner (job `20261108T195328Z-205269`, 88 seconds). The canonical
-resident is PID 90605. Its latest monitor-scope self-test passes: normal CPU
+resident is PID 90605. Its 20:21 monitor-scope self-test passed: normal CPU
 0.387% against 0.5%, RSS 16.672 MiB against 30 MiB, sample CPU p95 16.970 ms
 against 150 ms, and projected telemetry 528,384 bytes/day against 1 MiB/day.
-These are current resource results, separate from the earlier failed cohorts.
+These are that verified resource cohort, separate from earlier failures; the
+current observer independently checks live health and continuity.
 
-The signed canonical desktop is now 1.4.0 build 7, with all twelve panes from the
+The signed canonical desktop is now 1.4.1 build 9, with all twelve panes from the
 reviewed combined snapshot. Day Gate's bounded advisor contract and UI are
 committed in `37383cd` and `28fa1ce`; the concurrent Hetzner source remains
 separately owned and is preserved with file-hash provenance. All 68 exact-owned
@@ -34,14 +35,29 @@ private SQLite native canary. Its schema-v4 receipt at
 factory source digest `4d70882e53036a002a676d6d8ab6d3e9ff4061a16cde95e4c039934a28354e8a`,
 published at 20:19:30 UTC; a private copy is retained. Do not stop the busy worker.
 
-A durable product/app observation ran from 20:21:39 to 20:46:33 UTC. Its
-record is preserved. The diagnostic helper started a separate new 72-hour
-observation at 20:46:33 UTC; elapsed windows do not carry forward. Its
-30-minute, 24-hour and 72-hour gates are pending; it does not establish factory
-alignment. Earlier interrupted/failed observations remain intact. Historical
-writer gaps/latency, scheduler slowdown, privileged trace with normal human macOS
-authorization, queued factory work and elapsed acceptance remain open. WORK-41
-stays in progress.
+The earlier observation records are preserved, including the 1.4.0 app's
+2.566% CPU over 482 seconds. A recorded process sample led to a 15-second
+age-label cadence fix (`a9b3480`, clock correction `22595af`). The final signed
+1.4.1 build 9 passes all 68 tests, the real CLI/Unix API integration, a clean
+release build, strict signing and live Day Gate/freshness review. Its bundle
+authority is `c827a2d6`; installation used full-bundle compare-and-swap.
+
+One immutable diagnostic observer began a new app/CLI generation at
+20:59:19 UTC. Its private output is
+`observation-0535927f-app141b9-20261108T205919Z.json`. No elapsed window carries
+forward. The 30-minute, 24-hour and 72-hour gates remain pending. The first
+status warm p95 is 266.788 ms/250 under the current loaded host; preserve that
+failed read budget alongside the earlier passing 53 ms cohort. This run does
+not establish factory alignment and will need a new generation after the
+separate native-profile owner completes the forward runtime promotion.
+
+At 20:58 factory status still reports three landed, two accepted, one held and
+one paused. Parent recovery was queued once at 20:38; the owned 15-minute wait
+timed out at 20:56. The worker remains healthy, busy and configuration-current;
+do not resubmit, duplicate the child, or stop it. Writer latency, scheduler
+cohorts, peer desktop source publication, privileged trace with normal human
+macOS authorization, queued factory work and elapsed acceptance remain open.
+WORK-41 stays in progress.
 
 ## Product contract
 
@@ -60,7 +76,7 @@ Remote work uses existing Hetzner jobs and receipts. This program does not add a
 | Telemetry | Real product writer and reader; privacy validation, closed fields, failure classes, attempted/written/failed/gap counters and freshness; bounded sharding and full lock-to-append timing. Factory correlation and product-owned registry fragment implemented. | Product and factory integration installed. Historical gaps and factory latency failures remain visible. |
 | Retention | Owned JSONL, writer health, disk maintenance and monitor streams have bounded retention; pruning and append failures are reported. Helper artifacts retain active plus two rollback revisions. | Implemented and tested. Unique legacy install backups are preserved. |
 | Work coordinator | Private host identity and OS/architecture/CPU/revision cohorts, explicit legacy counts and reuse miss reasons. Mixed-cohort retunes fail closed. Current CPU/fairness/capacity gates remain in force. | Installed. Replay promotion and live slowdown SLO still fail; no unsupported weight increase applied. |
-| Native desktop | Twelve sections, including Day Gate and concurrent Process Incidents and Hetzner, refresh on entry; requests coalesce and have time/output bounds; per-section age/errors retain prior results. Settings show executing identity. SMART age and native write-window units are correct. | 68 exact-owned tests and combined signed verification pass. Twelve-pane 1.4.0 build 7 installed and live reviewed; peer Hetzner source is preserved separately. New idle/elapsed observation started. |
+| Native desktop | Twelve sections, including Day Gate and concurrent Process Incidents and Hetzner, refresh on entry; requests coalesce and have time/output bounds; per-section age/errors retain prior results. Settings show executing identity. SMART age and native write-window units are correct. | 68 exact-owned tests and combined signed verification pass. Twelve-pane 1.4.1 build 9 installed and live reviewed; peer Hetzner source is preserved separately. New idle/elapsed observation started. |
 | GPUI preview | Executable validation, bounded stdout/stderr, nonblocking reads, process-group cleanup, timeouts and explicit failed envelopes; supported-operation matrix documented. | Ten core tests and full Rust build pass; remains a preview. |
 | Policy | Exact legacy defaults migrate idempotently; custom settings stay intact. Admission and storage enforcement enabled, automatic shedding disabled. Cleanup remains confirmed and manual. | Installed and live policy audit passes. |
 | Go cache helper | Immutable content-addressed objects, cross-process pinning until close, crash recovery, strict sizes and bounded streaming/journal/maintenance. Pinned objects can temporarily exceed the soft limit. | Race tests and real Go cache integration pass on runner. Live reuse history still reports zero hits and concrete miss reasons. |
@@ -1083,3 +1099,58 @@ redundant generated copy was removed; the original evidence was preserved.
 A clean, serial `make verify` is running with the real installed CLI contract.
 Do not claim the candidate is installed or the CPU target passed until the
 separate installation and elapsed observation receipts exist.
+
+
+### Final app installation and durable generation (20:59 UTC)
+
+The cadence change landed in `a9b34806bee74ffd5827a9e9ce0d89a36d02dba3`.
+Live review caught a clock edge when a new read timestamp was newer than the
+TimelineView tick. `22595afa33540630b1e1846faec62ef03fe66567` uses the current
+clock at rendering and explicitly shows “just now” for a fresh read. All 68
+tests in nine suites passed again, including the real CLI/Unix API contract,
+followed by a clean release build and strict Developer ID verification.
+
+The final 1.4.1 build 9 was installed at 20:59:19 UTC using expected full-bundle
+authority `e3b19974`; the resulting full-bundle digest is
+`c827a2d602b4b9246aa5aae640c8d9895bb2fff9a4886800355de809db808715`.
+The previous bundle has its own rollback path; stale/downgrade guards remain
+enforced. `desktop-idle-final-source-2058.json` hashes the combined source,
+`desktop-idle-final-verify-2058.log` records verification, and
+`desktop-idle-final-install-2059.json` records compare-and-swap and provenance.
+The peer Hetzner source remains unclaimed. CUA independently confirmed all
+twelve panes, “just now”, then Day Gate's correct date, gate-none result and
+5-second successful-read age. No app idle CPU improvement is claimed yet.
+
+Only one acceptance launch agent is active:
+`com.nicos.session-pressure.acceptance-20261108T205919Z`. It uses the immutable
+`1c12a204` native helper and a new private output. Its deadline is
+2026-11-11T20:59:19.372977Z, conditional on continued same-generation operation.
+The previous 20:46 observation and end receipt are preserved; nothing was
+reset or combined. The next product revision needs a separate generation.
+The current status warm cohort misses its 250 ms p95 budget at 266.788 ms
+during an elevated host load. Keep this result visible and collect naturally
+after the final native profile promotion; do not substitute the earlier
+passing 53 ms result for this window.
+
+
+The final generation completed all 100-sample read cohorts at 20:59:59 UTC:
+status p95 266.788 ms/250 fails; board 187.389 ms/500 and rich
+302.615 ms/1,000 pass, with zero read errors across all 300 calls. Its first
+resident check passes, PID 90605, zero restarts. App sampling is valid for
+new PID 67620, RSS 114.219 MiB, zero sampling failures; CPU and idle gates have
+no elapsed verdict yet. This preserves the loaded-host failure as evidence.
+
+At 21:00 the owned delivery doctor returns structurally OK but warns about
+two overdue accepted deliveries, paused parent, blocked child, an uncommitted
+foreign policy and installed worker/preflight source lag. “OK” is not clean
+acceptance. Service configuration is current and the worker remains busy, so
+its owner must complete the safe forward refresh after the active operation.
+
+A bounded Scratchpad addendum was written with the nicos-scratchpad skill and
+read back through FTS with its literal backtick phrase intact. Entity
+`01M6YFCYF43H7AQBNJ4ZYE7YVA` supersedes the earlier install and queue counts.
+Self-evaluation remains 7/10 until the recorded delivery, latency, scheduler,
+privileged trace and elapsed gates close. Improvements applied in this run:
+retain sampling errors instead of stale app metrics, bind observers to immutable
+helpers, keep generations separate, serialize native builds, avoid relocated
+Swift caches, and replace per-second time labels with bounded human-scale refresh.
