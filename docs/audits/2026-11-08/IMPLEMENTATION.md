@@ -5,17 +5,18 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
-Current checkpoint (19:34 UTC): the installed resident bundle is `8e6cb978`,
-which includes the explicit release authority guard. The factory front door has
-already moved to product stamp `9cf2a30`; this mismatch remains visible and must
-be closed by a single forward promotion. The read-only coordinator probe fix
-did not meet the unchanged normal-state CPU duty limit. A concurrent owner is
-replacing the measured browser enforcement child scan with native lookup. The
-acceptance collector stays stopped. Factory integration `aa7b8fa9` is landed and
-its native installation was verified; five later factory deliveries remain
-accepted, including the newly found failure-filter and legacy promotion-path
-corrections. Historical writer/scheduler performance and elapsed acceptance
-remain open. WORK-41 stays in progress.
+Current checkpoint (19:41 UTC): the installed resident bundle and factory front
+door both report product `8e6cb978`. The factory binary is clean `483b1def`,
+SHA-256 `cf1ce6c58fd435a7b949e132152919c814fdb9dc0d536dacbf33a696449ffa10`,
+independently verified at all three install targets. The explicit release authority
+guard is installed. Normal-state resident duty still fails at 0.654% against 0.5%;
+RSS, sample CPU and telemetry volume pass. A concurrent owner is replacing the
+measured browser enforcement subprocess scan and its recovery-demand reads with
+native, read-only lookup. The acceptance collector stays stopped. Factory
+integration `aa7b8fa9` is landed and installed; five later factory deliveries remain
+accepted. Delivery admission is paused by its owner for producer-routing repair;
+the active batch continues. Historical writer/scheduler performance and elapsed
+acceptance remain open. WORK-41 stays in progress.
 
 ## Product contract
 
@@ -693,3 +694,45 @@ about 0.3% at a 15-second cadence. Resident duty includes child CPU, which the
 main-process native sampling profile could not explain. The owner is replacing
 that all-process subprocess scan with native root lookup, retaining termination
 and recovery safety. This finding does not yet prove installed improvement.
+
+
+### Independent 19:41 UTC runtime and writer check
+
+The main factory publisher repaired SQLite with the external LLVM clang 18 link
+profile. The schema-v4 install receipt, all three SHA-256 values and each binary's
+Go build information were captured in `factory-install-recheck-1940.json`.
+Standalone artifact status independently reports no CLI/helper revision mismatch.
+This closes the earlier 8e6/9cf front-door mismatch; the forward native browser
+fix must still align both authorities again after promotion.
+
+The fresh full audit (`audit-1940.json`) passes policy, readings, cleanup and
+artifacts. Resident, scheduler, telemetry and performance fail. At 32 normal
+samples, resident duty is 0.654%, RSS 16.141 MiB, sample CPU p95 14.489 ms and
+projected telemetry 528,384 bytes/day. Passing resource dimensions do not cancel
+the failed CPU gate. This controller has one start and zero stops.
+
+The factory writer's two-hour view reports 3,195 attempts, 3,079 writes, zero
+recorded terminal failures and 116 unresolved attempts. A query-only, bounded
+SQLite inspection of the pending counters locates 115 of these in 19:11–19:19
+UTC, with none after 19:19 at this read. The remaining recent gap predates that
+burst. The counters contain no command payload and cannot prove which command
+failed; their timing is consistent with the separately observed native SQLite
+incident. Do not mark pending attempts as successful or reset their history.
+The hour-granularity current-controller metric also contains that earlier burst.
+Evidence: `factory-gap-times-1941.json`.
+
+The standalone writer has 3,894 attempts and writes, zero failures and zero gaps;
+its historical p95 remains 143.697 ms, above the 100 ms ceiling. Factory p95 is
+the 100 ms histogram upper bound against a 25 ms target. The complete JSONL scan
+finds zero parse, validation or insecure-file errors across 42,177 factory rows
+and 4,272 standalone rows. These integrity results are separate from latency.
+Scheduler pressure-conditioned slowdown still fails for express-test (5.96),
+test (6.05) and build (22.70) against 5.00. No weight or threshold was raised to
+make the audit pass.
+
+Self-review found a boundary risk in the proposed native browser reader: its
+reused buffer must be limited to the actual kernel response size before full
+argument classification. The owning agent received that review and the request
+for a stale-tail regression test. The final runtime gate must include this
+correction and all placement ancestry. Shared source was not edited across the
+owner's claim.
