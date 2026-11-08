@@ -1200,6 +1200,14 @@ a self-review measure, not proof of terminal acceptance.
 
 ## Review follow-up at 22:07 UTC
 
+At 22:12 UTC, a further review removed hand-maintained Go package lists from
+the root Makefile and CI. `vet`, `test` and the new `race` target cover the
+whole module, including release scripts and all new internal packages. Both
+CI platforms run `make vet`, `make race` and `make build`; builds now include
+the release installer/observer and compiler adapter. `make -n` and
+`git diff --check` pass. This is a gate coverage change, not a new native
+runtime candidate or a claim that GitHub CI has executed.
+
 - Guarded commit `921c26785b8edaa3b335f8a458effa2b511d2f9d` adds closed
   `outcome_class` and `reason_code` fields to standalone command events.
   A completed audit finding is `expected_negative/gate_not_satisfied` only

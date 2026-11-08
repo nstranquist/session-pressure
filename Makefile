@@ -1,16 +1,19 @@
 GO ?= go
 PREFIX ?= $(CURDIR)/bin
 
-.PHONY: test vet fmt build desktop-test desktop-gpui publish-ready secret-scan init
+.PHONY: test race vet fmt build desktop-test desktop-gpui publish-ready secret-scan init
 
 fmt:
 	$(GO) fmt ./...
 
 vet:
-	$(GO) vet ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./sessionpressurecontrol ./cmd/session-pressure ./cmd/session-pressure-api ./cmd/session-pressure-helper ./sessionpressure/gocachelru ./cmd/gocache-lru
+	$(GO) vet ./...
 
 test:
-	$(GO) test ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./sessionpressurecontrol ./internal/hostcleanup ./cmd/session-pressure ./internal/filelock ./internal/jsonl ./internal/notifyinbox ./internal/operationcontract ./packages/processtree ./sessionpressure/gocachelru ./cmd/gocache-lru -count=1 -timeout 10m
+	$(GO) test ./... -count=1 -timeout 10m
+
+race:
+	$(GO) test -race ./... -count=1 -timeout 10m
 
 desktop-test:
 	$(MAKE) -C apps/SessionPressure test
@@ -25,6 +28,8 @@ build:
 	$(GO) build -o $(PREFIX)/session-pressure-api ./cmd/session-pressure-api
 	$(GO) build -o $(PREFIX)/session-pressure-helper ./cmd/session-pressure-helper
 	$(GO) build -o $(PREFIX)/gocache-lru ./cmd/gocache-lru
+	$(GO) build -o $(PREFIX)/session-pressure-release ./scripts/release
+	$(GO) build -o $(PREFIX)/session-pressure-release-cc ./scripts/release-cc
 
 secret-scan:
 	@if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --source . --no-git --redact; else echo "gitleaks not installed; skipped"; fi
