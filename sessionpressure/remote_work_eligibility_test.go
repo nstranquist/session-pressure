@@ -43,17 +43,18 @@ func TestRemoteWorkIneligibleReason(t *testing.T) {
 		{"absolute package", pure, []string{"go", "vet", "/Users/x/pkg"}, nil, "absolute local path /Users/x/pkg"},
 		{"absolute coverprofile", pure, []string{"go", "test", "-coverprofile", "/tmp/c.out", "./..."}, nil, "-coverprofile names the absolute local path"},
 		{"goexperiment", pure, []string{"go", "test", "./..."}, map[string]string{"GOEXPERIMENT": "rangefunc"}, "GOEXPERIMENT"},
-		{"test GOOS set", pure, []string{"go", "test", "./..."}, map[string]string{"GOOS": "darwin"}, "remote test runs on linux/amd64"},
+		{"test GOOS set", pure, []string{"go", "test", "./..."}, map[string]string{"GOOS": "darwin"}, "remote test runs natively on the linux/arm64 runner"},
 		{"build linux target", pure, []string{"go", "build", "-o", "x", "."}, map[string]string{"GOOS": "linux"}, "remote builds produce darwin/arm64"},
-		{"build explicit cgo", pure, []string{"go", "build", "-o", "x", "."}, map[string]string{"CGO_ENABLED": "1"}, "CGO_ENABLED=1"},
-		{"build CC set", pure, []string{"go", "build", "-o", "x", "."}, map[string]string{"CC": "clang"}, "CC is set"},
-		{"build cgo graph", cgo, []string{"go", "build", "-o", "x", "."}, nil, "links cgo package example.test/cgo"},
+		// The runner builds darwin/arm64 with cgo through its pinned compiler,
+		// so cgo builds are eligible; a local CC is refused by the profile.
+		{"build explicit cgo", pure, []string{"go", "build", "-o", "x", "."}, map[string]string{"CGO_ENABLED": "1"}, ""},
+		{"build cgo graph", cgo, []string{"go", "build", "-o", "x", "."}, nil, ""},
 		{"build cgo graph, local cgo off", cgo, []string{"go", "build", "-o", "x", "."}, map[string]string{"CGO_ENABLED": "0"}, ""},
 		{"test cgo graph runs natively", cgo, []string{"go", "test", "./..."}, nil, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := remoteWorkIneligibleReason(tc.dir, tc.argv, envMap(tc.env))
+			got := remoteWorkIneligibleReason(tc.argv, envMap(tc.env))
 			if tc.want == "" && got != "" {
 				t.Fatalf("want eligible, got %q", got)
 			}
