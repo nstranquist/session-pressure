@@ -402,6 +402,7 @@ func AdmissionReason(admission Admission) string {
 
 type workAdmissionGate struct {
 	limits                              WorkLimits
+	refreshLimits                       func() WorkLimits
 	cpuRed                              int
 	cpuRecovered                        int
 	latched                             bool
@@ -642,6 +643,9 @@ func (gate *workAdmissionGate) ObserveOwned(admission Admission, immediate bool)
 }
 
 func (gate *workAdmissionGate) observe(admission Admission, immediate, ownsLease bool) workAdmissionDecision {
+	if gate.refreshLimits != nil {
+		gate.limits = gate.refreshLimits()
+	}
 	if decision, ok := gate.swapThrashDecision(admission, ownsLease); ok {
 		return decision
 	}
@@ -697,8 +701,12 @@ func (gate *workAdmissionGate) observe(admission Admission, immediate, ownsLease
 	// recovery independently against their own private counters.
 	recovered := admission.Snapshot != nil && admission.Snapshot.HostCPUAvailable &&
 		admission.Snapshot.HostCPUPercent <= gate.limits.CPUReleasePercent && admission.Allowed
+	var sampledAt time.Time
+	if admission.Snapshot != nil {
+		sampledAt = admission.Snapshot.Timestamp
+	}
 	if shared, ok := gate.syncSharedLatch(WorkAdmissionObservation{
-		Red: dimension == "cpu", Recovered: recovered, Dimension: dimension, Reason: AdmissionReason(admission),
+		Red: dimension == "cpu", Recovered: recovered, Dimension: dimension, Reason: AdmissionReason(admission), SampledAt: sampledAt,
 	}); ok {
 		gate.latched = shared.Latched
 		gate.cpuRed = shared.RedSamples
@@ -908,10 +916,26 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		options.RequestedClass = options.Class
 	}
 	options.Class = ResolveWorkClass(options.Class, options.Exclusive, options.Command)
+	if handled, code, err := TryRemoteWork(coordinator.Dir, options, streams); handled {
+		return code, err
+	}
+	if options.Class == WorkClassBrowser {
+		if err := CheckBrowserWork(context.Background()); err != nil {
+			return 14, err
+		}
+		unlock, err := AcquireBrowserSlot(context.Background(), coordinator.Dir)
+		if err != nil {
+			return 14, fmt.Errorf("browser slot busy: %w", err)
+		}
+		defer unlock()
+	}
 	if options.Progress == "" {
 		options.Progress = WorkProgressHuman
 	}
 	if parent, nested := nestedWorkParent(coordinator, os.Environ()); nested {
+		if options.Class == WorkClassBrowser {
+			return 14, errors.New("browser work requires its own bounded wrapper; do not nest work-run browser commands")
+		}
 		return runNestedWorkCommand(parent, options, streams)
 	}
 	if admissionCheck == nil {
@@ -1106,7 +1130,14 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		return lease.Release(releaseCtx)
 	}
 	admissionGate = &workAdmissionGate{
-		limits:             coordinator.Limits,
+		limits: coordinator.Limits,
+		refreshLimits: func() WorkLimits {
+			policy, persisted, err := LoadPolicy(PolicyPath(coordinator.Dir), 0)
+			if err == nil && persisted {
+				return policy.WorkLimits
+			}
+			return coordinator.Limits
+		},
 		storageGrace:       configuredWorkStorageGrace(coordinator.Dir),
 		cpuRedPercent:      configuredWorkCPURedPercent(coordinator.Dir),
 		swapThrashEnforced: configuredWorkSwapThrashEnforced(coordinator.Dir),
@@ -1530,8 +1561,37 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
 	var cancellationSignal syscall.Signal
+	var browserDeadline <-chan time.Time
+	var browserPoll <-chan time.Time
+	if options.Class == WorkClassBrowser {
+		timer := time.NewTimer(120 * time.Second)
+		defer timer.Stop()
+		browserDeadline = timer.C
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		browserPoll = ticker.C
+		defer syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+	}
+	var forceKill <-chan time.Time
+	stopBrowser := func() {
+		if cancellationSignal != 0 {
+			return
+		}
+		cancellationSignal = syscall.SIGTERM
+		_ = syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
+		forceKill = time.After(3 * time.Second)
+	}
 	for {
 		select {
+		case <-browserDeadline:
+			fmt.Fprintln(streams.Stderr, "browser runtime limit reached (120s)")
+			stopBrowser()
+		case <-browserPoll:
+			if err := CheckBrowserWork(context.Background()); err != nil {
+				stopBrowser()
+			}
+		case <-forceKill:
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 		case received, open := <-signals:
 			if !open {
 				signals = nil

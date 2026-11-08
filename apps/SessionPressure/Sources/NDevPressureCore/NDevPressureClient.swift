@@ -66,6 +66,9 @@ private final class BoundedCaptureBuffer: @unchecked Sendable {
 /// Thin, process-isolated client over `ndev session pressure` JSON contracts.
 /// The app never reimplements sampling; the CLI remains the control plane.
 public struct NDevPressureClient: Sendable {
+	public func browserControl(_ action: String = "status") async throws -> BrowserControlEnvelope {
+		try await runJSON(BrowserControlEnvelope.self, arguments: ["--json", "session", "pressure", "browser", action])
+	}
     public let binaryPath: String
     private let environment: [String: String]
     private let apiClient: NDevPressureAPIClient?

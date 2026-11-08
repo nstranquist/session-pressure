@@ -170,6 +170,10 @@ func cmdSessionPressure(g *Flags, args []string) int {
 		return cmdSessionPressureIO(g, args)
 	case "work":
 		return cmdSessionPressureWork(g, args)
+	case "browser":
+		return cmdSessionPressureBrowser(g, args)
+	case "remote":
+		return cmdSessionPressureRemote(g, args)
 	case "policy":
 		return cmdSessionPressurePolicy(g, args)
 	case "monitor":

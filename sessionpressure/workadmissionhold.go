@@ -60,6 +60,7 @@ type WorkAdmissionLatch struct {
 	BlockRequired   int        `json:"block_required"`
 	ReleaseRequired int        `json:"release_required"`
 	ObservedAt      *time.Time `json:"observed_at,omitempty"`
+	EvidenceAt      *time.Time `json:"evidence_at,omitempty"`
 }
 
 // workAdmissionLatchSampleInterval is the minimum spacing between two counted
@@ -74,6 +75,7 @@ const workAdmissionLatchStale = 2 * time.Minute
 
 // WorkAdmissionObservation is one waiter's view of the host at a poll.
 type WorkAdmissionObservation struct {
+	SampledAt time.Time
 	Red       bool
 	Recovered bool
 	Dimension string
@@ -253,7 +255,14 @@ func (coordinator *WorkCoordinator) ObserveAdmissionLatch(ctx context.Context, o
 			current = &WorkAdmissionLatch{}
 		}
 		counted := current.ObservedAt == nil || now.Sub(*current.ObservedAt) >= workAdmissionLatchSampleInterval
+		if !observation.SampledAt.IsZero() {
+			counted = counted && now.Sub(observation.SampledAt) <= 30*time.Second && !observation.SampledAt.After(now.Add(time.Second)) && (current.EvidenceAt == nil || observation.SampledAt.After(*current.EvidenceAt))
+		}
 		if counted {
+			if !observation.SampledAt.IsZero() {
+				sampledAt := observation.SampledAt
+				current.EvidenceAt = &sampledAt
+			}
 			switch {
 			case observation.Red:
 				current.RecoverySamples = 0

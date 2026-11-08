@@ -549,6 +549,7 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 			lastStorageLevel = snapshot.Storage.Level
 			monitor.attachDiskWrite(&snapshot)
 			monitor.observeProcessIncidents(ctx, snapshot)
+			_ = EnforceBrowserControl(ctx, monitor.Store.Dir)
 			recovered := lastSampleError != ""
 			lastSampleError = ""
 			annotateQuiescence(snapshot.TopAgentTrees, monitor.Policy, quiescentStreak)
@@ -649,6 +650,7 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 			}
 		}
 		delay := time.Duration(monitor.Policy.IntervalSeconds(lastLevel)) * time.Second
+		delay = recoverySampleDelay(ctx, monitor.Store.Dir, monitor.Policy, delay)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():

@@ -22,6 +22,7 @@ struct WorkView: View {
     private var queuePane: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+				BrowserControlView()
                 if let work {
                     SectionCard(title: "Shared capacity", systemImage: "cpu") {
                         CapacityBar(used: work.used, capacity: work.capacity, available: work.available)
