@@ -55,3 +55,20 @@ cargo test -p pressure-core
 
 `pressure-core` has no GPUI dependency. It decodes the same scrubbed
 `board-full.json` fixture the Swift tests use.
+
+## Supported operation matrix
+
+| Surface | Operations | Contract |
+|---|---|---|
+| Host and diagnostics | board, live board, I/O status, storage providers | Read only; bounded process output and deadline |
+| Work | status, inspect, history | Read only |
+| Work control | cancel, reschedule, handoff, override, clear override | Explicit selected operation; UI confirmation for cancel/reschedule |
+| Policy | enable, observe, profile apply | Admission authority stays in Go; automatic shedding requires an explicit flag |
+| Monitor | install, uninstall, once | Explicit operator action |
+| Idle trees | exact PID/session apply | Confirmation and Go identity checks |
+
+Nonzero CLI exits retain the structured result with `ok=false` and
+`_cli_exit_code`. Output over 8 MiB, stderr over 64 KiB, deadline expiry and
+inherited pipes after child exit terminate the child process group. The core
+tests cover these transport failures and recorded board decoding. This client
+remains a preview; the signed SwiftUI app is the primary desktop interface.

@@ -36,3 +36,9 @@ The output has constant size; collection ends at the requested deadline.
 
 Automatic shedding stays off. Calibration promotion still requires its replay
 gate. A passing test does not establish an installed release or elapsed soak.
+
+Darwin bundles require CGO for the native NVMe SMART reader. Cross builds must
+set `CC` to a Darwin target compiler and provide its SDK. Explicit
+`CGO_ENABLED=0` fails before building. Promotion checks this requirement in
+both the manifest and each binary's Go build information. A runnable portable
+binary does not qualify as a complete Darwin release.
