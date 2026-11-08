@@ -1214,16 +1214,23 @@ var AgentLaunchAdmissionCheck = func(kind sessionpressure.AgentLaunchKind) sessi
 }
 
 func emitPressure(g *Flags, payload any, text string, exit int) int {
+	if err := emitPressureOutput(g, payload, text); err != nil {
+		return sessionPressureError(err.Error(), 1)
+	}
+	return exit
+}
+
+func emitPressureOutput(g *Flags, payload any, text string) error {
 	if g != nil && g.JSON {
 		body, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
-			return sessionPressureError(err.Error(), 1)
+			return err
 		}
-		fmt.Println(string(body))
-		return exit
+		_, err = fmt.Println(string(body))
+		return err
 	}
-	fmt.Print(text)
-	return exit
+	_, err := fmt.Print(text)
+	return err
 }
 
 func sessionPressureError(message string, exit int) int {

@@ -163,6 +163,13 @@ func Disabled() bool {
 var writerSequence atomic.Uint64
 
 func RecordCommand(action string, started time.Time, exit int) error {
+	return RecordCommandResult(action, started, exit, false)
+}
+
+// RecordCommandResult records a completed command. gateNotSatisfied must come
+// from a completed detector report, never from its exit code alone. A failure
+// to read or emit that report remains a command failure.
+func RecordCommandResult(action string, started time.Time, exit int, gateNotSatisfied bool) error {
 	if Disabled() || os.Getenv("NDEV_PRESSURE_WRAPPER") == "1" || (strings.HasSuffix(os.Args[0], ".test") && os.Getenv("SESSION_PRESSURE_TELEMETRY_DIR") == "") {
 		return nil
 	}
@@ -180,7 +187,8 @@ func RecordCommand(action string, started time.Time, exit int) error {
 		outcome = "policy_denied"
 	}
 	ok := exit == 0
-	e := Event{SchemaVersion: 1, Event: "session.pressure.command", TS: started.UTC().Format(time.RFC3339Nano), Source: ProductSourceID, Surface: "session-pressure", Command: "session pressure", DurationUS: time.Since(started).Microseconds(), OK: &ok, Privacy: "local", Attrs: map[string]any{"action": action, "exit_code": exit, "outcome": outcome, "operation_id": "session.pressure", "invocation_id": hex.EncodeToString(id[:]), "duration_scope": commandDurationScope(action)}}
+	class, reason := commandOutcome(exit, gateNotSatisfied)
+	e := Event{SchemaVersion: 1, Event: "session.pressure.command", TS: started.UTC().Format(time.RFC3339Nano), Source: ProductSourceID, Surface: "session-pressure", Command: "session pressure", DurationUS: time.Since(started).Microseconds(), OK: &ok, Privacy: "local", Attrs: map[string]any{"action": action, "exit_code": exit, "outcome": outcome, "outcome_class": class, "reason_code": reason, "operation_id": "session.pressure", "invocation_id": hex.EncodeToString(id[:]), "duration_scope": commandDurationScope(action)}}
 	if len(ValidateEventPrivacy(e)) > 0 {
 		return fmt.Errorf("command event failed privacy validation")
 	}
@@ -473,4 +481,28 @@ func commandDurationScope(action string) string {
 		return "wait_and_child_runtime"
 	}
 	return "command_runtime"
+}
+
+// Use the factory's closed invocation vocabulary without importing the factory.
+// These are product dispatcher exits; successfully exec'd work helpers own
+// their lifecycle telemetry and do not return child exits through this path.
+func commandOutcome(exit int, gateNotSatisfied bool) (string, string) {
+	switch {
+	case exit == 0:
+		return "success", "none"
+	case exit == 1 && gateNotSatisfied:
+		return "expected_negative", "gate_not_satisfied"
+	case exit == 2:
+		return "user_input", "invalid_input"
+	case exit >= 11 && exit <= 15:
+		return "policy_block", "policy_denied"
+	case exit == 124:
+		return "timeout", "deadline_exceeded"
+	case exit == 126 || exit == 127:
+		return "dependency_unavailable", "dependency_launch"
+	case exit == 130:
+		return "cancelled", "interrupted"
+	default:
+		return "command_failure", "nonzero_exit"
+	}
 }
