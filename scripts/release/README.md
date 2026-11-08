@@ -6,14 +6,28 @@ Build Go binaries on gaterunner-1 from a clean committed checkout:
 go run ./scripts/release build --platform darwin/arm64 --out /absolute/export
 ```
 
-Copy that bundle to the Mac. Run its `session-pressure-release install --out
-/absolute/export --prefix /Users/nicostran/.local/bin`. The installer verifies
-all five binaries against their SHA-256 values, platform, module and clean Git
-revision. It probes the candidate before it changes the shared `current` link.
+Before the remote build, read `.session-pressure-releases/current` under the
+install prefix. Retain that observed revision with the job. On first install,
+use `none`. Copy the bundle to the Mac, then run its installer:
+
+```text
+session-pressure-release install --out /absolute/export --prefix /Users/nicostran/.local/bin --expected-current OBSERVED_REVISION
+```
+
+The installer verifies all five binaries against their SHA-256 values, platform,
+module and clean Git revision. Under its kernel lock, it requires the current
+revision to match `--expected-current`. A stale job cannot overwrite a later
+promotion. It also rejects an older build timestamp unless `--allow-rollback`
+is explicit. Build time is a downgrade fence; it does not establish Git ancestry.
+If the authority changed, review the newer release before preparing a new intent.
+
+The installer probes the candidate before it changes the shared `current` link.
 A failed promotion restores the prior link and first-install files. Receipts
-and preserved prior files are in `.session-pressure-releases` under the prefix.
-To roll back an existing managed release, atomically replace `current` with
-the receipt's `previous_release`. Do not rewrite a running executable.
+record the expected authority and rollback flag. Preserved prior files remain in
+`.session-pressure-releases` under the prefix. For an intended rollback, run the
+current installer against the preserved bundle with the actual current revision
+and `--allow-rollback`. Do not rewrite a running executable. Old preserved
+installer executables predate this guard; always use the current installer.
 
 The native Makefile uses `install-app` to stage and verify a signed app before
 promotion. It preserves the prior app beside the destination with `.rollback-`

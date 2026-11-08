@@ -48,6 +48,8 @@ func run(args []string) error {
 	out := f.String("out", "", "bundle directory")
 	platform := f.String("platform", "darwin/arm64", "build target")
 	prefix := f.String("prefix", "", "install bin directory")
+	expected := f.String("expected-current", "", "observed current revision, or none for first install")
+	allowRollback := f.Bool("allow-rollback", false, "explicitly permit an older build after checking current revision")
 	app := f.String("app", "", "signed .app source")
 	destination := f.String("destination", "/Applications/NDev Pressure.app", "app destination")
 	if err := f.Parse(args[1:]); err != nil {
@@ -60,7 +62,7 @@ func run(args []string) error {
 	case "build":
 		return build(*out, *platform)
 	case "install":
-		return install(*out, *prefix)
+		return install(*out, *prefix, *expected, *allowRollback)
 	case "install-app":
 		return installApp(*app, *destination)
 	default:
@@ -284,7 +286,27 @@ func replaceLink(target, path string) error {
 	}
 	return syncDir(filepath.Dir(path))
 }
-func install(dir, prefix string) error {
+
+// checkPromotion binds the operator's observed authority to this promotion.
+// Build time is a downgrade fence, not a claim about Git ancestry.
+func checkPromotion(candidate manifest, active *manifest, expected string, allowRollback bool) error {
+	current := "none"
+	if active != nil {
+		current = active.Revision
+	}
+	if expected == "" || expected != current {
+		return fmt.Errorf("release authority changed or was not pinned: expected %q, current %q; re-read current and pass --expected-current", expected, current)
+	}
+	if candidate.BuiltAt.IsZero() || (active != nil && active.BuiltAt.IsZero()) {
+		return errors.New("release build timestamp is required for promotion")
+	}
+	if active != nil && candidate.Revision != active.Revision && candidate.BuiltAt.Before(active.BuiltAt) && !allowRollback {
+		return errors.New("candidate predates active build; use --allow-rollback only for an intended rollback")
+	}
+	return nil
+}
+
+func install(dir, prefix, expected string, allowRollback bool) error {
 	m, e := verify(dir)
 	if e != nil {
 		return e
@@ -313,6 +335,28 @@ func install(dir, prefix string) error {
 		return fmt.Errorf("release install already active: %w", e)
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	current := filepath.Join(store, "current")
+	previous, readErr := os.Readlink(current)
+	var active *manifest
+	if readErr == nil {
+		id, decodeErr := hex.DecodeString(previous)
+		if decodeErr != nil || len(id) != 20 || filepath.Base(previous) != previous {
+			return errors.New("invalid installed authority link")
+		}
+		a, err := verify(filepath.Join(store, previous))
+		if err != nil {
+			return fmt.Errorf("verify active release: %w", err)
+		}
+		if a.Revision != previous {
+			return errors.New("active release identity mismatch")
+		}
+		active = &a
+	} else if !os.IsNotExist(readErr) {
+		return readErr
+	}
+	if e = checkPromotion(m, active, expected, allowRollback); e != nil {
+		return e
+	}
 	stage, e := os.MkdirTemp(store, ".candidate-")
 	if e != nil {
 		return e
@@ -363,8 +407,6 @@ func install(dir, prefix string) error {
 			}
 		}
 	}
-	current := filepath.Join(store, "current")
-	previous, _ := os.Readlink(current)
 	backups := map[string]string{}
 	installed := []string{}
 	rollback := func() {
@@ -416,7 +458,7 @@ func install(dir, prefix string) error {
 		rollback()
 		return e
 	}
-	receipt := map[string]any{"installed_at": time.Now().UTC(), "release": m, "previous_release": previous, "preserved_previous_paths": backups, "rollback": "replace current symlink with previous_release; first migration backups remain preserved"}
+	receipt := map[string]any{"installed_at": time.Now().UTC(), "release": m, "previous_release": previous, "expected_current": expected, "allow_rollback": allowRollback, "preserved_previous_paths": backups, "rollback": "use current installer with previous_release bundle, observed --expected-current and --allow-rollback; first migration backups remain preserved"}
 	if e = writeJSON(filepath.Join(store, "install-"+stamp+".json"), receipt); e != nil {
 		rollback()
 		return e

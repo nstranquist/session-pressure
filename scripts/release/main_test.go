@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMain(m *testing.M) {
@@ -64,7 +65,7 @@ func TestTamperedBundlePreservesInstalledAuthority(t *testing.T) {
 	if e := writeJSON(filepath.Join(dir, "release.json"), m); e != nil {
 		t.Fatal(e)
 	}
-	if e := install(dir, prefix); e == nil {
+	if e := install(dir, prefix, "none", false); e == nil {
 		t.Fatal("tampered bundle accepted")
 	}
 	raw, e := os.ReadFile(old)
@@ -115,5 +116,42 @@ func TestDarwinReleaseRejectsDisabledNativeReader(t *testing.T) {
 	}
 	if _, e := verify(dir); e == nil || !strings.Contains(e.Error(), "native SMART") {
 		t.Fatalf("disabled native feature was not rejected: %v", e)
+	}
+}
+
+func TestPromotionRejectsStaleIntentAndUnintendedDowngrade(t *testing.T) {
+	old := manifest{Revision: strings.Repeat("a", 40), BuiltAt: time.Now().Add(-time.Hour)}
+	next := manifest{Revision: strings.Repeat("b", 40), BuiltAt: old.BuiltAt.Add(time.Minute)}
+	latest := manifest{Revision: strings.Repeat("c", 40), BuiltAt: next.BuiltAt.Add(time.Minute)}
+	if e := checkPromotion(old, nil, "none", false); e != nil {
+		t.Fatal(e)
+	}
+	if e := checkPromotion(next, &old, old.Revision, false); e != nil {
+		t.Fatal(e)
+	}
+	// An install prepared against A must not replace C after another installer wins.
+	for _, rollback := range []bool{false, true} {
+		if e := checkPromotion(next, &latest, old.Revision, rollback); e == nil {
+			t.Fatal("stale promotion accepted")
+		}
+	}
+	if e := checkPromotion(old, &latest, latest.Revision, false); e == nil {
+		t.Fatal("unintended downgrade accepted")
+	}
+	if e := checkPromotion(old, &latest, latest.Revision, true); e != nil {
+		t.Fatal(e)
+	}
+	if e := checkPromotion(latest, &latest, latest.Revision, false); e != nil {
+		t.Fatal(e)
+	}
+	if e := checkPromotion(latest, &old, "", false); e == nil {
+		t.Fatal("unpinned update accepted")
+	}
+	if e := checkPromotion(latest, nil, old.Revision, false); e == nil {
+		t.Fatal("missing authority accepted")
+	}
+	old.BuiltAt = time.Time{}
+	if e := checkPromotion(old, nil, "none", false); e == nil {
+		t.Fatal("unknown timestamp accepted")
 	}
 }
