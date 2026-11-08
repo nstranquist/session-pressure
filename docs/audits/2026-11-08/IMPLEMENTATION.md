@@ -34,7 +34,9 @@ private SQLite native canary. Its schema-v4 receipt at
 factory source digest `4d70882e53036a002a676d6d8ab6d3e9ff4061a16cde95e4c039934a28354e8a`,
 published at 20:19:30 UTC; a private copy is retained. Do not stop the busy worker.
 
-A new durable 72-hour product/app observation started at 20:21:39 UTC. Its
+A durable product/app observation ran from 20:21:39 to 20:46:33 UTC. Its
+record is preserved. The diagnostic helper started a separate new 72-hour
+observation at 20:46:33 UTC; elapsed windows do not carry forward. Its
 30-minute, 24-hour and 72-hour gates are pending; it does not establish factory
 alignment. Earlier interrupted/failed observations remain intact. Historical
 writer gaps/latency, scheduler slowdown, privileged trace with normal human macOS
@@ -990,3 +992,68 @@ helper delivery landed and two accepted deliveries still queued. Parent recovery
 is deferred to the busy service, so its durable state can remain paused until
 processed. A single replacement owned wait is retained in
 `delivery-wait-2041.json`; no duplicate concurrent waiter is running.
+
+
+### Native diagnostic helper and current durable observer (20:46 UTC)
+
+The exact committed `1c12a204` helper passed its release race suite again and
+built for Darwin/arm64 with CGO enabled from clean source on Hetzner. Its native
+SHA-256 is `106595090dff7194b88b126a5b985dbce38f6104af0747a9a519da032aa088d5`;
+`go version -m` confirms exact VCS revision and `vcs.modified=false`.
+The native helper's real `app-status --app` independently confirms the current
+1.4.0 build 7 full-bundle authority remains `d27fe84f`.
+
+At 20:46:33 UTC I stopped only our older launch agent, preserved its JSON and a
+separate end receipt, and started one new normal-priority, private launch agent:
+`com.nicos.session-pressure.acceptance-20261108T204633Z`. It runs immutable
+`acceptance/2026-11-08/pressure-observer-1c12a204`, not the mutable managed helper
+link. Its output is `observation-0535927f-20261108T204633Z.json`; the private
+launch receipt is `observation-launch-2046.json`. No product or app was replaced,
+and no old failure record or elapsed window was reset. The current managed
+product remains 0535927f. App and CLI source identities are recorded separately
+from the observer's source identity.
+
+The runtime owner is now waiting for `72754fd6`'s approved native build-route
+repair before one coherent product/factory promotion. The pending source covers
+`sessionpressure/remote_profile.go`, `remote_work.go`, `remote_work_eligibility.go`
+and their tests. Ready 92 artifacts are retained as test evidence. After the
+final coherent promotion and fresh normal monitor samples, use the immutable
+helper above with a unique output and label. Preserve this 053 observation,
+which will report a revision-change failure if the runtime changes beneath it.
+Do not combine its elapsed portion with the final release's acceptance window.
+
+
+The new helper's first live 100-sample warm reads all pass with zero read errors:
+status p95 53.473 ms/250, board 50.608 ms/500, rich 174.295 ms/1,000.
+Its first resident check passes with PID 90605 and no restarts. The native app
+sample is valid, PID 56895, RSS 58.3125 MiB, zero sampling failures. These are
+fresh short-window results, not a causal speedup claim or a 30-minute/24/72-hour
+verdict. Its actual deadline is 2026-11-11T20:46:33.241831Z, conditional on no
+interruption. The forthcoming runtime upgrade requires a new generation.
+
+The final compact audit at 20:47:37 UTC (`audit-2047.json`) still returns fail,
+correctly preserving the writer performance gate. Policy, resident, readings,
+cleanup and artifacts pass. Scheduler warns about insufficient recent cohorts,
+partial pressure-conditioned evidence and historical slowdown/long waits/expiry.
+Telemetry retains 116 two-hour prior-controller gaps and historical restart
+churn, while the verified activation-hour authority is clean across 771 attempts
+and the current resident has one start and zero stops. Performance reports CLI
+writer p95 100,000 us against the 25,000 us target and standalone writer p95
+130,572 us against the 100,000 us ceiling. WORK-41 remains open for this evidence;
+do not turn these failures green by removing history or weakening the limits.
+
+
+### Writer latency window verification (20:52 UTC)
+
+Read-only aggregation of the native product writer health shards confirms that
+the audit uses a two-hour request rounded down to whole UTC hour buckets, not an
+exact release cohort. At 20:52 this includes 18:00, 19:00 and 20:00. Standalone
+writer p95 is 169,003 us in hour 18, 64,451 us in hour 19 and 52,400 us in hour
+20 (1,214 successful writes, zero failures in the last reported hour). Thus the
+current hour is below the 100,000 us failure ceiling but still above the
+25,000 us target. This does not establish causality or make the two-hour failure
+false. It also cannot prove an exact post-install percentile because the
+bounded authority stores hour buckets, not revision-tagged individual timings.
+The private receipt is `writer-hour-cohorts-2052.json`. The next accepted runtime
+needs its own natural load observations; preserve the existing failure and all
+historical write gaps. No limit was raised and no telemetry was removed.
