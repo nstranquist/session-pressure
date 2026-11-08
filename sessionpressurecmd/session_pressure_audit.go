@@ -469,6 +469,7 @@ func auditPressureQueue(ctx context.Context, runtime pressureRuntime, since, now
 	overcommit, leaseWeight, capacityOK := pressureWorkCapacityInvariant(status)
 	metrics["overcommit_weight"] = overcommit
 	metrics["lease_weight"] = leaseWeight
+	metrics["parked_weight"] = status.ParkedWeight
 	if !capacityOK {
 		findings = append(findings, pressureFinding(pressureAuditFail, "capacity_invariant_failed", fmt.Sprintf("used=%d lease_weight=%d capacity=%d available=%d overcommit=%d", status.Used, leaseWeight, status.Capacity, status.Available, overcommit)))
 	}
@@ -689,15 +690,24 @@ func auditPressureSlowdown(requested, recent sessionpressure.WorkStats) pressure
 }
 
 func pressureWorkCapacityInvariant(status sessionpressure.WorkStatus) (overcommit, leaseWeight int, ok bool) {
-	expressWeight := 0
+	expressWeight, parkedWeight := 0, 0
+	validWeights := true
 	for _, lease := range status.Leases {
+		validWeights = validWeights && lease.Weight > 0
+		if lease.Parked {
+			parkedWeight += lease.Weight
+			continue
+		}
 		leaseWeight += lease.Weight
 		if sessionpressure.IsExpressClass(lease.Class) {
 			expressWeight += lease.Weight
 		}
 	}
 	overcommit = max(0, status.Used-status.Capacity)
-	ok = status.Capacity > 0 && status.Used >= 0 && leaseWeight == status.Used &&
+	// Parked leases retain their original weight for attribution but charge
+	// zero capacity. Check both totals so parking cannot hide a bad ledger.
+	ok = validWeights && status.Capacity > 0 && status.Used >= 0 && leaseWeight == status.Used &&
+		parkedWeight == status.ParkedWeight && status.ParkedWeight >= 0 &&
 		status.Available == max(0, status.Capacity-status.Used)
 	if !ok || overcommit == 0 {
 		return overcommit, leaseWeight, ok
