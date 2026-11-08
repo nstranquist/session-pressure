@@ -129,3 +129,19 @@ func TestRetentionOnlyRemovesOwnedExpiredStreams(t *testing.T) {
 		t.Fatal("foreign stream removed")
 	}
 }
+
+func TestFactoryCommandModesAreNotPaths(t *testing.T) {
+	for _, value := range []string{"/perfect-world-review", "/pw-quick"} {
+		if got := ValidateEventPrivacy(Event{Attrs: map[string]any{"pw_mode": value}}); len(got) != 0 {
+			t.Fatal(got)
+		}
+	}
+	for _, value := range []string{"/Users/person/private", "/perfect-world-review/private"} {
+		if got := ValidateEventPrivacy(Event{Attrs: map[string]any{"pw_mode": value}}); len(got) == 0 {
+			t.Fatal("accepted path")
+		}
+	}
+	if got := ValidateEventPrivacy(Event{Attrs: map[string]any{"other": "/perfect-world-review"}}); len(got) == 0 {
+		t.Fatal("exception escaped exact field")
+	}
+}

@@ -1,7 +1,7 @@
 package telemetry
 
 // The factory owns its SQLite counters. Read them through the platform's
-// read-only sqlite client so the small resident does not load a database engine.
+// query-only sqlite client so the small resident does not load a database engine.
 import (
 	"bytes"
 	"context"
@@ -33,6 +33,7 @@ type factorySnapshot struct {
 	at        time.Time
 	started   time.Time
 	known     bool
+	reason    string
 	buckets   []factoryHour
 }
 
@@ -80,7 +81,7 @@ func validFactoryHour(row factoryHour) bool {
 }
 
 func loadFactorySnapshot(dir string) factorySnapshot {
-	s := factorySnapshot{directory: dir, at: time.Now()}
+	s := factorySnapshot{directory: dir, at: time.Now(), reason: "authority_invalid"}
 	var authority struct {
 		Schema  int    `json:"schema_version"`
 		Started string `json:"started_at"`
@@ -142,7 +143,10 @@ func loadFactorySnapshot(dir string) factorySnapshot {
 				cols = append(cols, fmt.Sprintf("latency_%d", i))
 			}
 			query := "SELECT " + strings.Join(cols, ",") + " FROM writer_hourly WHERE synthetic = 0 AND hour >= '" + time.Now().UTC().Add(-35*24*time.Hour).Truncate(time.Hour).Format(time.RFC3339) + "' ORDER BY hour LIMIT 901;"
-			cmd := exec.CommandContext(ctx, "/usr/bin/sqlite3", "-readonly", "-json", p, query)
+			// Query-only prevents data changes while allowing SQLite to create its
+			// WAL coordination files after the last writer has closed. A read-only
+			// open cannot initialize absent -shm/-wal files on the macOS client.
+			cmd := exec.CommandContext(ctx, "/usr/bin/sqlite3", "-bail", "-cmd", ".timeout 100", "-cmd", "PRAGMA query_only=ON;", "-json", p, query)
 			output := &boundedOutput{limit: 2 << 20}
 			cmd.Stdout = output
 			cmd.Stderr = &boundedOutput{limit: 4096}
@@ -196,11 +200,13 @@ func loadFactorySnapshot(dir string) factorySnapshot {
 	for range sqlitePaths {
 		r := <-results
 		if r.err != nil {
+			s.reason = "sqlite_read_failed"
 			return s
 		}
 		s.buckets = append(s.buckets, r.rows...)
 	}
 	s.known = true
+	s.reason = ""
 	return s
 }
 
@@ -225,6 +231,10 @@ func ReadCLIWriterHealthSince(since time.Time) CLIWriterHealthReport {
 	s := factoryCache.snapshot
 	factoryCache.Unlock()
 	r := CLIWriterHealthReport{Known: s.known && !s.started.After(since.UTC().Truncate(time.Hour)) && !since.Before(s.at.Add(-35*24*time.Hour)), Source: "factory-sqlite-wal-v4+sidecar-v3", CoverageSince: since.UTC().Truncate(time.Hour), ObservedAt: s.at, FailureClasses: map[string]int64{}, LatencyScope: "authority_register_through_primary_append; histogram upper bound"}
+	r.UnknownReason = s.reason
+	if s.known && !r.Known {
+		r.UnknownReason = "window_outside_retained_coverage"
+	}
 	histogram := make([]int64, 12)
 	for _, row := range s.buckets {
 		at, _ := time.Parse(time.RFC3339, row.Hour)

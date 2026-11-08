@@ -44,6 +44,7 @@ type PrivacyViolation struct {
 type CLIWriterHealthReport struct {
 	ObservedAt     time.Time        `json:"observed_at"`
 	Known          bool             `json:"known"`
+	UnknownReason  string           `json:"unknown_reason,omitempty"`
 	Source         string           `json:"source"`
 	CoverageSince  time.Time        `json:"coverage_since"`
 	Attempted      int64            `json:"attempted"`
@@ -85,6 +86,17 @@ func DefaultSourceTelemetryPathAt(source string, at time.Time) string {
 var safeLabel = regexp.MustCompile(`^[a-zA-Z0-9_.:-]+(?: [a-zA-Z0-9_.:-]+)*$`)
 var unsafeValue = regexp.MustCompile(`(?i)(/Users/|/home/|/private/|/var/folders/|https?://|bearer |sk-[a-z0-9]|password|api[_-]?key|auth[_-]?token|session[_-]?token|raw prompt|transcript|clipboard|stdout|stderr)`)
 
+func safeFactoryMode(value string) bool {
+	switch value {
+	case "/perfect-world", "/perfect-world-challenge", "/perfect-world-compete",
+		"/perfect-world-dryrun", "/perfect-world-gaps", "/perfect-world-ideas",
+		"/perfect-world-implement", "/perfect-world-introspect", "/perfect-world-offboard",
+		"/perfect-world-research", "/perfect-world-review", "/perfect-world-specs", "/pw-quick":
+		return true
+	}
+	return false
+}
+
 func ValidateEventPrivacy(e Event) []PrivacyViolation {
 	var out []PrivacyViolation
 	for path, v := range map[string]string{"event": e.Event, "source": e.Source, "command": e.Command, "surface": e.Surface} {
@@ -100,6 +112,10 @@ func ValidateEventPrivacy(e Event) []PrivacyViolation {
 		}
 		switch value := v.(type) {
 		case string:
+			// The factory emits these closed command modes, not filesystem paths.
+			if path == "attrs.pw_mode" && safeFactoryMode(value) {
+				return
+			}
 			if len(value) > 300 || strings.ContainsAny(value, "\n\r\\") || unsafeValue.MatchString(value) || strings.HasPrefix(value, "/") || strings.HasPrefix(value, "~/") {
 				out = append(out, PrivacyViolation{path, "unsafe_payload"})
 			}
