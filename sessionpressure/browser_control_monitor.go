@@ -23,7 +23,11 @@ func recoverySampleDelay(ctx context.Context, dir string, policy Policy, normal 
 			normal = 15 * time.Second
 		}
 	}
-	status, err := NewWorkCoordinator(dir, policy.WorkLimits).Status(ctx)
+	// This only selects a sampling deadline. It must not reconcile ownership,
+	// contend with admission mutations, or write the ledger on every wakeup.
+	// A stale hold can only request an extra sample; admission still validates
+	// the live state at its own authority boundary.
+	status, err := NewWorkCoordinator(dir, policy.WorkLimits).StatusSnapshot(ctx)
 	if err == nil && (status.AdmissionHoldCount > 0 || (status.AdmissionLatch != nil && status.AdmissionLatch.Latched)) {
 		return 5 * time.Second
 	}
