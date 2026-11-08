@@ -92,8 +92,10 @@ Policy lives at `$SESSION_PRESSURE_HOME/policy.json`. `policy init` writes obser
 ### Process incidents and bounded scans
 
 The resident records sustained CPU incidents from its existing process inventory.
-An orphaned process must be at least 10 minutes old and use 60% of one core
-for two minutes. Other processes require 30 minutes of age and five hot minutes.
+A known command whose parent is PID 1, or work below an init-owned shell,
+must be at least 10 minutes old and use 60% of one core for two minutes.
+PID 1 is normal for many GUI apps and services; it does not prove an orphan.
+Other processes require 30 minutes of age and five hot minutes.
 An alert opens **Process Incidents** in the native app. Inspect its evidence,
 then use **Stop** or the separate **Force Stop** action. Detection never stops
 a process automatically. Each action checks ownership and kernel start identity
