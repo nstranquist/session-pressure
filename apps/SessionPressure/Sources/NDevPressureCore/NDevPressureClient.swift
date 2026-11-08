@@ -156,6 +156,16 @@ public struct NDevPressureClient: Sendable {
 
     // MARK: - Reads
 
+    public func processIncidents() async throws -> ProcessIncidentEnvelope {
+        try await runJSON(ProcessIncidentEnvelope.self, arguments: ["--json", "session", "pressure", "processes", "list"])
+    }
+
+    public func stopProcessIncident(id: String, force: Bool = false) async throws -> ProcessIncidentStopEnvelope {
+        var args = ["--json", "session", "pressure", "processes", "stop", "--id", id, "--confirm"]
+        if force { args.append("--force") }
+        return try await runJSON(ProcessIncidentStopEnvelope.self, arguments: args)
+    }
+
     public func status(live: Bool = false, full: Bool = false) async throws -> StatusEnvelope {
         var query: [String: String] = [:]
         if live { query["live"] = "true" }

@@ -1,0 +1,23 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Session Pressure · Process Incidents</title><style>body{max-width:850px;margin:50px auto;padding:0 24px;background:#10151e;color:#e5eaf1;font:17px/1.6 system-ui}h1,h2{line-height:1.2}h2{margin-top:36px}code,pre{background:#202b3b;border-radius:7px;padding:3px 7px}pre{padding:18px;overflow:auto}table{border-collapse:collapse;width:100%}td,th{padding:12px;text-align:left;border-bottom:1px solid #3a485c}a{color:#9ad8ff}.card{padding:18px;border:1px solid #435c7c;border-radius:14px}</style>
+<h1>Find runaway work. Keep the evidence.</h1>
+<p>Open <strong>NDev Pressure → Process Incidents</strong>. Select an incident to see the process, its parent, CPU use, memory, evidence times, session when known, and stop history. Alerts open this view.</p>
+<div class="card"><strong>November 8, 2026 incident</strong><p>A Python scan, PID 8523, ran for more than three hours and used about 76% of one CPU core. Its shell parent was orphaned. Nico approved Stop. SIGTERM was sent at 16:17:23 UTC. The scan was then absent. Its history is marked <em>operator record</em>: the new monitor did not observe this older incident.</p></div>
+<h2>How detection works</h2>
+<table><tr><th>Process</th><th>Minimum age</th><th>Continuous CPU evidence</th></tr><tr><td>Parent PID 1, or shell parent with PID 1</td><td>10 minutes</td><td>At least 60% of one core for 2 minutes</td></tr><tr><td>Other work</td><td>30 minutes</td><td>At least 60% of one core for 5 minutes</td></tr></table>
+<p>The resident reuses its existing process inventory. It does not walk the filesystem or read command arguments. Repeated snapshots do not count twice. Missing CPU evidence, changed process identity, or a gap beyond two configured inventory intervals plus one sampling interval resets the evidence (with a minimum tolerance of three minutes). The normal inventory interval is three minutes; low-power profiles can use four minutes or more. Alert timing follows that cadence. Alerts are advisory; detection does not stop work automatically. Long legitimate jobs can also meet these thresholds.</p>
+<h2>Stop a process</h2>
+<ol><li>Select the incident. Check the executable, PID, parent, and evidence time.</li><li>Select <strong>Stop</strong>, then confirm. The service verifies the kernel birth identity and user, saves the request, and sends TERM to that one PID.</li><li>If the process stays alive, <strong>Force Stop</strong> becomes available. This is a separate confirmation that sends KILL. It can lose unsaved work.</li><li>Read the action history. A sent signal and a confirmed exit are separate results. A failed identity check sends no signal.</li></ol>
+<p>A notification link only opens the view. It cannot stop a process. Interactive Stop does not expand to a process tree. The history retains the latest 200 incidents in a private, bounded file. Crash recovery may resend an alert if delivery succeeded before its acknowledgement was saved.</p>
+<h2>Guard a new scan</h2>
+<p>Choose a narrow project directory. Add an explicit deadline:</p>
+<pre>session-pressure processes run --timeout 2m -- rg --files /path/to/project</pre>
+<p>The runner creates a private process group. At its deadline, or when interrupted, it stops that owned group and saves an incident. Exit status 124 means the deadline or cancellation path ran. The maximum deadline is one hour. This does not impose deadlines on arbitrary scans launched elsewhere.</p>
+<p>For expensive scans, use the admission gate too:</p>
+<pre>ndev session pressure work run --class heavy -- \
+  session-pressure processes run --timeout 2m -- rg --files /path/to/project</pre>
+<h2>CLI controls</h2>
+<pre>session-pressure --json processes list
+session-pressure --json processes stop --id INCIDENT_ID --confirm
+session-pressure --json processes stop --id INCIDENT_ID --force --confirm</pre>
+<p><code>processes record --receipt FILE</code> imports an operator-confirmed historical stop. The JSON receipt has <code>pid</code>, <code>ppid</code>, <code>executable</code> (basename), <code>at</code> (RFC3339), and <code>signal</code> (TERM or KILL). These closed records have no kernel identity and cannot authorize a stop.</p>
+</html>

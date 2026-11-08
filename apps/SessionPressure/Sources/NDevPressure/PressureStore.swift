@@ -8,6 +8,7 @@ final class PressureStore: ObservableObject {
     enum Section: String, CaseIterable, Identifiable {
         case overview = "Overview"
         case trees = "Agent Trees"
+        case processIncidents = "Process Incidents"
         case diskWrites = "Disk Writes"
         case storage = "Storage"
         case work = "Work Queue"
@@ -22,6 +23,7 @@ final class PressureStore: ObservableObject {
             switch self {
             case .overview: "gauge.with.dots.needle.67percent"
             case .trees: "tree"
+            case .processIncidents: "waveform.path.ecg"
             case .diskWrites: "internaldrive"
             case .storage: "externaldrive.badge.checkmark"
             case .work: "rectangle.stack"
@@ -38,6 +40,7 @@ final class PressureStore: ObservableObject {
             switch self {
             case .overview: "1"
             case .trees: "2"
+            case .processIncidents: "0"
             case .diskWrites: "3"
             case .storage: "4"
             case .work: "5"
@@ -52,7 +55,7 @@ final class PressureStore: ObservableObject {
 
         var freshnessKey: String {
             switch self {
-            case .overview, .trees, .storage: "status"
+            case .overview, .trees, .storage, .processIncidents: "status"
             case .diskWrites: "diskWrites"
             case .work: "work"
             case .policy: "policy"
@@ -292,6 +295,8 @@ final class PressureStore: ObservableObject {
             interfaceActive: interfaceAllowsFocusedRefresh
         )
     }
+
+    var processIncidentsRefreshAllowed: Bool { interfaceAllowsFocusedRefresh }
 
     private var interfaceAllowsFocusedRefresh: Bool {
         applicationActive && windowVisible
@@ -602,6 +607,10 @@ final class PressureStore: ObservableObject {
     }
 
     func handleDeepLink(_ url: URL) {
+        if url.scheme == "ndev-pressure", url.host == "process-incidents" {
+            selectedSection = .processIncidents
+            return
+        }
         guard url.scheme == "ndev-pressure", url.host == "disk-writes" else { return }
         selectedSection = .diskWrites
         guard url.path == "/trace",

@@ -173,6 +173,7 @@ type Monitor struct {
 	Now               func() time.Time
 	DiskObserver      *DiskWriteObserver
 	DiskNotifier      func(DiskWriteAlert) error
+	ProcessGuard      *ProcessGuard
 }
 
 type monitorStats struct {
@@ -403,7 +404,11 @@ func NewMonitor(sampler *Sampler, store *TelemetryStore, policy Policy) *Monitor
 	if store != nil {
 		policyPath = PolicyPath(store.Dir)
 	}
-	return &Monitor{Sampler: sampler, Store: store, Policy: policy, Signaler: osProcessSignaler{sampler: sampler, policyPath: policyPath}, Now: time.Now}
+	monitor := &Monitor{Sampler: sampler, Store: store, Policy: policy, Signaler: osProcessSignaler{sampler: sampler, policyPath: policyPath}, Now: time.Now}
+	if store != nil && sampler != nil && sampler.role == "resident" {
+		monitor.ProcessGuard = NewProcessGuard(store.Dir)
+	}
+	return monitor
 }
 
 func (monitor *Monitor) RunOnce(ctx context.Context, event string) (Snapshot, error) {
@@ -418,6 +423,7 @@ func (monitor *Monitor) RunOnce(ctx context.Context, event string) (Snapshot, er
 		snapshot.Storage = EvaluateStorage(snapshot.Storage, monitor.Policy.Storage, latest.Storage.Level)
 	}
 	monitor.attachDiskWrite(&snapshot)
+	monitor.observeProcessIncidents(ctx, snapshot)
 	snapshot.TelemetryBytesToday = monitor.Store.BytesForDay(snapshot.Timestamp)
 	snapshot = Evaluate(snapshot, monitor.Policy)
 	if event != "" {
@@ -542,6 +548,7 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 			snapshot.Storage = EvaluateStorage(snapshot.Storage, monitor.Policy.Storage, lastStorageLevel)
 			lastStorageLevel = snapshot.Storage.Level
 			monitor.attachDiskWrite(&snapshot)
+			monitor.observeProcessIncidents(ctx, snapshot)
 			recovered := lastSampleError != ""
 			lastSampleError = ""
 			annotateQuiescence(snapshot.TopAgentTrees, monitor.Policy, quiescentStreak)

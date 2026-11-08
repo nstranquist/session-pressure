@@ -19,6 +19,8 @@ func CommandLeaf(args []string) string {
 		return "help"
 	case "capabilities", "snapshot", "check", "doctor", "status", "self-test", "telemetry", "idle", "audit", "board":
 		return sub
+	case "processes":
+		return AllowedLeaf("processes", args[1:], "help", []string{"help", "list", "stop", "run", "record"})
 	case "api":
 		return AllowedLeaf("api", args[1:], "help", []string{"help", "serve", "status"})
 	case "recovery":

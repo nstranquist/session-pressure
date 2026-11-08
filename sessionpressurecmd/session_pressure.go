@@ -32,6 +32,7 @@ Subcommands:
   board [--live] [--full] [--include S]  One composite read; compact by default, --full for desktop diagnostics
   recovery [clear]                 Show or clear an unclean-shutdown session recovery hint
   telemetry [--limit N] [--since D]  Read bounded transition/heartbeat telemetry
+  processes list|stop|run|record          Runaway incidents, identity-checked stop, and bounded scans
   idle [flags]                     List old idle trees; exact --apply is graceful and audited
   cleanup <subcommand>             Pressure reclaim policy, plan, history, and resource claims
   artifact status|prune [--apply]  Verify installed helper provenance and safely retain rollbacks
@@ -155,6 +156,8 @@ func cmdSessionPressure(g *Flags, args []string) int {
 		return cmdSessionPressureRecovery(g, args)
 	case "telemetry":
 		return cmdSessionPressureTelemetry(g, args)
+	case "processes":
+		return cmdSessionPressureProcesses(g, args)
 	case "idle":
 		return cmdSessionPressureIdle(g, args)
 	case "cleanup":
