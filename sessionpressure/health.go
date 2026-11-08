@@ -181,9 +181,6 @@ func AssessGuardHealth(now time.Time, policy Policy, persisted bool, launchd Lau
 	if !policy.EnforceAdmission {
 		health.DailyDriverReasons = append(health.DailyDriverReasons, "red-level launch admission is disabled")
 	}
-	if !policy.AutoShedCritical {
-		health.DailyDriverReasons = append(health.DailyDriverReasons, "automatic sustained-critical relief is disabled")
-	}
 	if hasLatest && !latest.GuardBaselineProven {
 		health.DailyDriverReasons = append(health.DailyDriverReasons, fmt.Sprintf("resident baseline is not proven; need %d normal samples from this pid", policy.SustainSamples))
 	}

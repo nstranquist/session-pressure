@@ -21,6 +21,7 @@ Protect the Mac from sustained host and storage pressure caused by concurrent wo
 Monitoring is observe-only until policy enable is run explicitly.
 
 Subcommands:
+  capabilities                     Show executing product identity and supported operations
   snapshot                         Sample host/process-tree pressure without writing telemetry
   check                            Evaluate whether a canonical agent launch is admitted
   doctor                           Compact agent/operator health (monitor, policy, queue, soft-launch)
@@ -128,6 +129,11 @@ func cmdSessionPressure(g *Flags, args []string) int {
 		args = args[1:]
 	}
 	switch sub {
+	case "capabilities":
+		if len(args) != 0 {
+			return sessionPressureError("capabilities takes no arguments", 2)
+		}
+		return emitPressure(g, map[string]any{"ok": true, "action": "capabilities", "capabilities": sessionpressure.CurrentCapabilities()}, "Session Pressure "+sessionpressure.Version+"\n", 0)
 	case "help", "--help", "-h":
 		fmt.Print(sessionPressureHelp)
 		return 0

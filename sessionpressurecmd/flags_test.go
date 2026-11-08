@@ -1,10 +1,30 @@
 package sessionpressurecmd
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestCapabilitiesRequiresNoPolicyOrMonitor(t *testing.T) {
+	t.Setenv("NDEV_SESSION_PRESSURE_DIR", t.TempDir())
+	rc, stdout, stderr := captureMainOutput(t, func() int { return Main(true, []string{"capabilities"}) })
+	var result struct {
+		OK           bool `json:"ok"`
+		Capabilities struct {
+			Version    string `json:"version"`
+			Executable string `json:"executable"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil || rc != 0 || !result.OK || result.Capabilities.Version == "" || result.Capabilities.Executable == "" {
+		t.Fatalf("capabilities rc=%d stdout=%s stderr=%s decode=%v", rc, stdout, stderr, err)
+	}
+	rc, _, _ = captureMainOutput(t, func() int { return Main(true, []string{"capabilities", "unexpected"}) })
+	if rc != 2 {
+		t.Fatalf("unexpected argument rc=%d", rc)
+	}
+}
 
 func TestParseArgsAcceptsDesktopProductCLIPairing(t *testing.T) {
 	// Desktop resolveBinary prefers ndev-pressure but still sends the ndev path:

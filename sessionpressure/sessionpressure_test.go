@@ -1538,6 +1538,10 @@ func TestAssessGuardHealthSeparatesHealthyMonitorFromDailyDriver(t *testing.T) {
 		t.Fatalf("unexpected warm-up headroom: %+v", health.BudgetHeadroom)
 	}
 	policy.EnforceAdmission = true
+	health = AssessGuardHealth(now, policy, true, launchd, latest, true)
+	if !health.DailyDriverReady || !health.OperatorReady || health.ProtectionMode != "admission-only" {
+		t.Fatalf("selected admission-only protection must be ready: %+v", health)
+	}
 	policy.AutoShedCritical = true
 	health = AssessGuardHealth(now, policy, true, launchd, latest, true)
 	if !health.MonitorHealthy || !health.DailyDriverReady || health.ProtectionMode != "full" {
