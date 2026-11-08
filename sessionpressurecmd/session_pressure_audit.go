@@ -1012,7 +1012,11 @@ func auditPressureCleanup(runtime pressureRuntime, latest sessionpressure.Snapsh
 	if hasLatest && latest.ResourceCleanupError != "" {
 		findings = append(findings, pressureFinding(pressureAuditFail, "cleanup_bridge_failing", latest.ResourceCleanupError))
 	}
-	findings = append(findings, auditCleanupBridgePerformance(policy.Enforce, latest, hasLatest)...)
+	// Manual-only operation does not owe an automatic cleanup sample. Existing
+	// samples still receive the same latency and RSS checks.
+	automatic := policy.Enforce && runtime.policy.AutoShedCritical
+	metrics["automatic_cleanup_authorized"] = automatic
+	findings = append(findings, auditCleanupBridgePerformance(automatic || (hasLatest && !latest.ResourceCleanupExecutedAt.IsZero()), latest, hasLatest)...)
 	return newPressureAuditCategory("cleanup", "claim safety, observation gate, action ledger, and rollout scope", metrics, findings...)
 }
 

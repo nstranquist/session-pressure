@@ -38,7 +38,7 @@ struct InstalledContractTests {
         let api = try #require(NDevPressureAPIClient(environment: ["NDEV_PRESSURE_API_SOCKET": socket]))
         let response = try await api.projection("/v1/pressure/capabilities", as: CapabilitiesEnvelope.self)
         #expect(response.capabilities.sourceRevision == identity.capabilities.sourceRevision)
-        let status = try await api.projection("/v1/pressure/status", as: StatusEnvelope.self)
+        let status = try await api.projection("/v1/pressure/status", query: ["live": "true"], as: StatusEnvelope.self)
         #expect(status.snapshot != nil || status.snapshotSummary != nil || status.latestMonitor != nil || status.latestMonitorSummary != nil)
     }
 }

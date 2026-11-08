@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/nstranquist/session-pressure/internal/filelock"
 )
 
 func TestWriterHealthAndPrivacy(t *testing.T) {
@@ -95,7 +98,7 @@ func TestWriterRefusesSymlinkAndCountsFailure(t *testing.T) {
 	target := filepath.Join(root, "private")
 	os.WriteFile(target, []byte("preserve"), 0600)
 	path := DefaultSourceTelemetryPathAt(ProductSourceID, time.Now())
-	path = path[:len(path)-6] + fmt.Sprintf("-s%02d.jsonl", os.Getpid()%64)
+	path = path[:len(path)-6] + fmt.Sprintf("-s%02d.jsonl", (uint64(os.Getpid())+writerSequence.Load())%64)
 	os.MkdirAll(filepath.Dir(path), 0700)
 	if err := os.Symlink(target, path); err != nil {
 		t.Fatal(err)
@@ -143,5 +146,28 @@ func TestFactoryCommandModesAreNotPaths(t *testing.T) {
 	}
 	if got := ValidateEventPrivacy(Event{Attrs: map[string]any{"other": "/perfect-world-review"}}); len(got) == 0 {
 		t.Fatal("exception escaped exact field")
+	}
+}
+
+func TestAuthorityTimeoutIsVisibleInsteadOfZeroLoss(t *testing.T) {
+	t.Setenv("SESSION_PRESSURE_TELEMETRY_DIR", t.TempDir())
+	t.Setenv("NDEV_PRESSURE_WRAPPER", "")
+	t.Setenv("NDEV_TELEMETRY", "1")
+	dir := filepath.Dir(DefaultSourceTelemetryPathAt(ProductSourceID, time.Now()))
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	shard := (uint64(os.Getpid()) + writerSequence.Load()) % 64
+	release, err := filelock.AcquireContext(context.Background(), filepath.Join(dir, fmt.Sprintf(".writer-health-s%02d.json", shard)), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if err := RecordCommand("status", time.Now(), 0); err == nil {
+		t.Fatal("held authority should fail")
+	}
+	h := ReadProductWriterHealthSince(time.Now().Add(-time.Hour))
+	if h.Known || h.UnknownReason != "authority_unavailable" || h.FailureClasses["authority_unavailable"] != 1 {
+		t.Fatalf("%+v", h)
 	}
 }

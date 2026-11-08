@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/nstranquist/session-pressure/internal/filelock"
@@ -156,6 +157,11 @@ func Disabled() bool {
 	}
 	return false
 }
+
+// Spread concurrent calls across the bounded shard set, including calls from
+// one process. PID-only sharding serializes every command behind three fsyncs.
+var writerSequence atomic.Uint64
+
 func RecordCommand(action string, started time.Time, exit int) error {
 	if Disabled() || os.Getenv("NDEV_PRESSURE_WRAPPER") == "1" || (strings.HasSuffix(os.Args[0], ".test") && os.Getenv("SESSION_PRESSURE_TELEMETRY_DIR") == "") {
 		return nil
@@ -190,12 +196,16 @@ func RecordCommand(action string, started time.Time, exit int) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0077 != 0 {
 		return fmt.Errorf("telemetry directory must be private")
 	}
-	shard := fmt.Sprintf("-s%02d", os.Getpid()%64)
+	shard := fmt.Sprintf("-s%02d", (uint64(os.Getpid())+writerSequence.Add(1)-1)%64)
 	path := strings.TrimSuffix(DefaultSourceTelemetryPathAt(ProductSourceID, now), ".jsonl") + shard + ".jsonl"
 	health := filepath.Join(dir, ".writer-health"+shard+".json")
+	begin := time.Now()
 	release, err := filelock.AcquireContext(context.Background(), health, 500*time.Millisecond)
 	if err != nil {
-		return err
+		// No attempt authority was acquired. Persist a bounded fault marker so
+		// readers report unknown coverage rather than a false zero-loss result.
+		faultErr := writeAuthorityFault(health, now)
+		return errors.Join(err, faultErr)
 	}
 	defer release()
 	state := writerState{SchemaVersion: 1, StartedAt: now}
@@ -227,7 +237,6 @@ func RecordCommand(action string, started time.Time, exit int) error {
 	}
 	b := &state.Buckets[index]
 	b.Attempted++
-	begin := time.Now()
 	if err = writeState(health, state); err != nil {
 		return err
 	}
@@ -278,6 +287,32 @@ func RecordCommand(action string, started time.Time, exit int) error {
 	}
 	return nil
 }
+
+// A marker has a fixed name per shard, so repeated failures cannot grow files.
+// It remains visible for the retention window; later successful writes cannot
+// retroactively prove the missing denominator.
+func writeAuthorityFault(health string, at time.Time) error {
+	raw, _ := json.Marshal(struct {
+		At time.Time `json:"at"`
+	}{at})
+	f, err := os.CreateTemp(filepath.Dir(health), ".fault-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err = f.Write(raw); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return os.Rename(f.Name(), strings.TrimSuffix(health, ".json")+".fault")
+}
+
 func writeState(path string, state writerState) error {
 	raw, err := json.Marshal(state)
 	if err != nil {
@@ -303,8 +338,23 @@ func writeState(path string, state writerState) error {
 func ReadProductWriterHealthSince(since time.Time) CLIWriterHealthReport {
 	// The source field states the exact authority. Absence or corruption is
 	// unknown, never a zero-failure claim about the factory writer.
-	result := CLIWriterHealthReport{ObservedAt: time.Now().UTC(), Source: ProductSourceID + "-writer-v1", CoverageSince: since.UTC().Truncate(time.Hour), LatencyScope: "authority_register_through_primary_append; last 256 observations per hour", FailureClasses: map[string]int64{}}
+	result := CLIWriterHealthReport{ObservedAt: time.Now().UTC(), Source: ProductSourceID + "-writer-v1", CoverageSince: since.UTC().Truncate(time.Hour), LatencyScope: "lock_queue_through_primary_append; last 256 observations per hour", FailureClasses: map[string]int64{}}
 	paths, err := filepath.Glob(filepath.Join(filepath.Dir(DefaultSourceTelemetryPathAt(ProductSourceID, time.Now())), ".writer-health-s*.json"))
+	faults, faultErr := filepath.Glob(filepath.Join(filepath.Dir(DefaultSourceTelemetryPathAt(ProductSourceID, time.Now())), ".writer-health-s*.fault"))
+	authorityFault := faultErr != nil
+	for _, path := range faults {
+		raw, e := readBounded(path, 1024)
+		var fault struct {
+			At time.Time `json:"at"`
+		}
+		if e != nil || json.Unmarshal(raw, &fault) != nil || fault.At.IsZero() || !fault.At.Before(since.UTC().Truncate(time.Hour)) {
+			authorityFault = true
+			result.FailureClasses["authority_unavailable"]++
+		}
+	}
+	if authorityFault {
+		result.UnknownReason = "authority_unavailable"
+	}
 	if err != nil || len(paths) == 0 {
 		return result
 	}
@@ -336,6 +386,9 @@ func ReadProductWriterHealthSince(since time.Time) CLIWriterHealthReport {
 			result.Failed += b.Failed
 			latency = append(latency, b.LatencyUS...)
 		}
+	}
+	if authorityFault {
+		result.Known = false
 	}
 	result.Gaps = result.Attempted - result.Written - result.Failed
 	if result.Failed > 0 {

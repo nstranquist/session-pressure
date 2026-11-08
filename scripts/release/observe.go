@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// observe keeps bounded, resumable evidence. Elapsed gates are never inferred
+// observe keeps bounded evidence for one continuous run. Elapsed gates are never inferred
 // from a short sample. Run under launchd to survive an agent session ending.
 type readGate struct {
 	Samples  int     `json:"samples"`
@@ -26,22 +26,24 @@ type readGate struct {
 	Passed   bool    `json:"passed"`
 }
 type observation struct {
-	Started            time.Time           `json:"started"`
-	Updated            time.Time           `json:"updated"`
-	Deadline           time.Time           `json:"deadline"`
-	Binary             string              `json:"binary"`
-	Identity           json.RawMessage     `json:"identity,omitempty"`
-	Reads              map[string]readGate `json:"reads"`
-	Checks             int                 `json:"checks"`
-	Failures           int                 `json:"failures"`
-	LastFailure        string              `json:"last_failure,omitempty"`
-	Observed24H        bool                `json:"observed_24h"`
-	Observed72H        bool                `json:"observed_72h"`
-	AppPID             int                 `json:"app_pid"`
-	AppObservedSeconds float64             `json:"app_observed_seconds"`
-	AppCPUPercent      float64             `json:"app_cpu_percent"`
-	AppPeakRSSMiB      float64             `json:"app_peak_rss_mib"`
-	AppBudgetPassed    bool                `json:"app_30m_budget_passed"`
+	Started             time.Time           `json:"started"`
+	Updated             time.Time           `json:"updated"`
+	Deadline            time.Time           `json:"deadline"`
+	Binary              string              `json:"binary"`
+	Identity            json.RawMessage     `json:"identity,omitempty"`
+	Reads               map[string]readGate `json:"reads"`
+	Checks              int                 `json:"checks"`
+	Failures            int                 `json:"failures"`
+	LastFailure         string              `json:"last_failure,omitempty"`
+	MaxSampleGapSeconds float64             `json:"max_sample_gap_seconds"`
+	ContinuityPassed    bool                `json:"continuity_passed"`
+	Observed24H         bool                `json:"observed_24h"`
+	Observed72H         bool                `json:"observed_72h"`
+	AppPID              int                 `json:"app_pid"`
+	AppObservedSeconds  float64             `json:"app_observed_seconds"`
+	AppCPUPercent       float64             `json:"app_cpu_percent"`
+	AppPeakRSSMiB       float64             `json:"app_peak_rss_mib"`
+	AppBudgetPassed     bool                `json:"app_30m_budget_passed"`
 }
 
 func readCLI(binary string, args ...string) ([]byte, error) {
@@ -133,10 +135,20 @@ func observe(args []string) error {
 			return e
 		}
 	}
+	lastSample := time.Now().UTC()
+	s.ContinuityPassed = true
 	var appStart time.Time
 	var cpuStart float64
 	for {
 		now := time.Now().UTC()
+		gap := now.Sub(lastSample)
+		if gap.Seconds() > s.MaxSampleGapSeconds {
+			s.MaxSampleGapSeconds = gap.Seconds()
+		}
+		if gap > 2*(*interval)+30*time.Second {
+			s.ContinuityPassed = false
+		}
+		lastSample = now
 		s.Updated = now
 		current, err := readCLI(*binary, "capabilities")
 		if err == nil {
@@ -174,15 +186,15 @@ func observe(args []string) error {
 			if s.AppObservedSeconds > 0 {
 				s.AppCPUPercent = 100 * (cpu - cpuStart) / s.AppObservedSeconds
 			}
-			s.AppBudgetPassed = s.AppObservedSeconds >= 1800 && s.AppCPUPercent <= 1 && s.AppPeakRSSMiB <= 128
+			s.AppBudgetPassed = s.ContinuityPassed && s.AppObservedSeconds >= 1800 && s.AppCPUPercent <= 1 && s.AppPeakRSSMiB <= 128
 		} else {
 			s.AppPID = 0
 			s.AppObservedSeconds = 0
 			s.AppBudgetPassed = false
 		}
 		elapsed := now.Sub(started)
-		s.Observed24H = elapsed >= 24*time.Hour
-		s.Observed72H = elapsed >= 72*time.Hour
+		s.Observed24H = elapsed >= 24*time.Hour && s.ContinuityPassed
+		s.Observed72H = elapsed >= 72*time.Hour && s.ContinuityPassed
 		if e = writeJSON(*out, s); e != nil {
 			return e
 		}

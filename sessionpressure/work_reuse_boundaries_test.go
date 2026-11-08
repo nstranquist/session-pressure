@@ -24,6 +24,13 @@ func TestGoReuseSingleflightAndExplicitExecution(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Compile before racing execution: cold toolchain work is outside the
+	// singleflight wait budget and must not turn this into a compiler speed test.
+	warm := exec.Command("go", "test", "-c", "-o", filepath.Join(t.TempDir(), "fixture.test"), ".")
+	warm.Dir = root
+	if output, err := warm.CombinedOutput(); err != nil {
+		t.Fatalf("compile fixture: %v: %s", err, output)
+	}
 	c := NewWorkCoordinator(t.TempDir(), testWorkLimits())
 	run := func(noReuse, profile bool) error {
 		argv := []string{"go", "-C", root, "test", "-count=1", "."}

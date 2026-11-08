@@ -156,6 +156,10 @@ public struct NDevPressureAPIClient: Sendable {
 }
 
 private struct APIEnvelope<T: Decodable>: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case apiVersion = "api_version"
+        case data, error
+    }
     let apiVersion: String
     let data: T?
     let error: APIError?
