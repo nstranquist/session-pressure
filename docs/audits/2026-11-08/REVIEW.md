@@ -5,6 +5,40 @@ The [implementation ledger](IMPLEMENTATION.md) retains the full evidence history
 This report states the review findings and the remaining acceptance conditions.
 Private receipts are under `~/.nicos-dev/session-pressure/acceptance/2026-11-08/`.
 
+## Current installed review (22:21 UTC)
+
+App 1.4.2 build 10 is installed through the full-bundle compare-and-swap installer.
+Its authority is `0b92fbfd67424e0b9651bf81a6b5fc8aa843c09f2a90e0a925052591d18b086a`;
+strict signature verification passes. All twelve panes were reviewed live. The
+Hetzner pane loaded 95 runs and 695 jobs; the divergence filter, recorded agreement,
+expanded details and actual captured test log worked. No cleanup or policy
+mutation was performed during this review. The installed CLI and Unix API contract
+test passes. `review-installed-ui-2217.json` and
+`review-c8-installed-swift-contract-2214.log` retain the evidence. Idle RSS fell
+naturally below 128 MiB after active use; a new 30-minute verdict is still required.
+
+Native CLI/helper `c8afd904` and artifact checks pass with no drift or warnings.
+The current resident has 39 normal samples, 16.813 MiB RSS, 0.269% normal CPU duty,
+17.139 ms sample CPU p95 and projected telemetry 528,384 bytes/day. A real installed
+unchanged-ledger request returns 781 bytes in 34.094 ms, with configuration retained
+and no rows decoded. This is one cursor diagnostic, not a latency percentile.
+
+The later `921c267` telemetry correction passed its exact-source targeted race
+suite (canonical job `20261108T220457Z-1906275`, exit 0, 16 seconds).
+`review-outcomes-race-receipt-2214.json` binds all six committed paths, source and
+log hashes. The promoter's final `d56f7cf3` native build includes that correction
+and the canonical remote Git/cache/umask fix; it is still pending installation.
+The old observer is stopped with its complete evidence preserved. Start a new
+immutable observer only after the final installed product/factory pair agrees.
+
+The fresh no-live audit exits 0 with warnings. Current controller authority is
+clean across 177 attempts. The historical missing write is retained. Factory and
+product writer p95 remain above the 25 ms target (50/75.503 ms), though below the
+100 ms failure ceiling. Strict telemetry coverage passes. Worker 2.34.0 is now
+healthy; one parent recovery was queued after activation. Delivery landing,
+writer performance, scheduler evidence, administrator trace and elapsed acceptance
+remain open. The dated historical sections below retain their original evidence.
+
 ## Findings and corrections
 
 | Finding | Correction | Evidence and limit |
@@ -98,7 +132,7 @@ separate follow-up and must not be described as part of the sealed c8 build.
 
 ## Acceptance still required
 
-Source and candidate verification at 21:51 UTC:
+Historical source and candidate verification at 21:51 UTC (installation superseded by the current checkpoint above):
 
 - `b36ac47`: observer race tests pass (1.143 seconds).
 - `a20e450a`: final API snapshot matches all nine committed owned paths.
@@ -126,7 +160,7 @@ two accepted, one held and one paused. No queued work is described as installed.
 
 | Owner | Required result | Completion proof |
 | --- | --- | --- |
-| WORK-41 | Final bounded API and app verification, guarded publication and installation | Full exact-source Go race suite, real captured CLI contract, all Swift tests, signed release, app full-bundle compare-and-swap, installed endpoint and UI checks. |
+| WORK-41 | Completed API/app review and app installation; finish final CLI follow-through | Full Go race and 75 Swift tests pass; app 1.4.2 installation, strict signature, installed endpoint and twelve-pane review pass. Verify the final d56 native cohort and installed outcome events after promotion. |
 | Runtime/factory promoter | Activate the reviewed native CGO profile and fail-closed wrapper routing, then include the new read API | Clean committed source, pinned Darwin toolchain, matching installed CLI/factory receipts and live artifact identity. Portable fixture binaries are not release candidates. |
 | Delivery owner | Finish the paused builder parent, held child and two accepted factory deliveries | Exact delivery IDs are landed, installed source agrees, owned doctor is clean and the service remains healthy. Do not stop a busy worker. |
 | Factory telemetry owner | Diagnose the persistent missing receipt and writer latency | Preserve historical gaps; prove newly completed writes and fresh bounded latency windows. Missing history cannot be repaired by resetting evidence. |
