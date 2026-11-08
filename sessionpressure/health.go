@@ -2,6 +2,7 @@ package sessionpressure
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -172,6 +173,12 @@ func AssessGuardHealth(now time.Time, policy Policy, persisted bool, launchd Lau
 		// for the next helper install to stop a false-red daily-driver.
 		if !effectiveBudget.GuardBudgetOK {
 			health.HealthReasons = append(health.HealthReasons, "resident guard resource budget is failing under the effective policy")
+		}
+		if latest.DiskWrite != nil && len(latest.DiskWrite.MaintenanceErrors) > 0 {
+			health.HealthReasons = append(health.HealthReasons, "disk-write maintenance failed: "+strings.Join(latest.DiskWrite.MaintenanceErrors, ", "))
+		}
+		if latest.MaintenanceError != "" {
+			health.HealthReasons = append(health.HealthReasons, "retention maintenance failed: "+latest.MaintenanceError)
 		}
 		if latest.ResourceCleanupError != "" {
 			health.HealthReasons = append(health.HealthReasons, "typed resource cleanup is failing: "+latest.ResourceCleanupError)

@@ -11,7 +11,7 @@ import (
 
 func TestDefaultCatalogRecognizesCoreAgents(t *testing.T) {
 	catalog := CompileAgentIdentityCatalog(DefaultAgentIdentityRules())
-	for _, name := range []string{"codex", "claude", "grok", "kimi"} {
+	for _, name := range []string{"codex", "claude", "grok", "kimi", "muse"} {
 		agent, executable, ok := catalog.MatchExactBasename(name)
 		if !ok || agent != name || executable != name {
 			t.Fatalf("exact %q => %q %q %v", name, agent, executable, ok)
@@ -47,6 +47,9 @@ func TestCatalogMatchPathTrustedRootsOnly(t *testing.T) {
 		{"/Users/nico/.grok/bin/grok", "grok", true},
 		{"/Users/nico/.grok/bin/agent", "grok", true},
 		{"/Users/nico/.grok/downloads/not-grok-helper", "", false},
+		{"/Users/nico/.local/bin/muse-bin-1.4.14-R7309.1", "muse", true},
+		{"/Users/nico/.local/bin/muse-helper", "", false},
+		{"/tmp/muse-bin-1.4.14-R7309.1", "", false},
 		{"/tmp/grok/downloads/grok-0.2.118-macos-aarch64", "", false},
 		{"/Users/nico/.other/bin/grok", "", false},
 	}

@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
 
 func TestLiveTimeResidentSamplePhases(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("live macOS sampler timing; portable gate covers injected sampler contracts")
+	}
 	policy := DefaultPolicy(16 * 1024)
 	if loaded, persisted, err := LoadPolicy(PolicyPath(filepath.Join(os.Getenv("HOME"), ".nicos-dev", "session-pressure")), 16*1024); err == nil && persisted {
 		policy = loaded

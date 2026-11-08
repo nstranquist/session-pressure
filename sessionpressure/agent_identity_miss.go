@@ -228,7 +228,7 @@ func AssessAgentIdentityCoverage(catalog *AgentIdentityCatalog, home string, tre
 		Label:  "Agent process identity",
 		Scope:  "coding-agent trees",
 		State:  CoverageObserved,
-		Detail: "shipped identity catalog classifies codex/claude/grok/kimi via exact names, install roots, and path probes",
+		Detail: "shipped identity catalog classifies codex/claude/grok/kimi/muse via exact names, install roots, and path probes",
 	}
 	if catalog == nil {
 		catalog = CompileAgentIdentityCatalog(DefaultAgentIdentityRules())

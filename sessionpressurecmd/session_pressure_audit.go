@@ -748,7 +748,7 @@ func auditPressureTelemetry(runtime pressureRuntime, since, now time.Time, launc
 	currentResident := auditCurrentControllerResident(events, now, launchd)
 	pressureCommandCount := eventCounts["session.pressure.command"] + eventCounts["session_pressure.command"]
 	metrics := map[string]any{
-		"sessionpressure_jsonl": storeAudit, "cli_jsonl": cliAudit, "cli_writer": writer, "cli_writer_recent_2h": recentWriter,
+		"sessionpressure_jsonl": storeAudit, "cli_jsonl": cliAudit, "cli_writer": writer, "cli_writer_recent_2h": recentWriter, "product_writer": telemetry.ReadProductWriterHealthSince(since),
 		"cli_writer_current_controller": currentControllerWriter, "cli_writer_current_controller_since": currentControllerSince,
 		"cli_writer_current_controller_evidence": currentControllerEvidence,
 		"pressure_jsonl_scan_ms":                 float64(pressureScanDuration.Microseconds()) / 1000,
@@ -1140,6 +1140,8 @@ func pressureTelemetryPathInWindowAtLocation(path string, since, now time.Time, 
 func scanCLIOperationTelemetry(cachePath string, since, now time.Time) (pressureAuditJSONL, map[string]int, map[string]int, cliAuditCacheStats) {
 	dir := filepath.Dir(telemetry.DefaultSourceTelemetryPathAt(telemetry.CLIInvocationSourceID, now))
 	paths, _ := filepath.Glob(filepath.Join(dir, "events-*.jsonl"))
+	productPaths, _ := filepath.Glob(filepath.Join(filepath.Dir(telemetry.DefaultSourceTelemetryPathAt(telemetry.ProductSourceID, now)), "events-*.jsonl"))
+	paths = append(paths, productPaths...)
 	windowPaths := make([]string, 0, len(paths))
 	for _, path := range paths {
 		if cliTelemetryPathInWindow(path, since, now) {
@@ -1174,7 +1176,7 @@ func scanCLIAuditPaths(cachePath string, paths []string, since, now time.Time) (
 		go func() {
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
-			cacheKey := filepath.Base(path)
+			cacheKey := filepath.Base(filepath.Dir(path)) + "/" + filepath.Base(path)
 			cached, cachedOK := cache.Entries[cacheKey]
 			if cachedOK && cliAuditCacheEntryCurrent(path, cached, since, now) {
 				results <- cliScanResult{

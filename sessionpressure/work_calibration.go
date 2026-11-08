@@ -9,21 +9,24 @@ import (
 // WorkCalibrationReport is the privacy-safe agent/operator view of packing.
 // Counts and closed enums only — never argv, workdirs, or prompts.
 type WorkCalibrationReport struct {
-	SchemaVersion              int       `json:"schema_version"`
-	Since                      time.Time `json:"since"`
-	GeneratedAt                time.Time `json:"generated_at"`
-	OperationCount             int       `json:"operation_count"`
-	EventCount                 int       `json:"event_count"`
-	ExpressTestOps             int       `json:"express_test_operations"`
-	FullTestOps                int       `json:"full_test_operations"`
-	ExpressBuildOps            int       `json:"express_build_operations"`
-	FullBuildOps               int       `json:"full_build_operations"`
-	ExpressTestShare           float64   `json:"express_test_share"`
-	ExpressBuildShare          float64   `json:"express_build_share"`
-	ReuseHits                  int       `json:"reuse_hits"`
-	CacheHits                  int       `json:"cache_hits"`
-	CacheMisses                int       `json:"cache_misses"`
-	WrapperInterruptOperations int       `json:"wrapper_interrupt_operations"`
+	HostCohorts                map[string]int           `json:"host_cohorts"`
+	LegacyHostEvents           int                      `json:"legacy_host_events"`
+	CacheRefusals              []WorkCalibrationOutcome `json:"cache_refusals"`
+	SchemaVersion              int                      `json:"schema_version"`
+	Since                      time.Time                `json:"since"`
+	GeneratedAt                time.Time                `json:"generated_at"`
+	OperationCount             int                      `json:"operation_count"`
+	EventCount                 int                      `json:"event_count"`
+	ExpressTestOps             int                      `json:"express_test_operations"`
+	FullTestOps                int                      `json:"full_test_operations"`
+	ExpressBuildOps            int                      `json:"express_build_operations"`
+	FullBuildOps               int                      `json:"full_build_operations"`
+	ExpressTestShare           float64                  `json:"express_test_share"`
+	ExpressBuildShare          float64                  `json:"express_build_share"`
+	ReuseHits                  int                      `json:"reuse_hits"`
+	CacheHits                  int                      `json:"cache_hits"`
+	CacheMisses                int                      `json:"cache_misses"`
+	WrapperInterruptOperations int                      `json:"wrapper_interrupt_operations"`
 	// SuggestedPolicyProfile is advisory only (M2); never auto-applied.
 	SuggestedPolicyProfile       string `json:"suggested_policy_profile,omitempty"`
 	SuggestedPolicyProfileReason string `json:"suggested_policy_profile_reason,omitempty"`
@@ -83,9 +86,28 @@ func BuildWorkCalibrationReport(events []WorkEvent, since, generatedAt time.Time
 	report.ExpressTestShare = share(report.ExpressTestOps, report.ExpressTestOps+report.FullTestOps)
 	report.ExpressBuildShare = share(report.ExpressBuildOps, report.ExpressBuildOps+report.FullBuildOps)
 
+	report.HostCohorts = map[string]int{}
+	refusals := map[string]int{}
+	for _, event := range events {
+		if event.Timestamp.Before(since) || event.Timestamp.After(generatedAt) {
+			continue
+		}
+		if event.HostID == "" {
+			report.LegacyHostEvents++
+		} else {
+			report.HostCohorts[event.HostID+":"+event.HostOS+":"+event.HostArch+fmt.Sprintf(":%d", event.LogicalCPUs)]++
+		}
+		if event.ReuseRefusalReason != "" {
+			refusals[string(event.ReuseRefusalReason)]++
+		}
+	}
+	for reason, count := range refusals {
+		report.CacheRefusals = append(report.CacheRefusals, WorkCalibrationOutcome{Outcome: reason, Count: count})
+	}
+	sortCalibrationOutcomes(report.CacheRefusals)
 	outcomeCounts := map[string]int{}
 	for _, event := range events {
-		if event.Outcome == "" {
+		if event.Timestamp.Before(since) || event.Timestamp.After(generatedAt) || event.Outcome == "" {
 			continue
 		}
 		// Closed short outcomes only; drop anything that looks path-like.
@@ -114,6 +136,10 @@ func BuildWorkCalibrationReport(events []WorkEvent, since, generatedAt time.Time
 		report.ThresholdRetuneHint = "insufficient calibration volume; no host threshold retune"
 	} else {
 		report.ThresholdRetuneHint = "no host threshold retune; packing/express measurement only"
+	}
+
+	if len(report.HostCohorts) > 1 {
+		report.ThresholdRetuneHint = "mixed host cohorts; compare each host separately before changing reservations or thresholds"
 	}
 
 	// M2: sparse interrupt projection (counts only).

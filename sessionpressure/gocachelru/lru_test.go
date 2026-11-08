@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -211,5 +212,35 @@ func BenchmarkCachePut(b *testing.B) {
 		if r.Err != "" {
 			b.Fatal(r.Err)
 		}
+	}
+}
+
+func TestEvictionHeapTouchesStayBounded(t *testing.T) {
+	c := &Cache{index: map[string]indexEntry{}}
+	for i := 0; i < 10000; i++ {
+		c.applyRow(indexEntry{Key: fmt.Sprintf("%064x", i), Size: 1, Access: int64(i)})
+	}
+	for i := 0; i < 10000; i++ {
+		c.applyRow(indexEntry{Key: fmt.Sprintf("%064x", i%100), Size: 1, Access: int64(i + 10000)})
+	}
+	if c.eviction.Len() != 10000 || len(c.eviction.positions) != 10000 || c.total != 10000 {
+		t.Fatalf("heap grew on touches: %d/%d total %d", c.eviction.Len(), len(c.eviction.positions), c.total)
+	}
+	if c.eviction.rows[0].Access != 100 {
+		t.Fatalf("oldest touch not updated: %+v", c.eviction.rows[0])
+	}
+}
+func BenchmarkEvictionTouch(b *testing.B) {
+	for _, n := range []int{1000, 100000} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			c := &Cache{index: map[string]indexEntry{}}
+			for i := 0; i < n; i++ {
+				c.applyRow(indexEntry{Key: fmt.Sprintf("%064x", i), Size: 1, Access: int64(i)})
+			}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				c.applyRow(indexEntry{Key: fmt.Sprintf("%064x", i%n), Size: 1, Access: int64(n + i)})
+			}
+		})
 	}
 }
