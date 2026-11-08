@@ -181,5 +181,582 @@
     "root_scan_guidance_delivery": "fb281cc9-b7b2-4a93-b8ba-7092d9e8b4cd",
     "root_scan_guidance_state_at_capture": "accepted, not landed"
   },
-  "recorded_at": "2026-11-08T17:55:16.590786+00:00"
+  "recorded_at": "2026-11-08T17:55:16.590786+00:00",
+  "checkpoint": "Initial WORK-82 checkpoint retained; current review is in review_work87.",
+  "review_work87": {
+    "work": "WORK-87",
+    "recorded_at": "2026-11-08T19:09:40.832693+00:00",
+    "code_commits": [
+      "670d488f73ce39a9e8edbb6eeca6e2f3fc2bd92b",
+      "3d1e4edbf0c94477d72d9c1c32ac177c94310914",
+      "55021632ed0a95d3906a2197e8411285f625aac4"
+    ],
+    "native_install": {
+      "at": "2026-11-08T18:49:27.067807+00:00",
+      "app_source_revision": "3d1e4edbf0c94477d72d9c1c32ac177c94310914",
+      "installed_app_sha256": "697ad2f1129863f9537c3a331bd4d6fe811348f9ae6532922a71584721b74f83",
+      "verified_candidate_sha256": "697ad2f1129863f9537c3a331bd4d6fe811348f9ae6532922a71584721b74f83",
+      "source_verified": true,
+      "swift_tests": 61,
+      "swift_suites": 8,
+      "make_verify_install": "pass",
+      "native_ui": "real history, refresh, No signal, closed Stop disabled, neutral legacy label verified through CUA",
+      "matches_verified_candidate": true,
+      "status": "historical product app installation; superseded by combined factory app below"
+    },
+    "verification": [
+      {
+        "host": "gaterunner-1",
+        "checks": [
+          "full sessionpressure, sessionpressurecmd and sessionpressurecontrol tests",
+          "race checks",
+          "go vet",
+          "Darwin test compilation"
+        ],
+        "result": "pass"
+      },
+      {
+        "host": "Mac ARM64",
+        "checks": [
+          "Darwin missing-PID identity",
+          "normal GUI classification",
+          "late exit reconciliation",
+          "early exit descendant cleanup",
+          "supervisor death cleanup",
+          "deadline and cancellation",
+          "ordinary exit codes"
+        ],
+        "tests": 8,
+        "result": "pass",
+        "duration_seconds": 0.65
+      },
+      {
+        "host": "Mac ARM64",
+        "test": "TestProcessIncidentNativeReview",
+        "result": "pass",
+        "duration_seconds": 92.17,
+        "scope": "signed private app identity, private ledger, two owned sleeping children",
+        "observations": [
+          "Cancel leaves child alive and no action",
+          "stale birth rejects signal with durable NONE record",
+          "TERM confirms exit",
+          "separate Force Stop confirms KILL after TERM remains pending",
+          "Refresh retains selection and action history"
+        ]
+      }
+    ],
+    "initial_review_cli_install": {
+      "source_revision": "670d488f73ce39a9e8edbb6eeca6e2f3fc2bd92b",
+      "official_release": "Darwin ARM64 CGO native SMART",
+      "resident_install_verified": true,
+      "pid_at_install": 82962
+    },
+    "installed_deadline_dogfood": {
+      "exit_code": 124,
+      "elapsed_seconds": 0.33112362504471093,
+      "stdout": "",
+      "stderr": "",
+      "report": {
+        "ok": true,
+        "report": {
+          "schema_version": 1,
+          "updated_at": "2026-11-08T18:42:37.227233Z",
+          "incidents": [
+            {
+              "id": "3bc6c75633266f118ccb4370",
+              "pid": 83148,
+              "ppid": 0,
+              "start_identity": "darwin:1794163357:30952",
+              "executable": "sleep",
+              "uid": 501,
+              "cpu_percent": 0,
+              "rss_mb": 0,
+              "age_seconds": 0,
+              "reason": "guard_deadline",
+              "first_seen": "2026-11-08T18:42:37.030872Z",
+              "last_seen": "2026-11-08T18:42:37.18381Z",
+              "sustained_seconds": 0,
+              "state": "stopped",
+              "actions": [
+                {
+                  "at": "2026-11-08T18:42:37.18381Z",
+                  "signal": "KILL",
+                  "result": "exit_confirmed"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "current_health_checkpoint": {
+      "action": "doctor",
+      "auto_shed_critical": false,
+      "coverage_status": "attention",
+      "doctor": {
+        "schema_version": 1,
+        "ok": false,
+        "protection_mode": "admission-only",
+        "policy_persisted": true,
+        "enforce_admission": true,
+        "auto_shed_critical": false,
+        "monitor": {
+          "healthy": false,
+          "fresh": true,
+          "age_seconds": 2.423761,
+          "pid": 74540,
+          "loaded": true,
+          "running": true
+        },
+        "host": {
+          "level": "normal",
+          "source": "resident"
+        },
+        "work": {
+          "capacity": 8,
+          "used": 0,
+          "queue_depth": 0,
+          "express_green": false
+        },
+        "launch_soft_pressure": {
+          "would_block": false,
+          "noise_suppressed": false,
+          "enforced": true
+        },
+        "coverage_status": "attention",
+        "source_revisions": {
+          "cli": "cc23fb2d82aad4ab18f0a3bf77645894a58752c7",
+          "front_door": "8273bb1eb914066be49f4598abf73f3101857940",
+          "installed_helper": "cc23fb2d82aad4ab18f0a3bf77645894a58752c7",
+          "checked": true,
+          "mismatch": true,
+          "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+        },
+        "fixes": [
+          "session-pressure monitor install",
+          "make build",
+          "make -C /Users/nicostran/dev/nicos-tools/nicos-dev promote-session-pressure"
+        ],
+        "warnings": [
+          "resident guard resource budget is failing under the effective policy",
+          "resident is not daily-driver ready",
+          "session-pressure binaries disagree on source revision (cli=cc23fb2d82aa front_door=8273bb1eb914 helper=cc23fb2d82aa)"
+        ],
+        "health": {
+          "monitor_healthy": false,
+          "daily_driver_ready": false,
+          "operator_ready": false,
+          "protection_mode": "admission-only",
+          "latest_monitor_fresh": true,
+          "latest_monitor_age_seconds": 2.423761,
+          "latest_monitor_max_age_seconds": 255,
+          "resident_samples": 83,
+          "resident_normal_samples": 37,
+          "required_normal_samples": 4,
+          "budget_headroom": {
+            "rolling_sample_count": 64,
+            "rolling_window_size": 64,
+            "samples_until_single_outlier_excluded": 0,
+            "p95_excludes_single_maximum": true,
+            "rss_observed_mb": 14.28125,
+            "rss_limit_mb": 30,
+            "rss_margin_mb": 15.71875,
+            "idle_duty_observed_percent": 1.7507745779739483,
+            "idle_duty_limit_percent": 0.5,
+            "idle_duty_margin_percent": -1.2507745779739483,
+            "sample_cpu_p95_observed_ms": 13.037,
+            "sample_cpu_max_observed_ms": 22.807,
+            "sample_cpu_limit_ms": 150,
+            "sample_cpu_margin_ms": 136.963,
+            "telemetry_projected_bytes_per_day": 528384,
+            "telemetry_limit_bytes_per_day": 1048576,
+            "telemetry_margin_bytes_per_day": 520192
+          },
+          "health_reasons": [
+            "resident guard resource budget is failing under the effective policy"
+          ],
+          "daily_driver_reasons": [
+            "resident monitor is unhealthy"
+          ],
+          "operator_reasons": [
+            "resident is not daily-driver ready"
+          ]
+        }
+      },
+      "enforce_admission": true,
+      "fixes": [
+        "session-pressure monitor install",
+        "make build",
+        "make -C /Users/nicostran/dev/nicos-tools/nicos-dev promote-session-pressure"
+      ],
+      "health": {
+        "monitor_healthy": false,
+        "daily_driver_ready": false,
+        "operator_ready": false,
+        "protection_mode": "admission-only",
+        "latest_monitor_fresh": true,
+        "latest_monitor_age_seconds": 2.423761,
+        "latest_monitor_max_age_seconds": 255,
+        "resident_samples": 83,
+        "resident_normal_samples": 37,
+        "required_normal_samples": 4,
+        "budget_headroom": {
+          "rolling_sample_count": 64,
+          "rolling_window_size": 64,
+          "samples_until_single_outlier_excluded": 0,
+          "p95_excludes_single_maximum": true,
+          "rss_observed_mb": 14.28125,
+          "rss_limit_mb": 30,
+          "rss_margin_mb": 15.71875,
+          "idle_duty_observed_percent": 1.7507745779739483,
+          "idle_duty_limit_percent": 0.5,
+          "idle_duty_margin_percent": -1.2507745779739483,
+          "sample_cpu_p95_observed_ms": 13.037,
+          "sample_cpu_max_observed_ms": 22.807,
+          "sample_cpu_limit_ms": 150,
+          "sample_cpu_margin_ms": 136.963,
+          "telemetry_projected_bytes_per_day": 528384,
+          "telemetry_limit_bytes_per_day": 1048576,
+          "telemetry_margin_bytes_per_day": 520192
+        },
+        "health_reasons": [
+          "resident guard resource budget is failing under the effective policy"
+        ],
+        "daily_driver_reasons": [
+          "resident monitor is unhealthy"
+        ],
+        "operator_reasons": [
+          "resident is not daily-driver ready"
+        ]
+      },
+      "host": {
+        "level": "normal",
+        "source": "resident"
+      },
+      "launch_soft_pressure": {
+        "would_block": false,
+        "noise_suppressed": false,
+        "enforced": true
+      },
+      "monitor": {
+        "healthy": false,
+        "fresh": true,
+        "age_seconds": 2.423761,
+        "pid": 74540,
+        "loaded": true,
+        "running": true
+      },
+      "ok": false,
+      "policy_persisted": true,
+      "protection_mode": "admission-only",
+      "schema_version": 1,
+      "warnings": [
+        "resident guard resource budget is failing under the effective policy",
+        "resident is not daily-driver ready",
+        "session-pressure binaries disagree on source revision (cli=cc23fb2d82aa front_door=8273bb1eb914 helper=cc23fb2d82aa)"
+      ],
+      "work": {
+        "capacity": 8,
+        "used": 0,
+        "queue_depth": 0,
+        "express_green": false
+      }
+    },
+    "current_cli_checkpoint": {
+      "action": "capabilities",
+      "capabilities": {
+        "schema_version": 1,
+        "version": "0.7.0",
+        "source_revision": "cc23fb2d82aad4ab18f0a3bf77645894a58752c7",
+        "executable": "/Users/nicostran/dev/nicos-tools/nicos-dev/bin/ndev-pressure",
+        "os": "darwin",
+        "arch": "arm64",
+        "captured_at": "2026-11-08T19:07:12.231046Z",
+        "operations": [
+          "capabilities",
+          "processes",
+          "doctor",
+          "audit",
+          "board",
+          "status",
+          "identity",
+          "work",
+          "storage",
+          "io",
+          "policy",
+          "monitor",
+          "telemetry",
+          "cleanup",
+          "artifact",
+          "api"
+        ],
+        "native_sampling": true,
+        "provider_actionability": "provider-inventory-and-plan",
+        "policy_authority": "persisted-policy"
+      },
+      "ok": true
+    },
+    "cpu_prevention": [
+      "bounded private group teardown on success, early failure, timeout, cancellation and supervisor death",
+      "work admission for expensive local work",
+      "Go builds and tests offloaded to gaterunner-1",
+      "bounded project-root scan guidance",
+      "CPU detection is advisory; Stop and Force Stop require operator confirmation"
+    ],
+    "telemetry": {
+      "coverage_strict": "pass: 131 covered, 13 exempt, 53 sources",
+      "usage_trend": "unmeasured: CLI projection returned no usage rows",
+      "production_high_cpu_incident_manufactured": false
+    },
+    "review_limits": [
+      "Browser WORK-50 remains open. Live probes were not run while browser work is paused.",
+      "Descendants that deliberately escape the private process group are outside runner containment.",
+      "Sustained CPU alone can be legitimate; no automatic kill authority was added.",
+      "Installed CLI may advance through concurrent reviewed promotions; app and service identities are recorded separately."
+    ],
+    "self_review_corrections": [
+      "Native Darwin missing-PID semantics required a Mac regression after Linux passed.",
+      "Delivery preview is not proof of policy availability or accepted delivery.",
+      "Source-only transfer excludes generated build output.",
+      "Host admission delayed the native build; no gate was overridden.",
+      "Two app source trees share the installation path. Ported incident controls and tests into the factory app, preserved foreign Hetzner changes, rebuilt and repeated installed native controls.",
+      "Fresh resident health failed idle CPU duty after a prior healthy checkpoint. Retained the failure and identified a tested source-only polling fix; an older green reading does not close the CPU gate.",
+      "Reused peer exact release build evidence instead of starting a duplicate heavy build."
+    ],
+    "factory_native_install": {
+      "at": "2026-11-08T19:03:01.456114+00:00",
+      "installed_sha256": "37ad4a5c8b10e9b78d0240bd5c018c50b98ac285b77ba93950934558cf08cd08",
+      "candidate_sha256": "37ad4a5c8b10e9b78d0240bd5c018c50b98ac285b77ba93950934558cf08cd08",
+      "source_manifest": "/Users/nicostran/.nicos-dev/session-workspaces/v1/01a1b91e-5877-7453-98a6-9c1893931b54/process-guard/factory-native-source.json",
+      "source_kind": "immutable combined app snapshot with foreign Hetzner changes preserved",
+      "delivery": "efdd4a8d-7be6-4375-a172-7905119de740",
+      "delivery_state": "accepted",
+      "swift_tests": 52,
+      "suites": 7,
+      "test_seconds": 0.358,
+      "verify": "pass",
+      "native_installed_page": "CUA verified Process Incidents, Day Gate and Hetzner; real history; No signal; closed Stop disabled"
+    },
+    "factory_native_controls": {
+      "passed": true,
+      "duration_seconds": 227.21,
+      "cpu_load": "sleeping children only",
+      "observations": [
+        "Cancel retained active process and empty action history",
+        "stale kernel identity recorded NONE revalidation_rejected",
+        "TERM recorded exit_confirmed",
+        "TERM-resistant child exposed separate Force Stop; KILL recorded exit_confirmed",
+        "Refresh retained selection and history",
+        "review app quit; fixture harness cleaned its children"
+      ],
+      "incident_report": {
+        "schema_version": 1,
+        "updated_at": "2026-11-08T19:06:28.906091Z",
+        "incidents": [
+          {
+            "source": "review_fixture",
+            "id": "8f0b5064a862b648e616e0af",
+            "pid": 83778,
+            "ppid": 83763,
+            "start_identity": "darwin:1794164580:163770",
+            "executable": "Review child Force",
+            "uid": 501,
+            "cpu_percent": 0,
+            "rss_mb": 0,
+            "age_seconds": 0,
+            "reason": "review_fixture_no_cpu_load",
+            "first_seen": "2026-11-08T19:03:00.169392Z",
+            "last_seen": "2026-11-08T19:03:00.169392Z",
+            "sustained_seconds": 0,
+            "state": "stopped",
+            "actions": [
+              {
+                "at": "2026-11-08T19:06:20.209288Z",
+                "signal": "TERM",
+                "result": "signal_sent_unconfirmed"
+              },
+              {
+                "at": "2026-11-08T19:06:28.817956Z",
+                "signal": "KILL",
+                "result": "exit_confirmed"
+              }
+            ]
+          },
+          {
+            "source": "review_fixture",
+            "id": "94b1ac8d1737498b6ec5f024",
+            "pid": 83777,
+            "ppid": 83763,
+            "start_identity": "darwin:1794164580:157469",
+            "executable": "Review child TERM",
+            "uid": 501,
+            "cpu_percent": 0,
+            "rss_mb": 0,
+            "age_seconds": 0,
+            "reason": "review_fixture_no_cpu_load",
+            "first_seen": "2026-11-08T19:03:00.163555Z",
+            "last_seen": "2026-11-08T19:03:00.163555Z",
+            "sustained_seconds": 0,
+            "state": "stopped",
+            "actions": [
+              {
+                "at": "2026-11-08T19:06:10.429595Z",
+                "signal": "TERM",
+                "result": "exit_confirmed"
+              }
+            ]
+          },
+          {
+            "source": "review_fixture",
+            "id": "review-stale-identity",
+            "pid": 83777,
+            "ppid": 83763,
+            "start_identity": "darwin:0:1",
+            "executable": "Review stale identity",
+            "uid": 501,
+            "cpu_percent": 0,
+            "rss_mb": 0,
+            "age_seconds": 0,
+            "reason": "review_fixture_no_cpu_load",
+            "first_seen": "2026-11-08T19:03:00.163555Z",
+            "last_seen": "2026-11-08T19:03:00.163555Z",
+            "sustained_seconds": 0,
+            "state": "active",
+            "actions": [
+              {
+                "at": "2026-11-08T19:05:57.9036Z",
+                "signal": "NONE",
+                "result": "revalidation_rejected",
+                "error": "process identity changed or unavailable; no signal sent"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "resident_cpu_followup": {
+      "at": "2026-11-08T19:07:12Z",
+      "idle_duty_percent": 1.7507745779739483,
+      "idle_limit_percent": 0.5,
+      "result": "failed",
+      "installed_revision": "cc23fb2d82aad4ab18f0a3bf77645894a58752c7",
+      "tested_source_fix": "3e5da8f46b9cc54003e29278f4c0abdedca85644",
+      "source_change": "paused idle uses normal policy cadence; five-second lightweight demand check wakes recovery sampling",
+      "remote_race_job": "20261108T190116Z-3868757",
+      "remote_native_build_job": "20261108T190403Z-3876991",
+      "promotion": "pending concurrent release owner remote-proof hold; do not infer installed CPU improvement from source tests"
+    },
+    "delivery_checkpoint": {
+      "schema_version": "nicos.commit-delivery.status-brief.v1",
+      "verdict": "in_flight",
+      "scope": "owner-session",
+      "counts": {
+        "accepted": 7,
+        "landed": 7,
+        "superseded": 1
+      },
+      "active": [
+        {
+          "delivery_id": "41c448e7-90b8-4bc4-953f-2767242e911a",
+          "state": "accepted",
+          "age_ms": 9178444,
+          "path_count": 4,
+          "owner": "codex",
+          "session": "01a1b91e-5877-7453-98a6-9c1893931b54",
+          "host": "Nicos-MacBook-Pro-2.local",
+          "runtime": "codex"
+        },
+        {
+          "delivery_id": "fb281cc9-b7b2-4a93-b8ba-7092d9e8b4cd",
+          "state": "accepted",
+          "age_ms": 5668301,
+          "path_count": 1,
+          "owner": "codex",
+          "session": "01a1b91e-5877-7453-98a6-9c1893931b54",
+          "host": "Nicos-MacBook-Pro-2.local",
+          "runtime": "codex"
+        },
+        {
+          "delivery_id": "09106b7b-bbd8-4086-888f-3570aa420992",
+          "state": "accepted",
+          "age_ms": 4269900,
+          "path_count": 1,
+          "owner": "codex",
+          "session": "01a1b91e-5877-7453-98a6-9c1893931b54",
+          "host": "Nicos-MacBook-Pro-2.local",
+          "runtime": "codex"
+        },
+        {
+          "delivery_id": "20af4088-6965-4fcb-9a37-1cae47679e4d",
+          "state": "accepted",
+          "age_ms": 3956141,
+          "path_count": 1,
+          "owner": "codex",
+          "session": "01a1b91e-5877-7453-98a6-9c1893931b54",
+          "host": "Nicos-MacBook-Pro-2.local",
+          "runtime": "codex"
+        },
+        {
+          "delivery_id": "8c37a6e1-9af1-4d4d-a895-555bc7f50604",
+          "state": "accepted",
+          "age_ms": 1328578,
+          "path_count": 1,
+          "owner": "codex",
+          "session": "01a1b91e-5877-7453-98a6-9c1893931b54",
+          "host": "Nicos-MacBook-Pro-2.local",
+          "runtime": "codex"
+        },
+        {
+          "delivery_id": "da8224c0-55ae-444b-9969-fd42a772ba8c",
+          "state": "accepted",
+          "age_ms": 778371,
+          "path_count": 2,
+          "owner": "codex",
+          "session": "01a1b91e-5877-7453-98a6-9c1893931b54",
+          "host": "Nicos-MacBook-Pro-2.local",
+          "runtime": "codex"
+        },
+        {
+          "delivery_id": "efdd4a8d-7be6-4375-a172-7905119de740",
+          "state": "accepted",
+          "age_ms": 443548,
+          "path_count": 10,
+          "owner": "codex",
+          "session": "01a1b91e-5877-7453-98a6-9c1893931b54",
+          "host": "Nicos-MacBook-Pro-2.local",
+          "runtime": "codex"
+        }
+      ],
+      "service": {
+        "healthy": true,
+        "busy": true,
+        "worker_version": "2.33.0",
+        "expected_worker_version": "2.33.0",
+        "finding_codes": [
+          "SERVICE_WORKER_SOURCE_LAG",
+          "SERVICE_PREFLIGHT_SOURCE_LAG"
+        ]
+      },
+      "remote": {
+        "state": "ahead",
+        "ahead": 4,
+        "behind": 0
+      },
+      "next_actions": [
+        {
+          "code": "publish",
+          "command": "ndev-commit-delivery --json delivery remote publish --preview --fetch",
+          "reason": "4 landed commit(s) are not on the remote"
+        },
+        {
+          "code": "wait_for_landing",
+          "command": "ndev-commit-delivery delivery wait --owned",
+          "reason": "7 deliveries are queued or in progress; accepted is durable but not landed"
+        }
+      ],
+      "coordination": {
+        "state": "open"
+      }
+    }
+  }
 }
