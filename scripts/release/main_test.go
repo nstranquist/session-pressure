@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,5 +154,83 @@ func TestPromotionRejectsStaleIntentAndUnintendedDowngrade(t *testing.T) {
 	old.BuiltAt = time.Time{}
 	if e := checkPromotion(old, nil, "none", false); e == nil {
 		t.Fatal("unknown timestamp accepted")
+	}
+}
+
+func TestAppSampleRejectsMissingAmbiguousAndMalformedEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, discovery, process, want string
+		discoveryErr, processErr       error
+	}{
+		{name: "missing", discoveryErr: errors.New("exit status 1"), want: "app_discovery_failed"},
+		{name: "ambiguous", discovery: "42\n43\n", want: "app_discovery_requires_one_pid"},
+		{name: "invalid pid", discovery: "-1", want: "app_discovery_invalid_pid"},
+		{name: "read failed", discovery: "42", processErr: errors.New("timeout"), want: "app_process_read_failed"},
+		{name: "missing rss", discovery: "42", process: "0:13.41", want: "app_process_fields_invalid"},
+		{name: "invalid time", discovery: "42", process: "0:NaN 1024", want: "app_cpu_time_invalid"},
+		{name: "invalid rss", discovery: "42", process: "0:13.41 -1024", want: "app_rss_invalid"},
+		{name: "infinite rss", discovery: "42", process: "0:13.41 +Inf", want: "app_rss_invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, err := sampleAppWith(func(name string, args ...string) ([]byte, error) {
+				if name == "pgrep" {
+					return []byte(tc.discovery), tc.discoveryErr
+				}
+				return []byte(tc.process), tc.processErr
+			})
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("got %v, want %s", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAppSampleParsesActualMacOSColumns(t *testing.T) {
+	calls := 0
+	pid, cpu, rss, err := sampleAppWith(func(name string, args ...string) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			if name != "pgrep" || strings.Join(args, " ") != "-x NDevPressure" {
+				t.Fatalf("unexpected discovery: %s %v", name, args)
+			}
+			return []byte("56895\n"), nil
+		}
+		if name != "ps" || strings.Join(args, " ") != "-p 56895 -o time= -o rss=" {
+			t.Fatalf("unexpected read: %s %v", name, args)
+		}
+		return []byte("  0:13.41  65792\n"), nil
+	})
+	if err != nil || pid != 56895 || cpu != 13.41 || rss != 64.25 || calls != 2 {
+		t.Fatalf("%d %g %g %v (%d calls)", pid, cpu, rss, err, calls)
+	}
+}
+
+func TestAppCPUTimeSupportsLongRunningProcessesAndRejectsInvalidValues(t *testing.T) {
+	for value, want := range map[string]float64{"0:13.41": 13.41, "100:00": 6000, "01:02:03": 3723, "2-03:04:05.5": 183845.5, "0-01:00:00": 3600} {
+		got, err := parseAppCPUTime(value)
+		if err != nil || got != want {
+			t.Errorf("%q = %g, %v; want %g", value, got, err, want)
+		}
+	}
+	for _, value := range []string{"", "1", "0:60", "1:60:00", "-1:00", "1:NaN", "1:+Inf", "1.5:00", "1-24:00:00", "0-01:00", "1e308:00:00", "1:2:3:4"} {
+		if _, err := parseAppCPUTime(value); err == nil {
+			t.Errorf("accepted %q", value)
+		}
+	}
+}
+
+func TestAppSampleFailureClearsStaleMetricsAndRetainsProductHealth(t *testing.T) {
+	now := time.Now().UTC()
+	s := observation{AppPID: 42, AppCPUPercent: 0.5, AppPeakRSSMiB: 90, AppObservedSeconds: 1900, AppBudgetPassed: true, AppSampleOK: true, HealthPassed: true, Checks: 10}
+	s.recordAppSampleFailure(now, errors.New("app_process_read_failed"))
+	if s.AppPID != 0 || s.AppCPUPercent != 0 || s.AppPeakRSSMiB != 0 || s.AppObservedSeconds != 0 || s.AppBudgetPassed || s.AppSampleOK {
+		t.Fatalf("stale metrics retained: %+v", s)
+	}
+	if s.AppSampleFailures != 1 || s.LastAppSampleError != "app_process_read_failed" || !s.LastAppSampleFailure.Equal(now) || !s.HealthPassed || s.Checks != 10 {
+		t.Fatalf("failure evidence or independent product health lost: %+v", s)
+	}
+	s.recordAppSampleFailure(now.Add(time.Minute), errors.New("app_discovery_failed"))
+	if s.AppSampleFailures != 2 {
+		t.Fatal("failure history reset")
 	}
 }
