@@ -189,6 +189,13 @@ func build(out, platform string) error {
 		if e = c.Run(); e != nil {
 			return e
 		}
+		dirty, e = command("git", "status", "--porcelain", "--untracked-files=all")
+		if e != nil {
+			return e
+		}
+		if dirty != "" {
+			return errors.New("compiler modified the committed checkout")
+		}
 		m.Files[name], e = digest(filepath.Join(abs, name))
 		if e != nil {
 			return e
