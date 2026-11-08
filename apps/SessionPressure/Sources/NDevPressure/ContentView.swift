@@ -111,6 +111,7 @@ struct ContentView: View {
     private var detail: some View {
         switch store.selectedSection {
         case .overview: OverviewView()
+        case .dayGate: DayGateView()
         case .trees: TreesView()
         case .processIncidents: ProcessIncidentsView()
         case .diskWrites: DiskWritesView()
@@ -127,7 +128,7 @@ struct ContentView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            if let at = store.board.sectionRefreshedAt[store.selectedSection.freshnessKey] {
+            if let at = store.selectedSectionRefreshedAt {
                 Text(at, style: .relative)
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)

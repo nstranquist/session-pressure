@@ -29,24 +29,16 @@ struct NDevPressureApp: App {
 
                 Divider()
 
-                Button("Overview") { store.selectedSection = .overview }
-                    .keyboardShortcut("1", modifiers: [.command])
-                Button("Agent Trees") { store.selectedSection = .trees }
-                    .keyboardShortcut("2", modifiers: [.command])
-                Button("Disk Writes") { store.selectedSection = .diskWrites }
-                    .keyboardShortcut("3", modifiers: [.command])
-                Button("Storage") { store.openStorage(tab: .disk) }
-                    .keyboardShortcut("4", modifiers: [.command])
-                Button("Work Queue") { store.selectedSection = .work }
-                    .keyboardShortcut("5", modifiers: [.command])
-                Button("Policy") { store.selectedSection = .policy }
-                    .keyboardShortcut("6", modifiers: [.command])
-                Button("Monitor") { store.selectedSection = .monitor }
-                    .keyboardShortcut("7", modifiers: [.command])
-                Button("Telemetry") { store.selectedSection = .telemetry }
-                    .keyboardShortcut("8", modifiers: [.command])
-                Button("Settings") { store.selectedSection = .settings }
-                    .keyboardShortcut("9", modifiers: [.command])
+                ForEach(PressureStore.Section.allCases) { section in
+                    Button(section.rawValue) {
+                        if section == .storage { store.openStorage(tab: .disk) }
+                        else { store.selectedSection = section }
+                    }
+                    .keyboardShortcut(
+                        KeyEquivalent(section.commandDigit.first ?? "1"),
+                        modifiers: section.shortcutModifiers
+                    )
+                }
             }
         }
 
