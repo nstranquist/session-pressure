@@ -46,6 +46,7 @@ type storageProviderReport struct {
 	HotnessEvidence   *storageProviderHotnessEvidence  `json:"hotness_evidence,omitempty"`
 	SimulatorEvidence *storageSimulatorEvidence        `json:"simulator_evidence,omitempty"`
 	DevRootEvidence   *storageDevRootEvidence          `json:"dev_root_evidence,omitempty"`
+	ArchiveEvidence   *storageArchiveEvidence          `json:"archive_evidence,omitempty"`
 }
 
 // storageProviderDecisionEvidence gives an operator enough bounded evidence to
@@ -493,6 +494,7 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 		reports = append(reports, report)
 	}
 	reports = append(reports, storageDevRootProvider(home, measure))
+	reports = append(reports, storageArchivedProjectsProvider(home, time.Now().UTC()))
 	xcodeDeveloperPath := filepath.Join(home, "Library", "Developer")
 	xcodeDeveloperPresent := storagePathExists(xcodeDeveloperPath)
 	xcodeDeveloperReport := storageProviderReport{
@@ -909,6 +911,8 @@ func executeStorageProvider(ctx context.Context, runtime pressureRuntime, provid
 		}
 	case "nicos-telemetry-archive", "nicos-voice-models", "nicos-wine-proof", "nicos-pw-archive":
 		runErr = errors.New("archive deletion requires individual retention and recovery review")
+	case archivedProjectsProviderID:
+		runErr = errors.New("archived projects are never deleted by storage reclaim; move one to a mounted drive with ndev catalog external archive offload --id ID --volume PATH --apply")
 	case "dev-root-leftovers":
 		runErr = errors.New("dev-root leftovers require per-entry owner review of the never-committed proof in plan; remove worktrees with git worktree remove")
 	case "xcode-derived-data":

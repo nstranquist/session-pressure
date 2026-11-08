@@ -146,7 +146,7 @@ func TestStorageProviderClassificationPreservesPersonalStateAndRequiresExplicitG
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"mobile-sync", "downloads", "go-module-cache", "cargo-registry", "xcode-developer-data", "xcode-device-support", "nicos-telemetry-archive", "nicos-voice-models", "nicos-wine-proof", "nicos-pw-archive", "dev-root-leftovers"} {
+	for _, id := range []string{"mobile-sync", "downloads", "go-module-cache", "cargo-registry", "xcode-developer-data", "xcode-device-support", "nicos-telemetry-archive", "nicos-voice-models", "nicos-wine-proof", "nicos-pw-archive", "dev-root-leftovers", "archived-projects"} {
 		report, ok := storageProviderByID(reports, id)
 		if !ok || report.Classification != storageProviderReportOnly || report.MutationSupported {
 			t.Fatalf("provider %s = %+v", id, report)
