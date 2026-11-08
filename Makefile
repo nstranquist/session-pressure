@@ -37,5 +37,5 @@ secret-scan:
 init: build
 	@echo "init: built ./bin/session-pressure. Next: ./bin/session-pressure --json doctor"
 
-publish-ready: fmt vet test desktop-test build secret-scan
+publish-ready: fmt vet race desktop-test build secret-scan
 	@echo "publish-ready: ok"

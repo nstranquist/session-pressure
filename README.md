@@ -54,7 +54,12 @@ From source:
 make build
 ```
 
-That writes `bin/session-pressure`, `bin/session-pressure-helper`, `bin/session-pressure-api`, and `bin/gocache-lru`. Put `bin/` on `PATH`, or set `SESSION_PRESSURE_BIN`.
+That writes six tools: `session-pressure`, `session-pressure-helper`,
+`session-pressure-api`, `gocache-lru`, `session-pressure-release`, and
+`session-pressure-release-cc` under `bin/`. Put `bin/` on `PATH`, or set
+`SESSION_PRESSURE_BIN`. The release helper installs verified bundles and records
+artifact-bound acceptance observations. The compiler adapter supports the pinned
+Darwin native release profile; a portable build is not a native release receipt.
 
 Desktop client:
 
@@ -180,10 +185,11 @@ Import and document these as the product:
 | `sessionpressurecleanup` | Cleanup helpers |
 | `pkg/` | Portable helpers that other packages in this module can use |
 
-`internal/atomicfile`, `internal/jsonl`, `internal/telemetry`, and `internal/orb`
-are leftover copies from the factory extract. They are not the public API. Do
-not import them from another module. A later extract pass can hide or delete
-them. See [OPEN-CORE.md](OPEN-CORE.md).
+`internal/telemetry` owns the standalone command stream, privacy validation,
+writer health, retention and factory-health reads. Internal packages are not
+public APIs and cannot be imported from another module. The remaining extracted
+helpers include `internal/atomicfile`, `internal/jsonl`, and `internal/orb`. See
+[OPEN-CORE.md](OPEN-CORE.md).
 
 nicos-tools keeps Toolguard, agent-launch hooks, and nicos-only reclaim providers. See [OPEN-CORE.md](OPEN-CORE.md) and [docs/architecture.md](docs/architecture.md).
 

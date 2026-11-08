@@ -1250,3 +1250,12 @@ runtime candidate or a claim that GitHub CI has executed.
   resident/app restarts or sample failures, and 3,864.6 observed app seconds
   at 0.275% CPU, 114.219 MiB peak RSS. Its status read gate remains failed;
   no elapsed or performance evidence is transferred to a new artifact pair.
+
+### Final release-document review (22:25 UTC)
+
+README still listed four build tools and called the now-active product telemetry
+package a leftover copy. It now lists all six Make outputs and the actual
+telemetry responsibilities. The local `publish-ready` aggregate now requires
+`race`, matching CI, rather than only the non-race test target. `make -n
+publish-ready` and `git diff --check` pass. This changes documentation and gate
+composition only; the existing runtime source receipts remain separately bound.

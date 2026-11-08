@@ -174,7 +174,9 @@ The final gate review also found that root Make targets and CI used fixed
 package lists. Those lists omitted the release observer, compiler adapter,
 product telemetry and gate-runner packages. `make vet` and `make test` now
 cover `./...`; `make race` runs the same full module with the race detector.
-Both CI operating systems use these shared targets. `make build` also builds
+Both CI operating systems use these shared targets. The local `publish-ready`
+aggregate also requires the full race target. README build output and telemetry
+ownership now match the source. `make build` also builds
 the release installer/observer and compiler adapter. A dry run verifies the
 expanded commands; the earlier full-module Linux race receipt supplies the
 source test evidence. No new local heavy Go build was run for this gate-only
