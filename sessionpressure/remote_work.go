@@ -88,6 +88,18 @@ func normalizeRemoteBuildArgv(argv []string) ([]string, string, error) {
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 
+// Match the canonical run-job.sh environment in non-login SSH shells. The
+// system Git is too old for merge-file --diff-algorithm. Missing pinned tools
+// must refuse the job rather than silently select a different toolchain.
+func remoteRunnerPrelude() string {
+	return "{ test -x /srv/build/bin/git && test -x /usr/local/go/bin/go; } || { printf '%s\\n' " +
+		shellQuote(WorkRefusalMarker+" kind="+WorkRefusalRemoteProfile+": pinned runner Git or Go is missing; local fallback is disabled") +
+		fmt.Sprintf(" >&2; exit %d; }; ", workExitPolicyDenied) +
+		"export PATH=/srv/build/bin:/usr/local/go/bin:\"$PATH\" " +
+		"GOCACHE=/srv/build/cache/go-build GOMODCACHE=/srv/build/cache/go-mod GOPATH=/srv/build/go && " +
+		"umask 0022 && "
+}
+
 // remoteModuleClosure preserves relative replacement layout without copying
 // unrelated projects, ignored build caches or credentials to the runner.
 func remoteModuleClosure(start string) ([]string, string, error) {
@@ -392,7 +404,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		_ = exec.CommandContext(cleanupCtx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "builder@100.106.202.89", "rm -rf -- "+shellQuote(remote)).Run()
 	}()
 	rel, _ := filepath.Rel(common, cwd)
-	command := remoteBuildPreflight(profile, remote) + "cd " + shellQuote(remote+"/source/"+filepath.ToSlash(rel)) + " && exec env GOWORK=off GOMAXPROCS=2 GOMEMLIMIT=3GiB GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p=2")) + remoteBuildEnvironment(profile, remote)
+	command := remoteRunnerPrelude() + remoteBuildPreflight(profile, remote) + "cd " + shellQuote(remote+"/source/"+filepath.ToSlash(rel)) + " && exec env GOWORK=off GOMAXPROCS=2 GOMEMLIMIT=3GiB GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p=2")) + remoteBuildEnvironment(profile, remote)
 	for _, arg := range argv {
 		command += " " + shellQuote(arg)
 	}
