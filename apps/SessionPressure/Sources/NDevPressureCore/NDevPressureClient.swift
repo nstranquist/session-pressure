@@ -96,7 +96,6 @@ public struct NDevPressureClient: Sendable {
             environment["SESSION_PRESSURE_BIN"],
             environment["NDEV_PRESSURE_BIN"],
             "\(home)/.local/bin/session-pressure",
-            "\(home)/tools/session-pressure/bin/session-pressure",
             "/opt/homebrew/bin/session-pressure",
             "/usr/local/bin/session-pressure",
             "\(home)/.local/bin/ndev-pressure",

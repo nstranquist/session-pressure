@@ -50,7 +50,6 @@ impl PressureClient {
             env("SESSION_PRESSURE_BIN"),
             env("NDEV_PRESSURE_BIN"),
             Some(format!("{home}/.local/bin/session-pressure")),
-            Some(format!("{home}/tools/session-pressure/bin/session-pressure")),
             Some("/opt/homebrew/bin/session-pressure".into()),
             Some("/usr/local/bin/session-pressure".into()),
             Some(format!("{home}/.local/bin/ndev-pressure")),
@@ -313,7 +312,10 @@ impl PressureClient {
 }
 
 fn is_exec(path: &Path) -> bool {
-    path.is_file() && std::fs::metadata(path).map(|m| m.is_file()).unwrap_or(false)
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 fn apply_sanitized_env(cmd: &mut Command) {

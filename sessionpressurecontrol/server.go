@@ -126,6 +126,9 @@ func (s *Server) Config() Config { return s.cfg }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/health", s.handleHealth)
+	mux.HandleFunc("/v1/pressure/capabilities", func(w http.ResponseWriter, r *http.Request) {
+		s.writeProjection(w, r, pressureArgs("capabilities"))
+	})
 	mux.HandleFunc("/v1/pressure/board", s.handleBoard)
 	mux.HandleFunc("/v1/pressure/status", s.handleStatus)
 	mux.HandleFunc("/v1/pressure/doctor", s.handleDoctor)
@@ -731,13 +734,15 @@ type commandRunner struct {
 func (r commandRunner) Run(ctx context.Context, args []string) RunResult {
 	bin := r.bin
 	if bin == "" {
-		bin, _ = exec.LookPath("ndev")
-		if bin == "" {
-			bin, _ = exec.LookPath("ndev-go")
+		for _, name := range []string{"session-pressure", "ndev-pressure", "ndev", "ndev-go"} {
+			if candidate, err := exec.LookPath(name); err == nil {
+				bin = candidate
+				break
+			}
 		}
 	}
 	if bin == "" {
-		return RunResult{ExitCode: 127, Err: errors.New("ndev authority not found; set NDEV_BIN")}
+		return RunResult{ExitCode: 127, Err: errors.New("Session Pressure authority not found; configure the server binary")}
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = commandEnvironment(r.stateDir)

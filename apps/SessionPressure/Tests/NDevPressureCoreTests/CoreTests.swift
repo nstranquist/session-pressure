@@ -794,7 +794,7 @@ struct CoreTests {
         let localPublic = "\(home)/.local/bin/session-pressure"
         #expect(ordered.first == "/opt/session-pressure")
         #expect(ordered.contains(localPublic))
-        #expect(ordered.contains(publicCLI))
+        #expect(!ordered.contains(publicCLI))
         if let publicIndex = ordered.firstIndex(of: publicCLI),
            let nicosIndex = ordered.firstIndex(where: { $0.contains("nicos-tools") }) {
             #expect(publicIndex < nicosIndex)
