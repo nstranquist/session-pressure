@@ -1,27 +1,31 @@
-// Package gocachelru implements a size-capped GOCACHEPROG.
-//
-// Go 1.27 has no GOCACHEMAX. The go command already drops unused entries
-// after 5 days, but a busy host keeps the whole cache hot. This helper
-// stores objects on disk and evicts oldest-mtime files when the directory
-// exceeds MaxBytes. It is a growth governor, not a reclaim wipe.
+// Package gocachelru implements GOCACHEPROG with immutable objects and a soft
+// size target. Files returned to a Go process stay pinned until close or crash.
 package gocachelru
 
 import (
+	"bufio"
+	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
-const (
-	DefaultMaxBytes = 16 << 30
-)
+const DefaultMaxBytes = 16 << 30
+const MaxObjectBytes = 1 << 30
+const maxRequestBytes = 64 << 10
 
 type Request struct {
 	ID       int64  `json:"ID"`
@@ -30,7 +34,6 @@ type Request struct {
 	OutputID []byte `json:"OutputID,omitempty"`
 	BodySize int64  `json:"BodySize,omitempty"`
 }
-
 type Response struct {
 	ID            int64      `json:"ID"`
 	Err           string     `json:"Err,omitempty"`
@@ -41,54 +44,511 @@ type Response struct {
 	Time          *time.Time `json:"Time,omitempty"`
 	DiskPath      string     `json:"DiskPath,omitempty"`
 }
-
+type objectMeta struct {
+	OutputID []byte    `json:"output_id"`
+	PutAt    time.Time `json:"put_at"`
+	Size     int64     `json:"size"`
+	Object   string    `json:"object"`
+}
+type indexEntry struct {
+	Key     string `json:"key"`
+	Size    int64  `json:"size"`
+	Access  int64  `json:"access"`
+	Deleted bool   `json:"deleted,omitempty"`
+}
 type Cache struct {
-	dir      string
-	maxBytes int64
-	mu       sync.Mutex
+	dir        string
+	maxBytes   int64
+	mu         sync.Mutex
+	lock       *os.File
+	clientLock *os.File
+	pins       string
+	closed     bool
+	index      map[string]indexEntry
+	offset     int64
+	journalID  os.FileInfo
+	total      int64
 }
 
 func New(dir string, maxBytes int64) (*Cache, error) {
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxBytes
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
 		return nil, err
 	}
-	return &Cache{dir: dir, maxBytes: maxBytes}, nil
+	for _, part := range []string{"objects", "actions", "clients"} {
+		if err := os.MkdirAll(filepath.Join(dir, part), 0700); err != nil {
+			return nil, err
+		}
+	}
+	lock, err := os.OpenFile(filepath.Join(dir, "authority.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	c := &Cache{dir: dir, maxBytes: maxBytes, lock: lock, index: map[string]indexEntry{}}
+	err = c.withLock(func() error {
+		// Client locks are held for the complete protocol lifetime. A dead process
+		// releases its OS lock; PID reuse cannot make an abandoned pin live again.
+		entries, err := os.ReadDir(filepath.Join(dir, "clients"))
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			p := filepath.Join(dir, "clients", entry.Name())
+			f, e := os.OpenFile(filepath.Join(p, "lock"), os.O_RDWR, 0600)
+			if e != nil {
+				continue
+			}
+			if unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB) == nil {
+				e = os.RemoveAll(p)
+				if e != nil {
+					f.Close()
+					return e
+				}
+			}
+			f.Close()
+		}
+		c.pins, err = os.MkdirTemp(filepath.Join(dir, "clients"), "client-")
+		if err != nil {
+			return err
+		}
+		c.clientLock, err = os.OpenFile(filepath.Join(c.pins, "lock"), os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			return err
+		}
+		if err = unix.Flock(int(c.clientLock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+			return err
+		}
+		return c.loadIndex()
+	})
+	if err != nil {
+		if c.clientLock != nil {
+			c.clientLock.Close()
+		}
+		lock.Close()
+		return nil, err
+	}
+	return c, nil
+}
+func (c *Cache) withLock(fn func() error) error {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := unix.Flock(int(c.lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("cache authority lock timed out")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	defer unix.Flock(int(c.lock.Fd()), unix.LOCK_UN)
+	return fn()
 }
 
-func Serve(in io.Reader, out io.Writer, dir string, maxBytes int64) error {
-	cache, err := New(dir, maxBytes)
+// Replay only journal bytes added since this client last held the authority.
+// Compaction is detected by inode, so concurrent clients cannot miss a reset.
+func (c *Cache) loadIndex() error {
+	f, err := os.OpenFile(filepath.Join(c.dir, "index.jsonl"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err
 	}
-	enc := json.NewEncoder(out)
-	if err := enc.Encode(Response{ID: 0, KnownCommands: []string{"get", "put", "close"}}); err != nil {
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
 		return err
 	}
-	dec := json.NewDecoder(in)
+	if c.journalID == nil || !os.SameFile(info, c.journalID) || info.Size() < c.offset {
+		c.index = map[string]indexEntry{}
+		c.total = 0
+		c.offset = 0
+	}
+	c.journalID = info
+	if _, err = f.Seek(c.offset, io.SeekStart); err != nil {
+		return err
+	}
+	r := bufio.NewReader(f)
 	for {
-		var req Request
-		if err := dec.Decode(&req); err != nil {
-			if err == io.EOF {
-				return nil
+		line, e := r.ReadBytes('\n')
+		if e == io.EOF { // A killed append leaves no trusted transaction. Drop only the incomplete tail.
+			if len(line) > 0 {
+				return f.Truncate(c.offset)
 			}
+			return nil
+		}
+		if e != nil {
+			return e
+		}
+		if len(line) > 4096 {
+			return fmt.Errorf("oversized cache index row")
+		}
+		var row indexEntry
+		if err = json.Unmarshal(line, &row); err != nil {
+			return fmt.Errorf("invalid cache index: %w", err)
+		}
+		if old, ok := c.index[row.Key]; ok {
+			if !strings.HasPrefix(old.Key, "action-") {
+				c.total -= old.Size
+			}
+		}
+		if row.Deleted {
+			delete(c.index, row.Key)
+		} else {
+			c.index[row.Key] = row
+			if !strings.HasPrefix(row.Key, "action-") {
+				c.total += row.Size
+			}
+		}
+		c.offset += int64(len(line))
+	}
+}
+func (c *Cache) record(row indexEntry) error {
+	raw, err := json.Marshal(row)
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	f, err := os.OpenFile(filepath.Join(c.dir, "index.jsonl"), os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(raw)
+	if err == nil {
+		err = f.Sync()
+	}
+	f.Close()
+	if err != nil {
+		return err
+	}
+	if old, ok := c.index[row.Key]; ok {
+		if !strings.HasPrefix(old.Key, "action-") {
+			c.total -= old.Size
+		}
+	}
+	if row.Deleted {
+		delete(c.index, row.Key)
+	} else {
+		c.index[row.Key] = row
+		if !strings.HasPrefix(row.Key, "action-") {
+			c.total += row.Size
+		}
+	}
+	c.offset += int64(len(raw))
+	return nil
+}
+func atomicWrite(path string, raw []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".write-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err = f.Write(raw); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return os.Rename(f.Name(), path)
+}
+func (c *Cache) actionPath(id []byte) string {
+	return filepath.Join(c.dir, "actions", hex.EncodeToString(id)+".json")
+}
+func (c *Cache) objectPath(key string) string {
+	if strings.HasPrefix(key, "action-") {
+		return filepath.Join(c.dir, "actions", strings.TrimPrefix(key, "action-")+".json")
+	}
+	return filepath.Join(c.dir, "objects", key)
+}
+func validID(id []byte) bool { return len(id) > 0 && len(id) <= 128 }
+func (c *Cache) pin(key string) (string, error) {
+	p := filepath.Join(c.pins, key)
+	err := os.Link(c.objectPath(key), p)
+	if os.IsExist(err) {
+		err = nil
+	}
+	return p, err
+}
+func (c *Cache) get(req Request) Response {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	resp := Response{ID: req.ID, Miss: true}
+	if c.closed || !validID(req.ActionID) {
+		return resp
+	}
+	err := c.withLock(func() error {
+		if err := c.loadIndex(); err != nil {
 			return err
 		}
-		var body []byte
-		if req.Command == "put" && req.BodySize > 0 {
-			var encoded string
-			if err := dec.Decode(&encoded); err != nil {
-				return fmt.Errorf("read put body: %w", err)
-			}
-			body, err = base64.StdEncoding.DecodeString(encoded)
-			if err != nil {
-				return fmt.Errorf("decode put body: %w", err)
-			}
+		raw, err := os.ReadFile(c.actionPath(req.ActionID))
+		if os.IsNotExist(err) {
+			return nil
 		}
-		resp := cache.handle(req, body)
-		if err := enc.Encode(resp); err != nil {
+		if err != nil {
+			return err
+		}
+		var meta objectMeta
+		if json.Unmarshal(raw, &meta) != nil || len(meta.Object) != 64 || strings.ContainsAny(meta.Object, "/\\") {
+			return nil
+		}
+		info, err := os.Stat(c.objectPath(meta.Object))
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Size() != meta.Size {
+			return nil
+		}
+		path, err := c.pin(meta.Object)
+		if err != nil {
+			return err
+		}
+		if err = c.record(indexEntry{Key: meta.Object, Size: meta.Size, Access: time.Now().UnixNano()}); err != nil {
+			return err
+		}
+		resp = Response{ID: req.ID, OutputID: meta.OutputID, Size: meta.Size, DiskPath: path, Time: &meta.PutAt}
+		return nil
+	})
+	if err != nil {
+		resp.Err = err.Error()
+	}
+	return resp
+}
+func (c *Cache) put(req Request, body []byte) Response {
+	return c.putReader(req, bytes.NewReader(body))
+}
+func (c *Cache) putReader(req Request, body io.Reader) Response {
+	resp := Response{ID: req.ID}
+	fail := func(err error) Response { resp.Err = err.Error(); return resp }
+	if !validID(req.ActionID) || !validID(req.OutputID) || req.BodySize < 0 || req.BodySize > MaxObjectBytes {
+		return fail(fmt.Errorf("invalid cache key or body size"))
+	}
+	f, err := os.CreateTemp(c.pins, ".object-")
+	if err != nil {
+		return fail(err)
+	}
+	defer os.Remove(f.Name())
+	hash := sha256.New()
+	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(body, req.BodySize+1))
+	if err == nil && n != req.BodySize {
+		err = fmt.Errorf("body size mismatch: expected %d, received %d", req.BodySize, n)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return fail(err)
+	}
+	if closeErr != nil {
+		return fail(closeErr)
+	}
+	key := hex.EncodeToString(hash.Sum(nil))
+	meta := objectMeta{OutputID: req.OutputID, PutAt: time.Now().UTC(), Size: n, Object: key}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return fail(fmt.Errorf("cache is closed"))
+	}
+	err = c.withLock(func() error {
+		if err := c.loadIndex(); err != nil {
+			return err
+		}
+		// Register before publish: a crash can conservatively overcount a missing
+		// object, but never leave an unaccounted published object.
+		if err := c.record(indexEntry{Key: key, Size: n, Access: time.Now().UnixNano()}); err != nil {
+			return err
+		}
+		if err := os.Link(f.Name(), c.objectPath(key)); err != nil && !os.IsExist(err) {
+			return err
+		}
+		path, err := c.pin(key)
+		if err != nil {
+			return err
+		}
+		raw, err := json.Marshal(meta)
+		if err != nil {
+			return err
+		}
+		if err = c.record(indexEntry{Key: "action-" + hex.EncodeToString(req.ActionID), Size: int64(len(raw)), Access: time.Now().UnixNano()}); err != nil {
+			return err
+		}
+		if err = atomicWrite(c.actionPath(req.ActionID), raw); err != nil {
+			return err
+		}
+		if err = c.evictLocked(); err != nil {
+			return err
+		}
+		resp = Response{ID: req.ID, DiskPath: path, Size: n, OutputID: req.OutputID, Time: &meta.PutAt}
+		return nil
+	})
+	if err != nil {
+		return fail(err)
+	}
+	return resp
+}
+func (c *Cache) maxEntries() int {
+	n := c.maxBytes / 4096
+	if n < 256 {
+		n = 256
+	}
+	if n > 1000000 {
+		n = 1000000
+	}
+	return int(n)
+}
+func (c *Cache) evictLocked() error {
+	if c.total <= c.maxBytes && len(c.index) <= c.maxEntries() {
+		return nil
+	}
+	rows := make([]indexEntry, 0, len(c.index))
+	for _, r := range c.index {
+		rows = append(rows, r)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Access < rows[j].Access })
+	for _, row := range rows {
+		if c.total <= c.maxBytes && len(c.index) <= c.maxEntries() {
+			break
+		}
+		if strings.HasPrefix(row.Key, "action-") && len(c.index) <= c.maxEntries() {
+			continue
+		}
+		path := c.objectPath(row.Key)
+		info, err := os.Stat(path)
+		if err == nil {
+			if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Nlink > 1 {
+				continue
+			}
+			if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if err = c.record(indexEntry{Key: row.Key, Deleted: true}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (c *Cache) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil
+	}
+	c.closed = true
+	err := c.withLock(func() error {
+		if err := c.loadIndex(); err != nil {
+			return err
+		}
+		if err := os.RemoveAll(c.pins); err != nil {
+			return err
+		}
+		if err := c.evictLocked(); err != nil {
+			return err
+		}
+		// Bound replay costs. Replace the journal atomically while all writers are
+		// excluded; clients detect the new inode on their next request.
+		if c.offset > 8<<20 {
+			var b bytes.Buffer
+			enc := json.NewEncoder(&b)
+			for _, row := range c.index {
+				if err := enc.Encode(row); err != nil {
+					return err
+				}
+			}
+			return atomicWrite(filepath.Join(c.dir, "index.jsonl"), b.Bytes())
+		}
+		return nil
+	})
+	if c.clientLock != nil {
+		c.clientLock.Close()
+	}
+	c.lock.Close()
+	return err
+}
+func Serve(in io.Reader, out io.Writer, dir string, maxBytes int64) error {
+	c, err := New(dir, maxBytes)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	enc := json.NewEncoder(out)
+	if err = enc.Encode(Response{KnownCommands: []string{"get", "put", "close"}}); err != nil {
+		return err
+	}
+	r := bufio.NewReaderSize(in, maxRequestBytes)
+	for {
+		line, err := r.ReadSlice('\n')
+		if err == io.EOF && len(line) == 0 {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read bounded request: %w", err)
+		}
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var req Request
+		if err = json.Unmarshal(line, &req); err != nil {
+			return err
+		}
+		var resp Response
+		switch req.Command {
+		case "get":
+			resp = c.get(req)
+		case "put":
+			if req.BodySize < 0 || req.BodySize > MaxObjectBytes {
+				return fmt.Errorf("invalid body size")
+			}
+			if req.BodySize == 0 {
+				resp = c.put(req, nil)
+			} else {
+				// Go emits an unescaped base64 JSON string. Decode directly into the
+				// temporary object; no body-sized Go allocation is required.
+				b, err := readNonspace(r)
+				if err != nil || b != '"' {
+					return fmt.Errorf("missing base64 body quote")
+				}
+				encodedLen := base64.StdEncoding.EncodedLen(int(req.BodySize))
+				limited := &io.LimitedReader{R: r, N: int64(encodedLen)}
+				resp = c.putReader(req, base64.NewDecoder(base64.StdEncoding, limited))
+				if limited.N != 0 {
+					return fmt.Errorf("incomplete base64 body")
+				}
+				b, err = r.ReadByte()
+				if err != nil || b != '"' {
+					return fmt.Errorf("invalid base64 body terminator")
+				}
+				b, err = r.ReadByte()
+				if err != nil || b != '\n' {
+					return fmt.Errorf("invalid body newline")
+				}
+			}
+		case "close":
+			err = c.Close()
+			resp = Response{ID: req.ID}
+			if err != nil {
+				resp.Err = err.Error()
+			}
+		default:
+			resp = Response{ID: req.ID, Err: "unsupported command"}
+		}
+		if err = enc.Encode(resp); err != nil {
 			return err
 		}
 		if req.Command == "close" {
@@ -97,132 +557,15 @@ func Serve(in io.Reader, out io.Writer, dir string, maxBytes int64) error {
 	}
 }
 
-func (c *Cache) handle(req Request, body []byte) Response {
-	switch req.Command {
-	case "get":
-		return c.get(req)
-	case "put":
-		return c.put(req, body)
-	case "close":
-		return Response{ID: req.ID}
-	default:
-		return Response{ID: req.ID, Err: "unsupported command " + req.Command}
-	}
-}
-
-func (c *Cache) objectPath(actionID []byte) string {
-	hexID := hex.EncodeToString(actionID)
-	if hexID == "" {
-		hexID = "empty"
-	}
-	prefix := hexID
-	if len(prefix) > 2 {
-		prefix = prefix[:2]
-	}
-	return filepath.Join(c.dir, prefix, hexID)
-}
-
-func (c *Cache) get(req Request) Response {
-	path := c.objectPath(req.ActionID)
-	info, err := os.Stat(path)
-	if err != nil {
-		return Response{ID: req.ID, Miss: true}
-	}
-	meta, err := readMeta(path + ".meta")
-	if err != nil {
-		return Response{ID: req.ID, Miss: true}
-	}
-	now := time.Now()
-	_ = os.Chtimes(path, now, now)
-	return Response{ID: req.ID, OutputID: meta.OutputID, Size: info.Size(), DiskPath: path, Time: &meta.PutAt}
-}
-
-func (c *Cache) put(req Request, body []byte) Response {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	path := c.objectPath(req.ActionID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return Response{ID: req.ID, Err: err.Error()}
-	}
-	if err := os.WriteFile(path, body, 0o600); err != nil {
-		return Response{ID: req.ID, Err: err.Error()}
-	}
-	meta := objectMeta{OutputID: req.OutputID, PutAt: time.Now().UTC(), Size: int64(len(body))}
-	if err := writeMeta(path+".meta", meta); err != nil {
-		return Response{ID: req.ID, Err: err.Error()}
-	}
-	if err := c.evictLocked(); err != nil {
-		return Response{ID: req.ID, Err: err.Error()}
-	}
-	return Response{ID: req.ID, DiskPath: path, Size: meta.Size, OutputID: req.OutputID, Time: &meta.PutAt}
-}
-
-type objectMeta struct {
-	OutputID []byte    `json:"output_id"`
-	PutAt    time.Time `json:"put_at"`
-	Size     int64     `json:"size"`
-}
-
-func readMeta(path string) (objectMeta, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return objectMeta{}, err
-	}
-	var meta objectMeta
-	if err := json.Unmarshal(raw, &meta); err != nil {
-		return objectMeta{}, err
-	}
-	return meta, nil
-}
-
-func writeMeta(path string, meta objectMeta) error {
-	raw, err := json.Marshal(meta)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, raw, 0o600)
-}
-
-type objectStat struct {
-	path    string
-	modTime time.Time
-	size    int64
-}
-
-func (c *Cache) evictLocked() error {
-	var objects []objectStat
-	total := int64(0)
-	err := filepath.WalkDir(c.dir, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+func readNonspace(r *bufio.Reader) (byte, error) {
+	for i := 0; i < 64; i++ {
+		b, e := r.ReadByte()
+		if e != nil {
+			return b, e
 		}
-		if entry.IsDir() || filepath.Ext(path) == ".meta" {
-			return nil
+		if b != ' ' && b != '\n' && b != '\r' && b != '\t' {
+			return b, nil
 		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		objects = append(objects, objectStat{path: path, modTime: info.ModTime(), size: info.Size()})
-		total += info.Size()
-		return nil
-	})
-	if err != nil {
-		return err
 	}
-	if total <= c.maxBytes {
-		return nil
-	}
-	sort.Slice(objects, func(i, j int) bool { return objects[i].modTime.Before(objects[j].modTime) })
-	for _, object := range objects {
-		if total <= c.maxBytes {
-			break
-		}
-		if err := os.Remove(object.path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		_ = os.Remove(object.path + ".meta")
-		total -= object.size
-	}
-	return nil
+	return 0, fmt.Errorf("excessive protocol whitespace")
 }

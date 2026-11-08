@@ -3,8 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/nstranquist/session-pressure/sessionpressure/gocachelru"
 )
@@ -47,8 +49,8 @@ func parseSize(raw string) (int64, error) {
 		value = raw[:len(raw)-2]
 		factor = 1_000_000_000
 	}
-	var n int64
-	if _, err := fmt.Sscan(value, &n); err != nil || n <= 0 {
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || n <= 0 || n > math.MaxInt64/factor {
 		return 0, fmt.Errorf("invalid size %q", raw)
 	}
 	return n * factor, nil
