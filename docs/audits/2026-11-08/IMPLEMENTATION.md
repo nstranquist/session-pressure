@@ -1154,3 +1154,22 @@ privileged trace and elapsed gates close. Improvements applied in this run:
 retain sampling errors instead of stale app metrics, bind observers to immutable
 helpers, keep generations separate, serialize native builds, avoid relocated
 Swift caches, and replace per-second time labels with bounded human-scale refresh.
+
+
+### Final gate refusal and first post-fix minute (21:01 UTC)
+
+The new app's first valid 60.975-second CPU interval is 0.2624%, below the 1%
+target; peak RSS remains 114.219 MiB/128. Both samples have valid app evidence,
+zero sampling failures, resident PID 90605, zero restarts and passing live
+health. This early directional result is not a 30-minute acceptance or a
+controlled causal comparison with the previous app. The immutable collector
+continues to accumulate the required interval.
+
+The final installed `teammate finish` check refuses closure because delivery
+`64c635e4-3fae-4254-bcd6-24e913bbaba0` is still paused. This was not overridden.
+All seven residuals use valid agent/human owners and explicitly name pending
+deliveries, nine factory paths, peer app paths, forward runtime owner, performance
+and elapsed gates, and administrator trace. The private
+`finish-final-command-result.json` retains the refusal; no successful final
+finish receipt is claimed. WORK-41 stays in progress. The earlier score is
+a self-review measure, not proof of terminal acceptance.
