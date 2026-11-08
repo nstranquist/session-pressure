@@ -7,6 +7,7 @@ import SwiftUI
 final class PressureStore: ObservableObject {
     enum Section: String, CaseIterable, Identifiable {
         case overview = "Overview"
+        case dayGate = "Day Gate"
         case trees = "Agent Trees"
         case processIncidents = "Process Incidents"
         case diskWrites = "Disk Writes"
@@ -22,6 +23,7 @@ final class PressureStore: ObservableObject {
         var systemImage: String {
             switch self {
             case .overview: "gauge.with.dots.needle.67percent"
+            case .dayGate: "calendar.badge.exclamationmark"
             case .trees: "tree"
             case .processIncidents: "waveform.path.ecg"
             case .diskWrites: "internaldrive"
@@ -38,7 +40,7 @@ final class PressureStore: ObservableObject {
         /// remap by that exact menu title, not by this digit.
         var commandDigit: String {
             switch self {
-            case .overview: "1"
+            case .overview, .dayGate: "1"
             case .trees: "2"
             case .processIncidents: "0"
             case .diskWrites: "3"
@@ -51,11 +53,18 @@ final class PressureStore: ObservableObject {
             }
         }
 
-        var shortcutLabel: String { "⌘\(commandDigit)" }
+        var shortcutModifiers: EventModifiers {
+            self == .dayGate ? [.command, .shift] : [.command]
+        }
+
+        var shortcutLabel: String {
+            (self == .dayGate ? "⇧⌘" : "⌘") + commandDigit
+        }
 
         var freshnessKey: String {
             switch self {
             case .overview, .trees, .storage, .processIncidents: "status"
+            case .dayGate: "advisor"
             case .diskWrites: "diskWrites"
             case .work: "work"
             case .policy: "policy"
@@ -180,6 +189,16 @@ final class PressureStore: ObservableObject {
         }
     }
 
+    @Published var advisorBrief: AdvisorBrief?
+    @Published var advisorBriefError: String?
+    @Published var advisorBriefRefreshedAt: Date?
+    private var advisorBriefAttemptedAt: Date?
+    private var isAdvisorRefreshing = false
+    var residueCount: Int { advisorBrief?.residueCount ?? 0 }
+    var selectedSectionRefreshedAt: Date? {
+        selectedSection == .dayGate ? advisorBriefRefreshedAt : board.sectionRefreshedAt[selectedSection.freshnessKey]
+    }
+
     @Published var capabilities: ProductCapabilities?
     @Published var identityError: String?
     @Published var diskHealth: DiskHealthSnapshot?
@@ -189,6 +208,7 @@ final class PressureStore: ObservableObject {
         didSet {
             guard selectedSection != oldValue else { return }
             Task { await refresh(live: false, light: false) }
+            if selectedSection == .dayGate { Task { await refreshAdvisorBrief(force: false) } }
             if selectedSection == .work {
                 scheduleWorkFocusPoll(immediate: true)
             } else {
@@ -517,6 +537,7 @@ final class PressureStore: ObservableObject {
             lastError = board.sectionErrors.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }.joined(separator: "; ")
             if lastError?.isEmpty == true { lastError = nil }
             refreshWorkSelectionFromBoard()
+            await refreshAdvisorBrief(force: false)
             updateDockBadge()
             if selectedSection == .diskWrites {
                 await refreshDiskWrites(live: true, includeHistory: diskWriteHistory.isEmpty)
@@ -558,6 +579,40 @@ final class PressureStore: ObservableObject {
         guard let client else { return }
         do { diskHealth = try await client.diskHealth().snapshot; diskHealthError = nil }
         catch { diskHealthError = error.localizedDescription }
+    }
+
+    /// Refresh the read-only day gate at most every 30 minutes. Missing brief
+    /// state fails open and never marks the pressure control plane unhealthy.
+    func refreshAdvisorBrief(force: Bool) async {
+        guard let client, !isAdvisorRefreshing else { return }
+        isAdvisorRefreshing = true
+        defer { isAdvisorRefreshing = false }
+        let now = Date()
+        let today = Self.chicagoDay(now)
+        if advisorBrief?.day != today {
+            advisorBrief = nil
+        }
+        if !force,
+           let last = advisorBriefAttemptedAt,
+           now.timeIntervalSince(last) < 30 * 60 {
+            return
+        }
+        advisorBriefAttemptedAt = now
+        do {
+            let brief = try await client.advisorBrief()
+            guard brief.day == today else {
+                throw NDevPressureClientError.malformedJSON(
+                    "advisor brief day \(brief.day) does not match \(today)"
+                )
+            }
+            advisorBriefRefreshedAt = now
+            advisorBrief = brief
+            advisorBriefError = nil
+        } catch {
+            advisorBrief = nil
+            advisorBriefError = error.localizedDescription
+        }
+        updateDockBadge()
     }
 
     func refreshDiskWrites(live: Bool = true, includeHistory: Bool = false) async {
@@ -607,6 +662,10 @@ final class PressureStore: ObservableObject {
     }
 
     func handleDeepLink(_ url: URL) {
+        if url.scheme == "ndev-pressure", url.host == "day-gate" {
+            selectedSection = .dayGate
+            return
+        }
         if url.scheme == "ndev-pressure", url.host == "process-incidents" {
             selectedSection = .processIncidents
             return
@@ -1088,6 +1147,10 @@ final class PressureStore: ObservableObject {
 
     private func updateDockBadge() {
         let app = NSApplication.shared
+        if let advisorBrief {
+            app.dockTile.badgeLabel = advisorBrief.dockBadge(for: board.level)
+            return
+        }
         switch board.level {
         case .normal, .unknown:
             app.dockTile.badgeLabel = nil
@@ -1098,5 +1161,13 @@ final class PressureStore: ObservableObject {
         case .critical:
             app.dockTile.badgeLabel = "CRIT"
         }
+    }
+    private static func chicagoDay(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "America/Chicago")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
 }

@@ -48,7 +48,7 @@ struct PressureStoreTests {
     func storagePaneOwnsIdleTab() {
         let store = PressureStore()
         #expect(PressureStore.Section.allCases.map(\.rawValue) == [
-            "Overview", "Agent Trees", "Process Incidents", "Disk Writes", "Storage",
+            "Overview", "Day Gate", "Agent Trees", "Process Incidents", "Disk Writes", "Storage",
             "Work Queue", "Policy", "Monitor", "Telemetry", "Settings",
         ])
         store.openStorage(tab: .idle)
@@ -69,6 +69,37 @@ struct PressureStoreTests {
             )
         ]
         #expect(store.canBeginAutoSafeReclaim == false)
+        store.stop()
+    }
+
+    @Test("all panes have distinct menu shortcuts")
+    func distinctMenuShortcuts() {
+        let labels = PressureStore.Section.allCases.map(\.shortcutLabel)
+        #expect(Set(labels).count == labels.count)
+    }
+
+    @Test("day gate deep links navigate without requesting a mutation")
+    func dayGateDeepLinkOnlyNavigates() throws {
+        let store = PressureStore()
+        store.handleDeepLink(try #require(URL(string: "ndev-pressure://day-gate?force=true")))
+        #expect(store.selectedSection == .dayGate)
+        #expect(store.pendingDiskTraceRequest == nil)
+        store.stop()
+    }
+
+    @Test("day gate freshness uses its own successful read")
+    func dayGateFreshnessUsesAdvisorRead() {
+        let store = PressureStore()
+        let advisorRead = Date(timeIntervalSince1970: 100)
+        let statusRead = Date(timeIntervalSince1970: 200)
+        store.advisorBriefRefreshedAt = advisorRead
+        store.board.sectionRefreshedAt["status"] = statusRead
+        store.selectedSection = .dayGate
+        #expect(store.selectedSectionRefreshedAt == advisorRead)
+        store.advisorBriefRefreshedAt = nil
+        #expect(store.selectedSectionRefreshedAt == nil)
+        store.selectedSection = .overview
+        #expect(store.selectedSectionRefreshedAt == statusRead)
         store.stop()
     }
 
