@@ -24,7 +24,9 @@ func CommandLeaf(args []string) string {
 	case "browser":
 		return AllowedLeaf("browser", args[1:], "status", []string{"status", "pause", "auto"})
 	case "remote":
-		return AllowedLeaf("remote", args[1:], "status", []string{"status", "enable", "disable"})
+		return AllowedLeaf("remote", args[1:], "status", []string{"status", "enable", "disable", "inspect", "job-log"})
+	case "identity":
+		return AllowedLeaf("identity", args[1:], "help", []string{"help", "show"})
 	case "api":
 		return AllowedLeaf("api", args[1:], "help", []string{"help", "serve", "status"})
 	case "recovery":
@@ -41,7 +43,7 @@ func CommandLeaf(args []string) string {
 		}
 		return leaf
 	case "io":
-		leaf := AllowedLeaf("io", args[1:], "status", []string{"help", "status", "top", "history", "policy", "trace"})
+		leaf := AllowedLeaf("io", args[1:], "status", []string{"help", "status", "health", "top", "history", "policy", "trace"})
 		if leaf == "io.policy" {
 			return AllowedLeaf("io.policy", args[2:], "show", []string{"show", "observe", "enable-alerts", "disable"})
 		}

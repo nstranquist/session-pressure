@@ -47,6 +47,10 @@ Subcommands:
   work reschedule --operation-id ID --confirm  Cancel a scheduled lease, then ndev schedule run-now
   work handoff --operation-id ID             Write an operator brief for an interactive agent
   work run --class C [--exclusive] [--wait D] -- CMD  Hold shared host capacity while CMD runs
+  remote status|enable|disable      Inspect or set automatic Go routing
+  remote inspect [--no-box]         Read bounded delegate and gate-runner evidence
+  remote job-log --id JOB           Read at most 100 KB from one runner job log
+  browser status|pause|auto         Inspect or set managed browser capture policy
   policy show                      Show the effective policy
   policy profile show|apply NAME   Named balanced / throughput / interactive / observe work styles
                                    apply flags: --multi-agent (earlier soft-launch warnings), --with-auto-shed, --dry-run

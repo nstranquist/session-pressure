@@ -44,6 +44,9 @@ func cmdSessionPressureBrowser(g *Flags, args []string) int {
 }
 
 func cmdSessionPressureRemote(g *Flags, args []string) int {
+	if len(args) > 0 && (args[0] == "inspect" || args[0] == "job-log") {
+		return cmdSessionPressureGaterunner(g, args)
+	}
 	dir, err := sessionpressure.DataDir()
 	if err != nil {
 		return sessionPressureError(err.Error(), 1)
