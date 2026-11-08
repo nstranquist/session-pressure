@@ -27,6 +27,6 @@ func CurrentCapabilities() Capabilities {
 	executable, _ := os.Executable()
 	return Capabilities{SchemaVersion: 1, Version: Version, SourceRevision: SourceRevision(),
 		Executable: executable, OS: runtime.GOOS, Arch: runtime.GOARCH, CapturedAt: time.Now().UTC(),
-		Operations:     []string{"capabilities", "processes", "doctor", "audit", "board", "status", "identity", "work", "storage", "io", "policy", "monitor", "telemetry", "cleanup", "artifact", "api"},
+		Operations:     []string{"capabilities", "snapshot", "check", "self-test", "recovery", "idle", "browser", "remote", "processes", "doctor", "audit", "board", "status", "identity", "work", "storage", "io", "policy", "monitor", "telemetry", "cleanup", "artifact", "api"},
 		NativeSampling: runtime.GOOS == "darwin", ProviderActionability: "provider-inventory-and-plan", PolicyAuthority: "persisted-policy"}
 }
