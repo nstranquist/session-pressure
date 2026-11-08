@@ -49,6 +49,18 @@ final class PressureStore: ObservableObject {
         }
 
         var shortcutLabel: String { "⌘\(commandDigit)" }
+
+        var freshnessKey: String {
+            switch self {
+            case .overview, .trees, .storage: "status"
+            case .diskWrites: "diskWrites"
+            case .work: "work"
+            case .policy: "policy"
+            case .monitor: "monitor"
+            case .telemetry: "telemetry"
+            case .settings: "policy"
+            }
+        }
     }
 
     enum StorageTab: String, CaseIterable, Identifiable {
@@ -165,9 +177,15 @@ final class PressureStore: ObservableObject {
         }
     }
 
+    @Published var capabilities: ProductCapabilities?
+    @Published var identityError: String?
+    @Published var diskHealth: DiskHealthSnapshot?
+    @Published var diskHealthError: String?
     @Published var board = PressureBoard()
     @Published var selectedSection: Section = .overview {
         didSet {
+            guard selectedSection != oldValue else { return }
+            Task { await refresh(live: false, light: false) }
             if selectedSection == .work {
                 scheduleWorkFocusPoll(immediate: true)
             } else {
@@ -175,14 +193,12 @@ final class PressureStore: ObservableObject {
             }
             if selectedSection == .diskWrites {
                 scheduleDiskFocusPoll(immediate: true)
+                Task { await refreshDiskHealth() }
             } else {
                 stopDiskFocusPoll()
             }
             if selectedSection == .storage, storageTab == .disk {
                 Task { await refreshStorageInventory() }
-            }
-            if selectedSection == .storage, storageTab == .idle {
-                Task { await refresh(live: false, light: false) }
             }
             if selectedSection == .policy {
                 Task { await refreshStorageInventory() }
@@ -329,6 +345,7 @@ final class PressureStore: ObservableObject {
     func start() {
         do {
             client = try NDevPressureClient()
+            Task { await refreshIdentity() }
             lastError = nil
         } catch {
             lastError = error.localizedDescription
@@ -432,7 +449,17 @@ final class PressureStore: ObservableObject {
         }
     }
 
+    private var pendingRefresh = false
+    private var pendingLiveRefresh = false
+    private var pendingRichRefresh = false
+
     func refresh(live: Bool = false, light: Bool = false) async {
+        if isRefreshing {
+            pendingRefresh = true
+            pendingLiveRefresh = pendingLiveRefresh || live
+            pendingRichRefresh = pendingRichRefresh || !light
+            return
+        }
         guard let client else {
             do {
                 self.client = try NDevPressureClient()
@@ -444,7 +471,15 @@ final class PressureStore: ObservableObject {
         }
 
         isRefreshing = true
-        defer { isRefreshing = false }
+        defer {
+            isRefreshing = false
+            if pendingRefresh {
+                let nextLive = pendingLiveRefresh
+                let nextLight = !pendingRichRefresh
+                pendingRefresh = false; pendingLiveRefresh = false; pendingRichRefresh = false
+                Task { await refresh(live: nextLive, light: nextLight) }
+            }
+        }
 
         do {
             // Light path: host status, work, and admission in a single process.
@@ -474,7 +509,8 @@ final class PressureStore: ObservableObject {
                     previous: board
                 )
             }
-            lastError = nil
+            lastError = board.sectionErrors.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }.joined(separator: "; ")
+            if lastError?.isEmpty == true { lastError = nil }
             refreshWorkSelectionFromBoard()
             updateDockBadge()
             if selectedSection == .diskWrites {
@@ -487,23 +523,36 @@ final class PressureStore: ObservableObject {
 
     /// Silent work-status poll for the Work Queue focus path (no full-board isRefreshing).
     func refreshWorkFocus() async {
-        guard let client else { return }
+        guard let client, !isWorkFocusRefreshing else { return }
         isWorkFocusRefreshing = true
         defer { isWorkFocusRefreshing = false }
         do {
             let workEnv = try await client.workStatus()
             var next = board
             next.work = workEnv.work
+            next.sectionRefreshedAt["work"] = Date()
+            next.sectionErrors.removeValue(forKey: "work")
             next.refreshedAt = Date()
             next.binaryPath = client.binaryPath
             board = next
             refreshWorkSelectionFromBoard()
             updateDockBadge()
         } catch {
-            if board.work == nil {
-                lastError = error.localizedDescription
-            }
+            board.sectionErrors["work"] = error.localizedDescription
+            lastError = error.localizedDescription
         }
+    }
+
+    func refreshIdentity() async {
+        guard let client else { return }
+        do { capabilities = try await client.capabilities().capabilities; identityError = nil }
+        catch { identityError = error.localizedDescription }
+    }
+
+    func refreshDiskHealth() async {
+        guard let client else { return }
+        do { diskHealth = try await client.diskHealth().snapshot; diskHealthError = nil }
+        catch { diskHealthError = error.localizedDescription }
     }
 
     func refreshDiskWrites(live: Bool = true, includeHistory: Bool = false) async {
@@ -515,6 +564,8 @@ final class PressureStore: ObservableObject {
             // do not launch a second live `io top` sample from the UI.
             let status = try await client.diskWriteStatus(live: live, full: true)
             diskWriteSummary = status.report?.summary ?? status.summary
+            board.sectionRefreshedAt["diskWrites"] = Date()
+            board.sectionErrors.removeValue(forKey: "diskWrites")
             diskWriters = status.report?.writers ?? []
             if let policy = status.diskWritePolicy {
                 diskWritePolicy = policy

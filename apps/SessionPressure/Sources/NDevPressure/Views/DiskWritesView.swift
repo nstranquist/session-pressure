@@ -24,6 +24,7 @@ struct DiskWritesView: View {
                 }
                 scopeNotice
                 metrics
+                lifetimeHealth
                 writers
                 history
                 traceResult
@@ -86,6 +87,29 @@ struct DiskWritesView: View {
         } message: {
             Text(PressureHelp.diskWriteTrace)
         }
+    }
+
+    private var lifetimeHealth: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("SSD lifetime health").font(.headline)
+                Spacer()
+                Button("Read SMART") { Task { await store.refreshDiskHealth() } }
+            }
+            if let sample = store.diskHealth {
+                HStack { Text("Sample age:"); Text(sample.capturedAt, style: .relative) }
+                    .font(.caption).foregroundStyle(.secondary)
+                if sample.available {
+                    Text("Vendor estimated life used: \(sample.percentageUsed)%")
+                    Text("Lifetime host writes: \(Double(sample.hostBytesWritten) / 1_000_000_000_000, specifier: "%.1f") TB")
+                    Text("Media errors: \(sample.mediaErrors) · Critical warning: \(sample.criticalWarning)")
+                } else { Text("Unavailable: " + (sample.reason ?? "No supported SMART source")) }
+            } else { Text("No SMART sample has been read.").foregroundStyle(.secondary) }
+            if let error = store.diskHealthError { InlineError(message: error) }
+            Text("Host writes measure data sent to the drive. The vendor estimate does not predict remaining service life.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(14).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var header: some View {
@@ -231,7 +255,7 @@ struct DiskWritesView: View {
                             VStack(alignment: .trailing, spacing: 2) {
                                 Text("\(formatBytes(writer.bytesPerSecond))/s")
                                     .font(PressureTheme.monoCaption)
-                                Text("\(formatBytes(Double(writer.windowBytes))) / 15m")
+                                Text("\(formatBytes(Double(writer.windowBytes))) / \(store.diskWriteSummary.map(windowLabel) ?? "measured window")")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }

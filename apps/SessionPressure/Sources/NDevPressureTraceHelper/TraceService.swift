@@ -154,6 +154,19 @@ final class TraceService: NSObject, NDevPressureTraceXPC {
         process.standardError = pipe
         process.standardInput = FileHandle.nullDevice
         try process.run()
+        // fs_usage's own -t is not a wall-clock deadline. Kill only this child
+        // while Process still owns its PID, even if pipe reads are blocked.
+        let deadline = DispatchWorkItem {
+            if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + Double(durationSeconds + 5), execute: deadline)
+        defer {
+            deadline.cancel()
+            if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
+            process.waitUntilExit()
+            try? pipe.fileHandleForReading.close()
+            try? pipe.fileHandleForWriting.close()
+        }
 
         // Revalidate immediately after the tracer has attached. This prevents a
         // dead target or already-reused PID from becoming an observation target.

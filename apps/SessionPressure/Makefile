@@ -5,6 +5,7 @@ EXECUTABLE := NDevPressure
 TRACE_HELPER := NDevPressureTraceHelper
 TRACE_HELPER_LABEL := com.nstranquist.ndev-pressure.trace-helper
 CODE_SIGN_IDENTITY ?= -
+RELEASE_TOOL ?= $(HOME)/.local/bin/session-pressure-release
 CODE_SIGN_FLAGS := --force --sign "$(CODE_SIGN_IDENTITY)"
 # The service-management entitlement is restricted: AMFI refuses to spawn an
 # ad-hoc-signed binary that carries it (launchd error 153). Ad-hoc builds sign
@@ -56,17 +57,13 @@ test:
 	swift test
 
 install: build
+	@"$(RELEASE_TOOL)" install-app --app "$(APP_DIR)" --destination "$(INSTALLED_APP)"
 	@pkill -x "$(EXECUTABLE)" 2>/dev/null || true
-	@sleep 0.3
-	@rm -rf "$(INSTALLED_APP)"
-	@cp -R "$(APP_DIR)" "$(INSTALLED_APP)"
 	@/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$(INSTALLED_APP)" 2>/dev/null || true
-	@echo "  Installed: $(INSTALLED_APP)"
 
 install-headless: build
-	@ditto "$(APP_DIR)" "$(INSTALLED_APP)"
-	@codesign --verify --deep --strict "$(INSTALLED_APP)"
-	@echo "  Updated in place without relaunch: $(INSTALLED_APP)"
+	@"$(RELEASE_TOOL)" install-app --app "$(APP_DIR)" --destination "$(INSTALLED_APP)"
+	@echo "  Updated without relaunch: $(INSTALLED_APP)"
 
 run: install
 	@open -na "$(INSTALLED_APP)"

@@ -6,6 +6,7 @@ license.workspace = true
 description = "JSON client and models for the Session Pressure GPUI UI. No sampling."
 
 [dependencies]
+libc = "0.2"
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
