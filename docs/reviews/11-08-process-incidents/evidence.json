@@ -644,7 +644,967 @@
       "source_change": "paused idle uses normal policy cadence; five-second lightweight demand check wakes recovery sampling",
       "remote_race_job": "20261108T190116Z-3868757",
       "remote_native_build_job": "20261108T190403Z-3876991",
-      "promotion": "pending concurrent release owner remote-proof hold; do not infer installed CPU improvement from source tests"
+      "promotion": "3e5da8f promoted at 19:11; concurrent forward release 828b1ea replaced it and restored coherent runtime. Longer installed observation failed again; CPU acceptance remains open.",
+      "post_promotion_observation": {
+        "scope": "bounded two-minute passive installed check; no soak claim",
+        "samples": [
+          {
+            "at": "2026-11-08T19:11:48.334259+00:00",
+            "doctor": {
+              "action": "doctor",
+              "auto_shed_critical": false,
+              "coverage_status": "attention",
+              "doctor": {
+                "schema_version": 1,
+                "ok": false,
+                "protection_mode": "admission-only",
+                "policy_persisted": true,
+                "enforce_admission": true,
+                "auto_shed_critical": false,
+                "monitor": {
+                  "healthy": false,
+                  "fresh": true,
+                  "age_seconds": 12.239959,
+                  "pid": 15012,
+                  "loaded": true,
+                  "running": true
+                },
+                "host": {
+                  "level": "normal",
+                  "source": "resident"
+                },
+                "work": {
+                  "capacity": 8,
+                  "used": 0,
+                  "queue_depth": 0,
+                  "express_green": false
+                },
+                "launch_soft_pressure": {
+                  "would_block": false,
+                  "noise_suppressed": false,
+                  "enforced": true
+                },
+                "coverage_status": "attention",
+                "source_revisions": {
+                  "cli": "3e5da8f46b9cc54003e29278f4c0abdedca85644",
+                  "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+                  "installed_helper": "3e5da8f46b9cc54003e29278f4c0abdedca85644",
+                  "checked": true,
+                  "mismatch": true,
+                  "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+                },
+                "fixes": [
+                  "session-pressure monitor install",
+                  "make build",
+                  "make -C /Users/nicostran/dev/nicos-tools/nicos-dev promote-session-pressure"
+                ],
+                "warnings": [
+                  "resident guard resource budget is failing under the effective policy",
+                  "resident is not daily-driver ready",
+                  "session-pressure binaries disagree on source revision (cli=3e5da8f46b9c front_door=828b1ea7bb40 helper=3e5da8f46b9c)"
+                ],
+                "health": {
+                  "monitor_healthy": false,
+                  "daily_driver_ready": false,
+                  "operator_ready": false,
+                  "protection_mode": "admission-only",
+                  "latest_monitor_fresh": true,
+                  "latest_monitor_age_seconds": 12.239959,
+                  "latest_monitor_max_age_seconds": 255,
+                  "resident_samples": 5,
+                  "resident_normal_samples": 4,
+                  "required_normal_samples": 4,
+                  "budget_headroom": {
+                    "rolling_sample_count": 5,
+                    "rolling_window_size": 64,
+                    "samples_until_single_outlier_excluded": 15,
+                    "p95_excludes_single_maximum": false,
+                    "rss_observed_mb": 15.40625,
+                    "rss_limit_mb": 30,
+                    "rss_margin_mb": 14.59375,
+                    "idle_duty_observed_percent": 1.1947215143980308,
+                    "idle_duty_limit_percent": 0.5,
+                    "idle_duty_margin_percent": -0.6947215143980308,
+                    "sample_cpu_p95_observed_ms": 65.871,
+                    "sample_cpu_max_observed_ms": 65.871,
+                    "sample_cpu_limit_ms": 150,
+                    "sample_cpu_margin_ms": 84.129,
+                    "telemetry_projected_bytes_per_day": 528384,
+                    "telemetry_limit_bytes_per_day": 1048576,
+                    "telemetry_margin_bytes_per_day": 520192
+                  },
+                  "health_reasons": [
+                    "resident guard resource budget is failing under the effective policy"
+                  ],
+                  "daily_driver_reasons": [
+                    "resident monitor is unhealthy"
+                  ],
+                  "operator_reasons": [
+                    "resident is not daily-driver ready"
+                  ]
+                }
+              },
+              "enforce_admission": true,
+              "fixes": [
+                "session-pressure monitor install",
+                "make build",
+                "make -C /Users/nicostran/dev/nicos-tools/nicos-dev promote-session-pressure"
+              ],
+              "health": {
+                "monitor_healthy": false,
+                "daily_driver_ready": false,
+                "operator_ready": false,
+                "protection_mode": "admission-only",
+                "latest_monitor_fresh": true,
+                "latest_monitor_age_seconds": 12.239959,
+                "latest_monitor_max_age_seconds": 255,
+                "resident_samples": 5,
+                "resident_normal_samples": 4,
+                "required_normal_samples": 4,
+                "budget_headroom": {
+                  "rolling_sample_count": 5,
+                  "rolling_window_size": 64,
+                  "samples_until_single_outlier_excluded": 15,
+                  "p95_excludes_single_maximum": false,
+                  "rss_observed_mb": 15.40625,
+                  "rss_limit_mb": 30,
+                  "rss_margin_mb": 14.59375,
+                  "idle_duty_observed_percent": 1.1947215143980308,
+                  "idle_duty_limit_percent": 0.5,
+                  "idle_duty_margin_percent": -0.6947215143980308,
+                  "sample_cpu_p95_observed_ms": 65.871,
+                  "sample_cpu_max_observed_ms": 65.871,
+                  "sample_cpu_limit_ms": 150,
+                  "sample_cpu_margin_ms": 84.129,
+                  "telemetry_projected_bytes_per_day": 528384,
+                  "telemetry_limit_bytes_per_day": 1048576,
+                  "telemetry_margin_bytes_per_day": 520192
+                },
+                "health_reasons": [
+                  "resident guard resource budget is failing under the effective policy"
+                ],
+                "daily_driver_reasons": [
+                  "resident monitor is unhealthy"
+                ],
+                "operator_reasons": [
+                  "resident is not daily-driver ready"
+                ]
+              },
+              "host": {
+                "level": "normal",
+                "source": "resident"
+              },
+              "launch_soft_pressure": {
+                "would_block": false,
+                "noise_suppressed": false,
+                "enforced": true
+              },
+              "monitor": {
+                "healthy": false,
+                "fresh": true,
+                "age_seconds": 12.239959,
+                "pid": 15012,
+                "loaded": true,
+                "running": true
+              },
+              "ok": false,
+              "policy_persisted": true,
+              "protection_mode": "admission-only",
+              "schema_version": 1,
+              "warnings": [
+                "resident guard resource budget is failing under the effective policy",
+                "resident is not daily-driver ready",
+                "session-pressure binaries disagree on source revision (cli=3e5da8f46b9c front_door=828b1ea7bb40 helper=3e5da8f46b9c)"
+              ],
+              "work": {
+                "capacity": 8,
+                "used": 0,
+                "queue_depth": 0,
+                "express_green": false
+              }
+            }
+          },
+          {
+            "at": "2026-11-08T19:12:18.508195+00:00",
+            "doctor": {
+              "action": "doctor",
+              "auto_shed_critical": false,
+              "coverage_status": "attention",
+              "doctor": {
+                "schema_version": 1,
+                "ok": true,
+                "protection_mode": "admission-only",
+                "policy_persisted": true,
+                "enforce_admission": true,
+                "auto_shed_critical": false,
+                "monitor": {
+                  "healthy": true,
+                  "fresh": true,
+                  "age_seconds": 10.708488,
+                  "pid": 18210,
+                  "loaded": true,
+                  "running": true
+                },
+                "host": {
+                  "level": "normal",
+                  "source": "resident"
+                },
+                "work": {
+                  "capacity": 8,
+                  "used": 0,
+                  "queue_depth": 0,
+                  "express_green": false
+                },
+                "launch_soft_pressure": {
+                  "would_block": false,
+                  "noise_suppressed": false,
+                  "enforced": true
+                },
+                "coverage_status": "attention",
+                "source_revisions": {
+                  "cli": "828b1ea7bb400423557648cfb84d033dcae07db7",
+                  "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+                  "installed_helper": "828b1ea7bb400423557648cfb84d033dcae07db7",
+                  "checked": true,
+                  "mismatch": false
+                },
+                "warnings": [
+                  "resident is not daily-driver ready"
+                ],
+                "health": {
+                  "monitor_healthy": true,
+                  "daily_driver_ready": false,
+                  "operator_ready": false,
+                  "protection_mode": "admission-only",
+                  "latest_monitor_fresh": true,
+                  "latest_monitor_age_seconds": 10.708488,
+                  "latest_monitor_max_age_seconds": 255,
+                  "resident_samples": 2,
+                  "resident_normal_samples": 2,
+                  "required_normal_samples": 4,
+                  "budget_headroom": {
+                    "rolling_sample_count": 2,
+                    "rolling_window_size": 64,
+                    "samples_until_single_outlier_excluded": 18,
+                    "p95_excludes_single_maximum": false,
+                    "rss_observed_mb": 15.859375,
+                    "rss_limit_mb": 30,
+                    "rss_margin_mb": 14.140625,
+                    "idle_duty_observed_percent": 0.11697535394411905,
+                    "idle_duty_limit_percent": 0.5,
+                    "idle_duty_margin_percent": 0.38302464605588094,
+                    "sample_cpu_p95_observed_ms": 52.126,
+                    "sample_cpu_max_observed_ms": 52.126,
+                    "sample_cpu_limit_ms": 150,
+                    "sample_cpu_margin_ms": 97.874,
+                    "telemetry_projected_bytes_per_day": 528384,
+                    "telemetry_limit_bytes_per_day": 1048576,
+                    "telemetry_margin_bytes_per_day": 520192
+                  },
+                  "daily_driver_reasons": [
+                    "resident baseline is not proven; need 4 normal samples from this pid"
+                  ],
+                  "operator_reasons": [
+                    "resident is not daily-driver ready"
+                  ]
+                }
+              },
+              "enforce_admission": true,
+              "fixes": [],
+              "health": {
+                "monitor_healthy": true,
+                "daily_driver_ready": false,
+                "operator_ready": false,
+                "protection_mode": "admission-only",
+                "latest_monitor_fresh": true,
+                "latest_monitor_age_seconds": 10.708488,
+                "latest_monitor_max_age_seconds": 255,
+                "resident_samples": 2,
+                "resident_normal_samples": 2,
+                "required_normal_samples": 4,
+                "budget_headroom": {
+                  "rolling_sample_count": 2,
+                  "rolling_window_size": 64,
+                  "samples_until_single_outlier_excluded": 18,
+                  "p95_excludes_single_maximum": false,
+                  "rss_observed_mb": 15.859375,
+                  "rss_limit_mb": 30,
+                  "rss_margin_mb": 14.140625,
+                  "idle_duty_observed_percent": 0.11697535394411905,
+                  "idle_duty_limit_percent": 0.5,
+                  "idle_duty_margin_percent": 0.38302464605588094,
+                  "sample_cpu_p95_observed_ms": 52.126,
+                  "sample_cpu_max_observed_ms": 52.126,
+                  "sample_cpu_limit_ms": 150,
+                  "sample_cpu_margin_ms": 97.874,
+                  "telemetry_projected_bytes_per_day": 528384,
+                  "telemetry_limit_bytes_per_day": 1048576,
+                  "telemetry_margin_bytes_per_day": 520192
+                },
+                "daily_driver_reasons": [
+                  "resident baseline is not proven; need 4 normal samples from this pid"
+                ],
+                "operator_reasons": [
+                  "resident is not daily-driver ready"
+                ]
+              },
+              "host": {
+                "level": "normal",
+                "source": "resident"
+              },
+              "launch_soft_pressure": {
+                "would_block": false,
+                "noise_suppressed": false,
+                "enforced": true
+              },
+              "monitor": {
+                "healthy": true,
+                "fresh": true,
+                "age_seconds": 10.708488,
+                "pid": 18210,
+                "loaded": true,
+                "running": true
+              },
+              "ok": true,
+              "policy_persisted": true,
+              "protection_mode": "admission-only",
+              "schema_version": 1,
+              "warnings": [
+                "resident is not daily-driver ready"
+              ],
+              "work": {
+                "capacity": 8,
+                "used": 0,
+                "queue_depth": 0,
+                "express_green": false
+              }
+            }
+          },
+          {
+            "at": "2026-11-08T19:12:48.671047+00:00",
+            "doctor": {
+              "action": "doctor",
+              "auto_shed_critical": false,
+              "coverage_status": "attention",
+              "doctor": {
+                "schema_version": 1,
+                "ok": true,
+                "protection_mode": "admission-only",
+                "policy_persisted": true,
+                "enforce_admission": true,
+                "auto_shed_critical": false,
+                "monitor": {
+                  "healthy": true,
+                  "fresh": true,
+                  "age_seconds": 10.632313,
+                  "pid": 18210,
+                  "loaded": true,
+                  "running": true
+                },
+                "host": {
+                  "level": "warning",
+                  "source": "resident"
+                },
+                "work": {
+                  "capacity": 8,
+                  "used": 0,
+                  "queue_depth": 0,
+                  "express_green": false
+                },
+                "launch_soft_pressure": {
+                  "would_block": false,
+                  "noise_suppressed": false,
+                  "enforced": true
+                },
+                "coverage_status": "attention",
+                "source_revisions": {
+                  "cli": "828b1ea7bb400423557648cfb84d033dcae07db7",
+                  "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+                  "installed_helper": "828b1ea7bb400423557648cfb84d033dcae07db7",
+                  "checked": true,
+                  "mismatch": false
+                },
+                "warnings": [
+                  "resident is not daily-driver ready"
+                ],
+                "health": {
+                  "monitor_healthy": true,
+                  "daily_driver_ready": false,
+                  "operator_ready": false,
+                  "protection_mode": "admission-only",
+                  "latest_monitor_fresh": true,
+                  "latest_monitor_age_seconds": 10.632313,
+                  "latest_monitor_max_age_seconds": 75,
+                  "resident_samples": 4,
+                  "resident_normal_samples": 3,
+                  "required_normal_samples": 4,
+                  "budget_headroom": {
+                    "rolling_sample_count": 4,
+                    "rolling_window_size": 64,
+                    "samples_until_single_outlier_excluded": 16,
+                    "p95_excludes_single_maximum": false,
+                    "rss_observed_mb": 15.859375,
+                    "rss_limit_mb": 30,
+                    "rss_margin_mb": 14.140625,
+                    "idle_duty_observed_percent": 0.18221910422109316,
+                    "idle_duty_limit_percent": 0.5,
+                    "idle_duty_margin_percent": 0.31778089577890684,
+                    "sample_cpu_p95_observed_ms": 52.126,
+                    "sample_cpu_max_observed_ms": 52.126,
+                    "sample_cpu_limit_ms": 150,
+                    "sample_cpu_margin_ms": 97.874,
+                    "telemetry_projected_bytes_per_day": 528384,
+                    "telemetry_limit_bytes_per_day": 1048576,
+                    "telemetry_margin_bytes_per_day": 520192
+                  },
+                  "daily_driver_reasons": [
+                    "resident baseline is not proven; need 4 normal samples from this pid"
+                  ],
+                  "operator_reasons": [
+                    "resident is not daily-driver ready"
+                  ]
+                }
+              },
+              "enforce_admission": true,
+              "fixes": [],
+              "health": {
+                "monitor_healthy": true,
+                "daily_driver_ready": false,
+                "operator_ready": false,
+                "protection_mode": "admission-only",
+                "latest_monitor_fresh": true,
+                "latest_monitor_age_seconds": 10.632313,
+                "latest_monitor_max_age_seconds": 75,
+                "resident_samples": 4,
+                "resident_normal_samples": 3,
+                "required_normal_samples": 4,
+                "budget_headroom": {
+                  "rolling_sample_count": 4,
+                  "rolling_window_size": 64,
+                  "samples_until_single_outlier_excluded": 16,
+                  "p95_excludes_single_maximum": false,
+                  "rss_observed_mb": 15.859375,
+                  "rss_limit_mb": 30,
+                  "rss_margin_mb": 14.140625,
+                  "idle_duty_observed_percent": 0.18221910422109316,
+                  "idle_duty_limit_percent": 0.5,
+                  "idle_duty_margin_percent": 0.31778089577890684,
+                  "sample_cpu_p95_observed_ms": 52.126,
+                  "sample_cpu_max_observed_ms": 52.126,
+                  "sample_cpu_limit_ms": 150,
+                  "sample_cpu_margin_ms": 97.874,
+                  "telemetry_projected_bytes_per_day": 528384,
+                  "telemetry_limit_bytes_per_day": 1048576,
+                  "telemetry_margin_bytes_per_day": 520192
+                },
+                "daily_driver_reasons": [
+                  "resident baseline is not proven; need 4 normal samples from this pid"
+                ],
+                "operator_reasons": [
+                  "resident is not daily-driver ready"
+                ]
+              },
+              "host": {
+                "level": "warning",
+                "source": "resident"
+              },
+              "launch_soft_pressure": {
+                "would_block": false,
+                "noise_suppressed": false,
+                "enforced": true
+              },
+              "monitor": {
+                "healthy": true,
+                "fresh": true,
+                "age_seconds": 10.632313,
+                "pid": 18210,
+                "loaded": true,
+                "running": true
+              },
+              "ok": true,
+              "policy_persisted": true,
+              "protection_mode": "admission-only",
+              "schema_version": 1,
+              "warnings": [
+                "resident is not daily-driver ready"
+              ],
+              "work": {
+                "capacity": 8,
+                "used": 0,
+                "queue_depth": 0,
+                "express_green": false
+              }
+            }
+          },
+          {
+            "at": "2026-11-08T19:13:18.823640+00:00",
+            "doctor": {
+              "action": "doctor",
+              "auto_shed_critical": false,
+              "coverage_status": "ready-with-explicit-boundaries",
+              "doctor": {
+                "schema_version": 1,
+                "ok": true,
+                "protection_mode": "admission-only",
+                "policy_persisted": true,
+                "enforce_admission": true,
+                "auto_shed_critical": false,
+                "monitor": {
+                  "healthy": true,
+                  "fresh": true,
+                  "age_seconds": 10.350241,
+                  "pid": 18210,
+                  "loaded": true,
+                  "running": true
+                },
+                "host": {
+                  "level": "normal",
+                  "source": "resident"
+                },
+                "work": {
+                  "capacity": 8,
+                  "used": 0,
+                  "queue_depth": 0,
+                  "express_green": true
+                },
+                "launch_soft_pressure": {
+                  "would_block": false,
+                  "noise_suppressed": false,
+                  "enforced": true
+                },
+                "coverage_status": "ready-with-explicit-boundaries",
+                "source_revisions": {
+                  "cli": "828b1ea7bb400423557648cfb84d033dcae07db7",
+                  "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+                  "installed_helper": "828b1ea7bb400423557648cfb84d033dcae07db7",
+                  "checked": true,
+                  "mismatch": false
+                },
+                "health": {
+                  "monitor_healthy": true,
+                  "daily_driver_ready": true,
+                  "operator_ready": true,
+                  "protection_mode": "admission-only",
+                  "latest_monitor_fresh": true,
+                  "latest_monitor_age_seconds": 10.350241,
+                  "latest_monitor_max_age_seconds": 255,
+                  "resident_samples": 6,
+                  "resident_normal_samples": 5,
+                  "required_normal_samples": 4,
+                  "budget_headroom": {
+                    "rolling_sample_count": 6,
+                    "rolling_window_size": 64,
+                    "samples_until_single_outlier_excluded": 14,
+                    "p95_excludes_single_maximum": false,
+                    "rss_observed_mb": 15.859375,
+                    "rss_limit_mb": 30,
+                    "rss_margin_mb": 14.140625,
+                    "idle_duty_observed_percent": 0.2664290545963428,
+                    "idle_duty_limit_percent": 0.5,
+                    "idle_duty_margin_percent": 0.2335709454036572,
+                    "sample_cpu_p95_observed_ms": 52.126,
+                    "sample_cpu_max_observed_ms": 52.126,
+                    "sample_cpu_limit_ms": 150,
+                    "sample_cpu_margin_ms": 97.874,
+                    "telemetry_projected_bytes_per_day": 528384,
+                    "telemetry_limit_bytes_per_day": 1048576,
+                    "telemetry_margin_bytes_per_day": 520192
+                  }
+                }
+              },
+              "enforce_admission": true,
+              "fixes": [],
+              "health": {
+                "monitor_healthy": true,
+                "daily_driver_ready": true,
+                "operator_ready": true,
+                "protection_mode": "admission-only",
+                "latest_monitor_fresh": true,
+                "latest_monitor_age_seconds": 10.350241,
+                "latest_monitor_max_age_seconds": 255,
+                "resident_samples": 6,
+                "resident_normal_samples": 5,
+                "required_normal_samples": 4,
+                "budget_headroom": {
+                  "rolling_sample_count": 6,
+                  "rolling_window_size": 64,
+                  "samples_until_single_outlier_excluded": 14,
+                  "p95_excludes_single_maximum": false,
+                  "rss_observed_mb": 15.859375,
+                  "rss_limit_mb": 30,
+                  "rss_margin_mb": 14.140625,
+                  "idle_duty_observed_percent": 0.2664290545963428,
+                  "idle_duty_limit_percent": 0.5,
+                  "idle_duty_margin_percent": 0.2335709454036572,
+                  "sample_cpu_p95_observed_ms": 52.126,
+                  "sample_cpu_max_observed_ms": 52.126,
+                  "sample_cpu_limit_ms": 150,
+                  "sample_cpu_margin_ms": 97.874,
+                  "telemetry_projected_bytes_per_day": 528384,
+                  "telemetry_limit_bytes_per_day": 1048576,
+                  "telemetry_margin_bytes_per_day": 520192
+                }
+              },
+              "host": {
+                "level": "normal",
+                "source": "resident"
+              },
+              "launch_soft_pressure": {
+                "would_block": false,
+                "noise_suppressed": false,
+                "enforced": true
+              },
+              "monitor": {
+                "healthy": true,
+                "fresh": true,
+                "age_seconds": 10.350241,
+                "pid": 18210,
+                "loaded": true,
+                "running": true
+              },
+              "ok": true,
+              "policy_persisted": true,
+              "protection_mode": "admission-only",
+              "schema_version": 1,
+              "warnings": [],
+              "work": {
+                "capacity": 8,
+                "used": 0,
+                "queue_depth": 0,
+                "express_green": true
+              }
+            }
+          },
+          {
+            "at": "2026-11-08T19:13:48.972415+00:00",
+            "doctor": {
+              "action": "doctor",
+              "auto_shed_critical": false,
+              "coverage_status": "ready-with-explicit-boundaries",
+              "doctor": {
+                "schema_version": 1,
+                "ok": true,
+                "protection_mode": "admission-only",
+                "policy_persisted": true,
+                "enforce_admission": true,
+                "auto_shed_critical": false,
+                "monitor": {
+                  "healthy": true,
+                  "fresh": true,
+                  "age_seconds": 10.003531,
+                  "pid": 18210,
+                  "loaded": true,
+                  "running": true
+                },
+                "host": {
+                  "level": "normal",
+                  "source": "resident"
+                },
+                "work": {
+                  "capacity": 8,
+                  "used": 0,
+                  "queue_depth": 0,
+                  "express_green": true
+                },
+                "launch_soft_pressure": {
+                  "would_block": false,
+                  "noise_suppressed": false,
+                  "enforced": true
+                },
+                "coverage_status": "ready-with-explicit-boundaries",
+                "source_revisions": {
+                  "cli": "828b1ea7bb400423557648cfb84d033dcae07db7",
+                  "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+                  "installed_helper": "828b1ea7bb400423557648cfb84d033dcae07db7",
+                  "checked": true,
+                  "mismatch": false
+                },
+                "health": {
+                  "monitor_healthy": true,
+                  "daily_driver_ready": true,
+                  "operator_ready": true,
+                  "protection_mode": "admission-only",
+                  "latest_monitor_fresh": true,
+                  "latest_monitor_age_seconds": 10.003531,
+                  "latest_monitor_max_age_seconds": 255,
+                  "resident_samples": 8,
+                  "resident_normal_samples": 7,
+                  "required_normal_samples": 4,
+                  "budget_headroom": {
+                    "rolling_sample_count": 8,
+                    "rolling_window_size": 64,
+                    "samples_until_single_outlier_excluded": 12,
+                    "p95_excludes_single_maximum": false,
+                    "rss_observed_mb": 15.859375,
+                    "rss_limit_mb": 30,
+                    "rss_margin_mb": 14.140625,
+                    "idle_duty_observed_percent": 0.32582138004697747,
+                    "idle_duty_limit_percent": 0.5,
+                    "idle_duty_margin_percent": 0.17417861995302253,
+                    "sample_cpu_p95_observed_ms": 52.126,
+                    "sample_cpu_max_observed_ms": 52.126,
+                    "sample_cpu_limit_ms": 150,
+                    "sample_cpu_margin_ms": 97.874,
+                    "telemetry_projected_bytes_per_day": 528384,
+                    "telemetry_limit_bytes_per_day": 1048576,
+                    "telemetry_margin_bytes_per_day": 520192
+                  }
+                }
+              },
+              "enforce_admission": true,
+              "fixes": [],
+              "health": {
+                "monitor_healthy": true,
+                "daily_driver_ready": true,
+                "operator_ready": true,
+                "protection_mode": "admission-only",
+                "latest_monitor_fresh": true,
+                "latest_monitor_age_seconds": 10.003531,
+                "latest_monitor_max_age_seconds": 255,
+                "resident_samples": 8,
+                "resident_normal_samples": 7,
+                "required_normal_samples": 4,
+                "budget_headroom": {
+                  "rolling_sample_count": 8,
+                  "rolling_window_size": 64,
+                  "samples_until_single_outlier_excluded": 12,
+                  "p95_excludes_single_maximum": false,
+                  "rss_observed_mb": 15.859375,
+                  "rss_limit_mb": 30,
+                  "rss_margin_mb": 14.140625,
+                  "idle_duty_observed_percent": 0.32582138004697747,
+                  "idle_duty_limit_percent": 0.5,
+                  "idle_duty_margin_percent": 0.17417861995302253,
+                  "sample_cpu_p95_observed_ms": 52.126,
+                  "sample_cpu_max_observed_ms": 52.126,
+                  "sample_cpu_limit_ms": 150,
+                  "sample_cpu_margin_ms": 97.874,
+                  "telemetry_projected_bytes_per_day": 528384,
+                  "telemetry_limit_bytes_per_day": 1048576,
+                  "telemetry_margin_bytes_per_day": 520192
+                }
+              },
+              "host": {
+                "level": "normal",
+                "source": "resident"
+              },
+              "launch_soft_pressure": {
+                "would_block": false,
+                "noise_suppressed": false,
+                "enforced": true
+              },
+              "monitor": {
+                "healthy": true,
+                "fresh": true,
+                "age_seconds": 10.003531,
+                "pid": 18210,
+                "loaded": true,
+                "running": true
+              },
+              "ok": true,
+              "policy_persisted": true,
+              "protection_mode": "admission-only",
+              "schema_version": 1,
+              "warnings": [],
+              "work": {
+                "capacity": 8,
+                "used": 0,
+                "queue_depth": 0,
+                "express_green": true
+              }
+            }
+          }
+        ]
+      },
+      "later_failed_checkpoint": {
+        "recorded_at": "2026-11-08T19:18:39.525625+00:00",
+        "doctor": {
+          "action": "doctor",
+          "auto_shed_critical": false,
+          "coverage_status": "attention",
+          "doctor": {
+            "schema_version": 1,
+            "ok": false,
+            "protection_mode": "admission-only",
+            "policy_persisted": true,
+            "enforce_admission": true,
+            "auto_shed_critical": false,
+            "monitor": {
+              "healthy": false,
+              "fresh": true,
+              "age_seconds": 10.491501,
+              "pid": 18210,
+              "loaded": true,
+              "running": true
+            },
+            "host": {
+              "level": "normal",
+              "source": "resident"
+            },
+            "work": {
+              "capacity": 8,
+              "used": 0,
+              "queue_depth": 0,
+              "express_green": false
+            },
+            "launch_soft_pressure": {
+              "would_block": false,
+              "noise_suppressed": false,
+              "enforced": true
+            },
+            "coverage_status": "attention",
+            "source_revisions": {
+              "cli": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "checked": true,
+              "mismatch": false
+            },
+            "fixes": [
+              "session-pressure monitor install",
+              "make build"
+            ],
+            "warnings": [
+              "resident guard resource budget is failing under the effective policy",
+              "resident is not daily-driver ready"
+            ],
+            "health": {
+              "monitor_healthy": false,
+              "daily_driver_ready": false,
+              "operator_ready": false,
+              "protection_mode": "admission-only",
+              "latest_monitor_fresh": true,
+              "latest_monitor_age_seconds": 10.491501,
+              "latest_monitor_max_age_seconds": 255,
+              "resident_samples": 27,
+              "resident_normal_samples": 25,
+              "required_normal_samples": 4,
+              "budget_headroom": {
+                "rolling_sample_count": 27,
+                "rolling_window_size": 64,
+                "samples_until_single_outlier_excluded": 0,
+                "p95_excludes_single_maximum": true,
+                "rss_observed_mb": 15.859375,
+                "rss_limit_mb": 30,
+                "rss_margin_mb": 14.140625,
+                "idle_duty_observed_percent": 0.5614971059671411,
+                "idle_duty_limit_percent": 0.5,
+                "idle_duty_margin_percent": -0.061497105967141086,
+                "sample_cpu_p95_observed_ms": 15.532,
+                "sample_cpu_max_observed_ms": 52.126,
+                "sample_cpu_limit_ms": 150,
+                "sample_cpu_margin_ms": 134.468,
+                "telemetry_projected_bytes_per_day": 528384,
+                "telemetry_limit_bytes_per_day": 1048576,
+                "telemetry_margin_bytes_per_day": 520192
+              },
+              "health_reasons": [
+                "resident guard resource budget is failing under the effective policy"
+              ],
+              "daily_driver_reasons": [
+                "resident monitor is unhealthy"
+              ],
+              "operator_reasons": [
+                "resident is not daily-driver ready"
+              ]
+            }
+          },
+          "enforce_admission": true,
+          "fixes": [
+            "session-pressure monitor install",
+            "make build"
+          ],
+          "health": {
+            "monitor_healthy": false,
+            "daily_driver_ready": false,
+            "operator_ready": false,
+            "protection_mode": "admission-only",
+            "latest_monitor_fresh": true,
+            "latest_monitor_age_seconds": 10.491501,
+            "latest_monitor_max_age_seconds": 255,
+            "resident_samples": 27,
+            "resident_normal_samples": 25,
+            "required_normal_samples": 4,
+            "budget_headroom": {
+              "rolling_sample_count": 27,
+              "rolling_window_size": 64,
+              "samples_until_single_outlier_excluded": 0,
+              "p95_excludes_single_maximum": true,
+              "rss_observed_mb": 15.859375,
+              "rss_limit_mb": 30,
+              "rss_margin_mb": 14.140625,
+              "idle_duty_observed_percent": 0.5614971059671411,
+              "idle_duty_limit_percent": 0.5,
+              "idle_duty_margin_percent": -0.061497105967141086,
+              "sample_cpu_p95_observed_ms": 15.532,
+              "sample_cpu_max_observed_ms": 52.126,
+              "sample_cpu_limit_ms": 150,
+              "sample_cpu_margin_ms": 134.468,
+              "telemetry_projected_bytes_per_day": 528384,
+              "telemetry_limit_bytes_per_day": 1048576,
+              "telemetry_margin_bytes_per_day": 520192
+            },
+            "health_reasons": [
+              "resident guard resource budget is failing under the effective policy"
+            ],
+            "daily_driver_reasons": [
+              "resident monitor is unhealthy"
+            ],
+            "operator_reasons": [
+              "resident is not daily-driver ready"
+            ]
+          },
+          "host": {
+            "level": "normal",
+            "source": "resident"
+          },
+          "launch_soft_pressure": {
+            "would_block": false,
+            "noise_suppressed": false,
+            "enforced": true
+          },
+          "monitor": {
+            "healthy": false,
+            "fresh": true,
+            "age_seconds": 10.491501,
+            "pid": 18210,
+            "loaded": true,
+            "running": true
+          },
+          "ok": false,
+          "policy_persisted": true,
+          "protection_mode": "admission-only",
+          "schema_version": 1,
+          "warnings": [
+            "resident guard resource budget is failing under the effective policy",
+            "resident is not daily-driver ready"
+          ],
+          "work": {
+            "capacity": 8,
+            "used": 0,
+            "queue_depth": 0,
+            "express_green": false
+          }
+        }
+      },
+      "second_correction": {
+        "scope": "recovery demand reads StatusSnapshot rather than reconciling Status",
+        "verification": {
+          "candidate_dir": "/srv/build/candidates/20261108T191817Z-41233",
+          "packages": {
+            "sessionpressure_seconds": 23.904,
+            "sessionpressurecmd_seconds": 0.87,
+            "sessionpressurecleanup_seconds": 0.005
+          },
+          "focused_race_seconds": 6.067,
+          "vet": "pass",
+          "regression": "held work mutation lock does not hide recovery demand; diagnostic read preserves state file"
+        },
+        "runtime": "keep coherent installed 828b1ea until forward-only tested release",
+        "commit": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f"
+      },
+      "safety_review": "StatusSnapshot supplies diagnostic scheduling only. A stale hold requests an extra sample; admission and mutations retain authoritative validation.",
+      "sampling_profile": "20-second native sample retained privately; blocked/native syscall stacks do not prove a single root cause."
     },
     "delivery_checkpoint": {
       "schema_version": "nicos.commit-delivery.status-brief.v1",
@@ -757,6 +1717,915 @@
       "coordination": {
         "state": "open"
       }
+    },
+    "installed_deadline_dogfood_latest": {
+      "at": "2026-11-08T19:11:49.606740+00:00",
+      "exit_code": 124,
+      "elapsed_seconds": 0.26803833298617974,
+      "report": {
+        "ok": true,
+        "report": {
+          "schema_version": 1,
+          "updated_at": "2026-11-08T19:11:49.524457Z",
+          "incidents": [
+            {
+              "id": "a78d57dc157fa5cf3a01ed81",
+              "pid": 18050,
+              "ppid": 0,
+              "start_identity": "darwin:1794165109:357584",
+              "executable": "sleep",
+              "uid": 501,
+              "cpu_percent": 0,
+              "rss_mb": 0,
+              "age_seconds": 0,
+              "reason": "guard_deadline",
+              "first_seen": "2026-11-08T19:11:49.357483Z",
+              "last_seen": "2026-11-08T19:11:49.509211Z",
+              "sustained_seconds": 0,
+              "state": "stopped",
+              "actions": [
+                {
+                  "at": "2026-11-08T19:11:49.509211Z",
+                  "signal": "KILL",
+                  "result": "exit_confirmed"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "cpu_enforcement_followup": {
+      "at": "2026-11-08T19:34:56.168589+00:00",
+      "installed_observation": "8e6 CLI/helper; frontdoor changed 9cf then 828; mixed runtime, failed CPU, not release acceptance",
+      "cpu_duty_observed_percent": 0.724562031582292,
+      "cpu_duty_limit_percent": 0.5,
+      "ps_child_measurement": {
+        "cpu_ms": [
+          44.555,
+          45.133,
+          42.441
+        ],
+        "elapsed_ms": [
+          50.828,
+          72.195,
+          49.151
+        ],
+        "scope": "three read-only exact enforcement ps invocations; output not retained",
+        "estimated_duty_percent_at_15s": [
+          0.2970333333,
+          0.3008866667,
+          0.28294
+        ]
+      },
+      "candidate": "Darwin same-user native browser root discovery; no all-process argv subprocess; exact birth at discovery and pre-signal checks",
+      "tests": "remote verification in progress",
+      "release_authority": "WORK41 owns forward promotion; this session stopped promotions after mixed observation",
+      "limitations": [
+        "native candidate measurement pending",
+        "stable installed CPU gate remains open",
+        "current-link CAS does not cover direct frontdoor installs"
+      ],
+      "observation_12_minutes": {
+        "complete": true,
+        "requested_seconds": 720,
+        "raw_private_evidence": "/Users/nicostran/.nicos-dev/session-workspaces/v1/01a1b91e-5877-7453-98a6-9c1893931b54/process-guard/cpu8e-observation.json",
+        "raw_sha256": "e4b88bb8ca93cc9fa29fe7d023113d6ea93eb8391a38e81ef7fd87dab154184e",
+        "series": [
+          {
+            "at": "2026-11-08T19:28:20.520812+00:00",
+            "elapsed_seconds": 0.161,
+            "pid": 94102,
+            "normal_samples": null,
+            "cpu_duty_percent": 0,
+            "cpu_limit_percent": 0.5,
+            "healthy": true,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "9cf2a30f3db2f46ae169b455bc7c0fcc1472be7a",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:28:40.634428+00:00",
+            "elapsed_seconds": 20.274,
+            "pid": 94102,
+            "normal_samples": 1,
+            "cpu_duty_percent": 0.59700503352526,
+            "cpu_limit_percent": 0.5,
+            "healthy": true,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "9cf2a30f3db2f46ae169b455bc7c0fcc1472be7a",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:29:00.717728+00:00",
+            "elapsed_seconds": 40.357,
+            "pid": 94102,
+            "normal_samples": 2,
+            "cpu_duty_percent": 0.7102925943264983,
+            "cpu_limit_percent": 0.5,
+            "healthy": true,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "9cf2a30f3db2f46ae169b455bc7c0fcc1472be7a",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:29:20.845275+00:00",
+            "elapsed_seconds": 60.484,
+            "pid": 94102,
+            "normal_samples": 4,
+            "cpu_duty_percent": 0.724562031582292,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "9cf2a30f3db2f46ae169b455bc7c0fcc1472be7a",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:29:40.669657+00:00",
+            "elapsed_seconds": 80.309,
+            "pid": 94102,
+            "normal_samples": 5,
+            "cpu_duty_percent": 0.7421623962670094,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:30:00.546262+00:00",
+            "elapsed_seconds": 100.185,
+            "pid": 94102,
+            "normal_samples": 6,
+            "cpu_duty_percent": 0.7503692058038839,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:30:20.542762+00:00",
+            "elapsed_seconds": 120.181,
+            "pid": 94102,
+            "normal_samples": 6,
+            "cpu_duty_percent": 0.7503692058038839,
+            "cpu_limit_percent": 0.5,
+            "healthy": true,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:30:40.517578+00:00",
+            "elapsed_seconds": 140.156,
+            "pid": 94102,
+            "normal_samples": 6,
+            "cpu_duty_percent": 0.7503692058038839,
+            "cpu_limit_percent": 0.5,
+            "healthy": true,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:31:00.512031+00:00",
+            "elapsed_seconds": 160.15,
+            "pid": 94102,
+            "normal_samples": 7,
+            "cpu_duty_percent": 0.761636677959484,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:31:20.545170+00:00",
+            "elapsed_seconds": 180.183,
+            "pid": 94102,
+            "normal_samples": 7,
+            "cpu_duty_percent": 0.761636677959484,
+            "cpu_limit_percent": 0.5,
+            "healthy": true,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:31:40.529101+00:00",
+            "elapsed_seconds": 200.167,
+            "pid": 94102,
+            "normal_samples": 8,
+            "cpu_duty_percent": 0.7426404460699082,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:32:00.550331+00:00",
+            "elapsed_seconds": 220.188,
+            "pid": 94102,
+            "normal_samples": 9,
+            "cpu_duty_percent": 0.7327565855146904,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:32:20.521532+00:00",
+            "elapsed_seconds": 240.159,
+            "pid": 94102,
+            "normal_samples": 10,
+            "cpu_duty_percent": 0.7183075259358264,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:32:40.493570+00:00",
+            "elapsed_seconds": 260.131,
+            "pid": 94102,
+            "normal_samples": 12,
+            "cpu_duty_percent": 0.7250714320885107,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:33:00.509296+00:00",
+            "elapsed_seconds": 280.146,
+            "pid": 94102,
+            "normal_samples": 13,
+            "cpu_duty_percent": 0.712920346085236,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:33:20.479656+00:00",
+            "elapsed_seconds": 300.116,
+            "pid": 94102,
+            "normal_samples": 14,
+            "cpu_duty_percent": 0.7006485324427504,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:33:40.510113+00:00",
+            "elapsed_seconds": 320.147,
+            "pid": 94102,
+            "normal_samples": 16,
+            "cpu_duty_percent": 0.695469096952969,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:34:00.495760+00:00",
+            "elapsed_seconds": 340.132,
+            "pid": 94102,
+            "normal_samples": 16,
+            "cpu_duty_percent": 0.695469096952969,
+            "cpu_limit_percent": 0.5,
+            "healthy": true,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:34:20.579599+00:00",
+            "elapsed_seconds": 360.216,
+            "pid": 94102,
+            "normal_samples": 17,
+            "cpu_duty_percent": 0.6911389055850755,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:34:40.821871+00:00",
+            "elapsed_seconds": 380.458,
+            "pid": 94102,
+            "normal_samples": 17,
+            "cpu_duty_percent": 0.6911389055850755,
+            "cpu_limit_percent": 0.5,
+            "healthy": true,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:35:00.478955+00:00",
+            "elapsed_seconds": 400.115,
+            "pid": 94102,
+            "normal_samples": 18,
+            "cpu_duty_percent": 0.6907505935042392,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:35:20.527731+00:00",
+            "elapsed_seconds": 420.163,
+            "pid": 94102,
+            "normal_samples": 19,
+            "cpu_duty_percent": 0.692415405916344,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:35:40.500761+00:00",
+            "elapsed_seconds": 440.136,
+            "pid": 94102,
+            "normal_samples": 20,
+            "cpu_duty_percent": 0.6874034855909291,
+            "cpu_limit_percent": 0.5,
+            "healthy": true,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:36:00.502860+00:00",
+            "elapsed_seconds": 460.138,
+            "pid": 94102,
+            "normal_samples": 21,
+            "cpu_duty_percent": 0.6855175797700753,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:36:20.521085+00:00",
+            "elapsed_seconds": 480.156,
+            "pid": 94102,
+            "normal_samples": 22,
+            "cpu_duty_percent": 0.6833620097416844,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:36:40.496764+00:00",
+            "elapsed_seconds": 500.132,
+            "pid": 94102,
+            "normal_samples": 23,
+            "cpu_duty_percent": 0.6808471873820359,
+            "cpu_limit_percent": 0.5,
+            "healthy": true,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:37:00.516225+00:00",
+            "elapsed_seconds": 520.151,
+            "pid": 94102,
+            "normal_samples": 24,
+            "cpu_duty_percent": 0.678786455535742,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "828b1ea7bb400423557648cfb84d033dcae07db7",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": true,
+              "detail": "executing session-pressure binaries were built from different source revisions; rebuild and promote all of them from one revision"
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:37:20.489113+00:00",
+            "elapsed_seconds": 540.124,
+            "pid": 94102,
+            "normal_samples": 25,
+            "cpu_duty_percent": 0.6756383999991005,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": false
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:37:40.502779+00:00",
+            "elapsed_seconds": 560.137,
+            "pid": 94102,
+            "normal_samples": 27,
+            "cpu_duty_percent": 0.6714226589203722,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": false
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:38:00.507015+00:00",
+            "elapsed_seconds": 580.141,
+            "pid": 94102,
+            "normal_samples": 28,
+            "cpu_duty_percent": 0.6668835772864796,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": false
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:38:20.545188+00:00",
+            "elapsed_seconds": 600.169,
+            "pid": 94102,
+            "normal_samples": 29,
+            "cpu_duty_percent": 0.662760625291817,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": false
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:38:40.506908+00:00",
+            "elapsed_seconds": 620.124,
+            "pid": 94102,
+            "normal_samples": 29,
+            "cpu_duty_percent": 0.662760625291817,
+            "cpu_limit_percent": 0.5,
+            "healthy": true,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": false
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:39:00.507195+00:00",
+            "elapsed_seconds": 640.122,
+            "pid": 94102,
+            "normal_samples": 30,
+            "cpu_duty_percent": 0.6601196490874781,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": false
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:39:20.518472+00:00",
+            "elapsed_seconds": 660.132,
+            "pid": 94102,
+            "normal_samples": 31,
+            "cpu_duty_percent": 0.6577267747441263,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": false
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:39:40.519374+00:00",
+            "elapsed_seconds": 680.133,
+            "pid": 94102,
+            "normal_samples": 32,
+            "cpu_duty_percent": 0.6542480418885704,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": false
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:40:00.513419+00:00",
+            "elapsed_seconds": 700.126,
+            "pid": 94102,
+            "normal_samples": 34,
+            "cpu_duty_percent": 0.6523247224403832,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": false
+            },
+            "error": null
+          },
+          {
+            "at": "2026-11-08T19:40:20.502218+00:00",
+            "elapsed_seconds": 720.115,
+            "pid": 94102,
+            "normal_samples": 35,
+            "cpu_duty_percent": 0.6481205701382421,
+            "cpu_limit_percent": 0.5,
+            "healthy": false,
+            "revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": false
+            },
+            "error": null
+          }
+        ],
+        "final_doctor": {
+          "action": "doctor",
+          "auto_shed_critical": false,
+          "coverage_status": "attention",
+          "doctor": {
+            "schema_version": 1,
+            "ok": false,
+            "protection_mode": "admission-only",
+            "policy_persisted": true,
+            "enforce_admission": true,
+            "auto_shed_critical": false,
+            "monitor": {
+              "healthy": false,
+              "fresh": true,
+              "age_seconds": 7.888515,
+              "pid": 94102,
+              "loaded": true,
+              "running": true
+            },
+            "host": {
+              "level": "normal",
+              "source": "resident"
+            },
+            "work": {
+              "capacity": 8,
+              "used": 1,
+              "queue_depth": 0,
+              "express_green": false
+            },
+            "launch_soft_pressure": {
+              "would_block": false,
+              "noise_suppressed": false,
+              "enforced": true
+            },
+            "coverage_status": "attention",
+            "source_revisions": {
+              "cli": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "front_door": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "installed_helper": "8e6cb978c9b190c4961efd91ed42d8d68e4c1b2f",
+              "checked": true,
+              "mismatch": false
+            },
+            "fixes": [
+              "session-pressure monitor install",
+              "make build"
+            ],
+            "warnings": [
+              "resident guard resource budget is failing under the effective policy",
+              "resident is not daily-driver ready"
+            ],
+            "health": {
+              "monitor_healthy": false,
+              "daily_driver_ready": false,
+              "operator_ready": false,
+              "protection_mode": "admission-only",
+              "latest_monitor_fresh": true,
+              "latest_monitor_age_seconds": 7.888515,
+              "latest_monitor_max_age_seconds": 255,
+              "resident_samples": 48,
+              "resident_normal_samples": 35,
+              "required_normal_samples": 4,
+              "budget_headroom": {
+                "rolling_sample_count": 48,
+                "rolling_window_size": 64,
+                "samples_until_single_outlier_excluded": 0,
+                "p95_excludes_single_maximum": true,
+                "rss_observed_mb": 16.140625,
+                "rss_limit_mb": 30,
+                "rss_margin_mb": 13.859375,
+                "idle_duty_observed_percent": 0.6481205701382421,
+                "idle_duty_limit_percent": 0.5,
+                "idle_duty_margin_percent": -0.1481205701382421,
+                "sample_cpu_p95_observed_ms": 14.489,
+                "sample_cpu_max_observed_ms": 48.203,
+                "sample_cpu_limit_ms": 150,
+                "sample_cpu_margin_ms": 135.511,
+                "telemetry_projected_bytes_per_day": 528384,
+                "telemetry_limit_bytes_per_day": 1048576,
+                "telemetry_margin_bytes_per_day": 520192
+              },
+              "health_reasons": [
+                "resident guard resource budget is failing under the effective policy"
+              ],
+              "daily_driver_reasons": [
+                "resident monitor is unhealthy"
+              ],
+              "operator_reasons": [
+                "resident is not daily-driver ready"
+              ]
+            }
+          },
+          "enforce_admission": true,
+          "fixes": [
+            "session-pressure monitor install",
+            "make build"
+          ],
+          "health": {
+            "monitor_healthy": false,
+            "daily_driver_ready": false,
+            "operator_ready": false,
+            "protection_mode": "admission-only",
+            "latest_monitor_fresh": true,
+            "latest_monitor_age_seconds": 7.888515,
+            "latest_monitor_max_age_seconds": 255,
+            "resident_samples": 48,
+            "resident_normal_samples": 35,
+            "required_normal_samples": 4,
+            "budget_headroom": {
+              "rolling_sample_count": 48,
+              "rolling_window_size": 64,
+              "samples_until_single_outlier_excluded": 0,
+              "p95_excludes_single_maximum": true,
+              "rss_observed_mb": 16.140625,
+              "rss_limit_mb": 30,
+              "rss_margin_mb": 13.859375,
+              "idle_duty_observed_percent": 0.6481205701382421,
+              "idle_duty_limit_percent": 0.5,
+              "idle_duty_margin_percent": -0.1481205701382421,
+              "sample_cpu_p95_observed_ms": 14.489,
+              "sample_cpu_max_observed_ms": 48.203,
+              "sample_cpu_limit_ms": 150,
+              "sample_cpu_margin_ms": 135.511,
+              "telemetry_projected_bytes_per_day": 528384,
+              "telemetry_limit_bytes_per_day": 1048576,
+              "telemetry_margin_bytes_per_day": 520192
+            },
+            "health_reasons": [
+              "resident guard resource budget is failing under the effective policy"
+            ],
+            "daily_driver_reasons": [
+              "resident monitor is unhealthy"
+            ],
+            "operator_reasons": [
+              "resident is not daily-driver ready"
+            ]
+          },
+          "host": {
+            "level": "normal",
+            "source": "resident"
+          },
+          "launch_soft_pressure": {
+            "would_block": false,
+            "noise_suppressed": false,
+            "enforced": true
+          },
+          "monitor": {
+            "healthy": false,
+            "fresh": true,
+            "age_seconds": 7.888515,
+            "pid": 94102,
+            "loaded": true,
+            "running": true
+          },
+          "ok": false,
+          "policy_persisted": true,
+          "protection_mode": "admission-only",
+          "schema_version": 1,
+          "warnings": [
+            "resident guard resource budget is failing under the effective policy",
+            "resident is not daily-driver ready"
+          ],
+          "work": {
+            "capacity": 8,
+            "used": 1,
+            "queue_depth": 0,
+            "express_green": false
+          }
+        }
+      },
+      "kernel_response_bound": "Retain only the kernel-written argument bytes; truncated argc with a previous headless flag in reused capacity must not authorize enforcement."
+    },
+    "cli_telemetry_review": {
+      "coverage": "strict coverage passed 131 covered, 13 exempt, 144 total, 53 sources",
+      "usage_failures_7d": 0,
+      "usage_rows": 0,
+      "limit": "no production trend claim",
+      "agent_refresh_error": "parallel refresh caused self-contention writer lease failure; serial no-refresh retry passed"
     }
   }
 }
