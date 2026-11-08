@@ -1,0 +1,208 @@
+{
+  "schema": "nicos.advisor.brief.v1",
+  "day": "2026-11-08",
+  "generated_at": "2026-11-08T12:00:29.808268Z",
+  "gate": "none",
+  "lanes": {
+    "residue": [],
+    "moved": [],
+    "spine": [
+      {
+        "id": "spine:recorded-1",
+        "kind": "catalog_external_health",
+        "title": "Recorded spine item 1",
+        "next_prompt": "ndev advisor explain --id recorded-item"
+      }
+    ],
+    "eligible": [
+      {
+        "id": "eligible:recorded-1",
+        "kind": "portfolio_launch_readiness",
+        "title": "Recorded eligible item 1",
+        "next_prompt": "ndev advisor explain --id recorded-item"
+      },
+      {
+        "id": "eligible:recorded-2",
+        "kind": "portfolio_launch_readiness",
+        "title": "Recorded eligible item 2",
+        "next_prompt": "ndev advisor explain --id recorded-item"
+      },
+      {
+        "id": "eligible:recorded-3",
+        "kind": "portfolio_launch_readiness",
+        "title": "Recorded eligible item 3",
+        "next_prompt": "ndev advisor explain --id recorded-item"
+      },
+      {
+        "id": "eligible:recorded-4",
+        "kind": "catalog_external_health",
+        "title": "Recorded eligible item 4",
+        "next_prompt": "ndev advisor explain --id recorded-item"
+      },
+      {
+        "id": "eligible:recorded-5",
+        "kind": "catalog_external_health",
+        "title": "Recorded eligible item 5",
+        "next_prompt": "ndev advisor explain --id recorded-item"
+      },
+      {
+        "id": "eligible:recorded-6",
+        "kind": "pw",
+        "title": "Recorded eligible item 6",
+        "next_prompt": "ndev advisor explain --id recorded-item"
+      }
+    ],
+    "parked": [
+      {
+        "id": "parked:recorded-1",
+        "reason": "not_finishable"
+      },
+      {
+        "id": "parked:recorded-2",
+        "reason": "cold_shelf"
+      },
+      {
+        "id": "parked:recorded-3",
+        "reason": "cold_shelf"
+      },
+      {
+        "id": "parked:recorded-4",
+        "reason": "cold_shelf"
+      },
+      {
+        "id": "parked:recorded-5",
+        "reason": "cold_shelf"
+      },
+      {
+        "id": "parked:recorded-6",
+        "reason": "cold_shelf"
+      },
+      {
+        "id": "parked:recorded-7",
+        "reason": "cold_shelf"
+      },
+      {
+        "id": "parked:recorded-8",
+        "reason": "cold_shelf"
+      },
+      {
+        "id": "parked:recorded-9",
+        "reason": "cold_shelf"
+      },
+      {
+        "id": "parked:recorded-10",
+        "reason": "cold_shelf"
+      },
+      {
+        "id": "parked:recorded-11",
+        "reason": "cold_shelf"
+      },
+      {
+        "id": "parked:recorded-12",
+        "reason": "cold_shelf"
+      },
+      {
+        "id": "parked:recorded-13",
+        "reason": "cold_shelf"
+      },
+      {
+        "id": "parked:recorded-14",
+        "reason": "cold_shelf"
+      },
+      {
+        "id": "parked:recorded-15",
+        "reason": "cold_shelf"
+      }
+    ],
+    "do_not_touch": []
+  },
+  "source_health": [
+    {
+      "source": "catalog_external_health",
+      "ok": true,
+      "count": 3,
+      "wall_ms": 0
+    },
+    {
+      "source": "catalog_notes",
+      "ok": true,
+      "count": 1,
+      "wall_ms": 0
+    },
+    {
+      "source": "catalog_timeline",
+      "ok": true,
+      "count": 1,
+      "wall_ms": 0
+    },
+    {
+      "source": "followups",
+      "ok": true,
+      "count": 20,
+      "wall_ms": 0
+    },
+    {
+      "source": "human_intent",
+      "ok": true,
+      "count": 7,
+      "wall_ms": 0
+    },
+    {
+      "source": "kb_drift",
+      "ok": true,
+      "count": 2,
+      "wall_ms": 0
+    },
+    {
+      "source": "kep_in_progress",
+      "ok": true,
+      "count": 127,
+      "wall_ms": 0
+    },
+    {
+      "source": "portfolio_launch_readiness",
+      "ok": true,
+      "count": 3,
+      "wall_ms": 0
+    },
+    {
+      "source": "pw",
+      "ok": true,
+      "count": 16,
+      "wall_ms": 0
+    },
+    {
+      "source": "runbook_drift",
+      "ok": true,
+      "count": 21,
+      "wall_ms": 0
+    },
+    {
+      "source": "scratchpad",
+      "ok": true,
+      "count": 2,
+      "wall_ms": 0
+    },
+    {
+      "source": "session_workspace_promote",
+      "ok": true,
+      "count": 8,
+      "wall_ms": 0
+    },
+    {
+      "source": "work",
+      "ok": true,
+      "count": 25,
+      "wall_ms": 0
+    },
+    {
+      "source": "workspace_layout",
+      "ok": true,
+      "count": 5,
+      "wall_ms": 0
+    }
+  ],
+  "byte_count": 3930,
+  "truncated": true,
+  "detail_hint": "Hydrate one move with ndev advisor explain."
+}

@@ -3,6 +3,7 @@ import Darwin
 
 public enum NDevPressureClientError: Error, LocalizedError, Sendable {
     case binaryNotFound
+    case advisorBinaryNotFound
     case launchFailed(String)
     case nonZeroExit(code: Int32, stderr: String, stdout: String)
     case malformedJSON(String)
@@ -12,6 +13,8 @@ public enum NDevPressureClientError: Error, LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
+        case .advisorBinaryNotFound:
+            return "ndev not found for Day Gate. Set NDEV_BIN to the full ndev binary."
         case .binaryNotFound:
             return "session-pressure not found. Build the product CLI or set SESSION_PRESSURE_BIN / NDEV_PRESSURE_BIN."
         case .launchFailed(let detail):
@@ -69,7 +72,9 @@ public struct NDevPressureClient: Sendable {
 	public func browserControl(_ action: String = "status") async throws -> BrowserControlEnvelope {
 		try await runJSON(BrowserControlEnvelope.self, arguments: ["--json", "session", "pressure", "browser", action])
 	}
+    public static let advisorBriefArguments = ["--json", "advisor", "brief", "show"]
     public let binaryPath: String
+    public let advisorBinaryPath: String?
     private let environment: [String: String]
     private let apiClient: NDevPressureAPIClient?
     private let maxOutputBytes: Int
@@ -77,6 +82,7 @@ public struct NDevPressureClient: Sendable {
 
     public init(
         binaryPath: String? = nil,
+        advisorBinaryPath: String? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         maxOutputBytes: Int = 8 * 1024 * 1024,
         commandTimeoutSeconds: Double = 30
@@ -85,6 +91,7 @@ public struct NDevPressureClient: Sendable {
             throw NDevPressureClientError.binaryNotFound
         }
         self.binaryPath = path
+        self.advisorBinaryPath = advisorBinaryPath ?? Self.resolveAdvisorBinary(pressureBinaryPath: path, environment: environment)
         self.environment = Self.sanitizedEnvironment(environment)
         self.apiClient = NDevPressureAPIClient(environment: environment)
         self.maxOutputBytes = maxOutputBytes
@@ -125,6 +132,37 @@ public struct NDevPressureClient: Sendable {
     ) -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         for candidate in binaryCandidates(home: home, environment: environment) {
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    /// Resolve the full ndev control plane separately from the pressure-only
+    /// product binary. A pressure-only binary must never receive advisor argv.
+    public static func resolveAdvisorBinary(
+        pressureBinaryPath: String? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let pressureBasename = pressureBinaryPath.map { URL(fileURLWithPath: $0).lastPathComponent }
+        let compatiblePressureBinary = (pressureBasename == "ndev" || pressureBasename == "ndev-go")
+            ? pressureBinaryPath
+            : nil
+        let candidates: [String?] = [
+            environment["NDEV_BIN"],
+            environment["NDEV_PATH"],
+            environment["NICOS_DEV_PATH"].map { "\($0)/bin/ndev" },
+            environment["NICOS_TOOLS_PATH"].map { "\($0)/nicos-dev/bin/ndev" },
+            compatiblePressureBinary,
+            "\(home)/.local/bin/ndev",
+            "\(home)/dev/nicos-tools/nicos-dev/bin/ndev",
+            "\(home)/dev/nicos-tools/nicos-dev/bin/ndev-go",
+            "/opt/homebrew/bin/ndev",
+            "/usr/local/bin/ndev",
+        ]
+        for candidate in candidates.compactMap({ $0 }).filter({ !$0.isEmpty }) {
             if FileManager.default.isExecutableFile(atPath: candidate) {
                 return candidate
             }
@@ -363,6 +401,26 @@ public struct NDevPressureClient: Sendable {
             return api
         }
         return try await runJSON(DoctorEnvelope.self, arguments: ["--json", "session", "pressure", "doctor"])
+    }
+
+    /// Read the already-composed advisor day brief. This command never
+    /// refreshes sources or writes planner state.
+    public func advisorBrief() async throws -> AdvisorBrief {
+        guard let advisorBinaryPath else {
+            throw NDevPressureClientError.advisorBinaryNotFound
+        }
+        let brief = try await runJSON(
+            AdvisorBrief.self,
+            arguments: Self.advisorBriefArguments,
+            maximumResponseBytes: 8 * 1024,
+            timeoutSeconds: min(commandTimeoutSeconds, 10),
+            binaryPath: advisorBinaryPath,
+            pairPressureArguments: false
+        )
+        guard brief.schema == AdvisorBrief.schemaV1, !brief.day.isEmpty else {
+            throw NDevPressureClientError.malformedJSON("unsupported advisor brief schema or empty day")
+        }
+        return brief
     }
 
     /// `operationID` narrows the ledger read to one operation's lifecycle. The
@@ -729,6 +787,8 @@ public struct NDevPressureClient: Sendable {
         acceptNonZero: Bool = false,
         maximumResponseBytes: Int? = nil,
         timeoutSeconds: Double? = nil,
+        binaryPath: String? = nil,
+        pairPressureArguments: Bool = true,
         onOutputLine: (@Sendable (String) -> Void)? = nil
     ) async throws -> T {
         let responseLimit = min(maximumResponseBytes ?? maxOutputBytes, maxOutputBytes)
@@ -736,6 +796,8 @@ public struct NDevPressureClient: Sendable {
             arguments: arguments,
             maximumOutputBytes: responseLimit,
             timeoutSeconds: timeoutSeconds,
+            binaryPath: binaryPath,
+            pairPressureArguments: pairPressureArguments,
             onOutputLine: onOutputLine
         )
         if let maximumResponseBytes, result.stdout.utf8.count > maximumResponseBytes {
@@ -782,11 +844,13 @@ public struct NDevPressureClient: Sendable {
         arguments: [String],
         maximumOutputBytes: Int? = nil,
         timeoutSeconds: Double? = nil,
+        binaryPath: String? = nil,
+        pairPressureArguments: Bool = true,
         onOutputLine: (@Sendable (String) -> Void)? = nil
     ) async throws -> (code: Int32, stdout: String, stderr: String) {
-        let binaryPath = self.binaryPath
+        let binaryPath = binaryPath ?? self.binaryPath
         let environment = self.environment
-        let arguments = Self.pairedCLIArguments(arguments)
+        let arguments = pairPressureArguments ? Self.pairedCLIArguments(arguments) : arguments
         let maxOutputBytes = min(maximumOutputBytes ?? self.maxOutputBytes, self.maxOutputBytes)
         let commandTimeoutSeconds = timeoutSeconds ?? self.commandTimeoutSeconds
         return try await withCheckedThrowingContinuation { continuation in
