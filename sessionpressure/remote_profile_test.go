@@ -24,3 +24,18 @@ func TestRemoteProfileProtectsLocalInputsAndBuildABI(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoteClassificationDoesNotHideProfileDeclines(t *testing.T) {
+	t.Setenv("GOFLAGS", "-modfile=/local/producer.mod")
+	if !RemoteGoCommand([]string{"go", "build", "-o", "out", "."}) {
+		t.Fatal("direct Go operations must reach the eligibility check and decline telemetry")
+	}
+	if remoteProfileReason([]string{"go", "build", "-o", "out", "."}, func(key string) string {
+		if key == "GOFLAGS" {
+			return "-modfile=/local/producer.mod"
+		}
+		return ""
+	}) == "" {
+		t.Fatal("local-only profile must retain local admission")
+	}
+}

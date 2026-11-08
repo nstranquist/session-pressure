@@ -47,9 +47,6 @@ func RemoteWorkEnabled(dir string) (bool, error) {
 // RemoteGoCommand only delegates direct, finite Go operations. Shell scripts,
 // install and commands with unknown semantics retain local admission.
 func RemoteGoCommand(argv []string) bool {
-	if remoteProfileReason(argv, os.Getenv) != "" {
-		return false
-	}
 	if len(argv) < 2 || filepath.Base(argv[0]) != "go" {
 		return false
 	}
@@ -144,7 +141,7 @@ func remoteModuleClosure(start string) ([]string, string, error) {
 		return nil, "", err
 	}
 	common := root
-	for _, dir := range modules {
+	for _, dir := range append(append([]string(nil), modules...), remoteRepositoryRoots(modules)...) {
 		for {
 			rel, err := filepath.Rel(common, dir)
 			if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -207,6 +204,42 @@ func walkRemoteSources(modules []string, common string, visit func(rel, path str
 		})
 		if err != nil {
 			return err
+		}
+	}
+	for _, repo := range remoteRepositoryRoots(modules) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cmd := exec.CommandContext(ctx, "git", "-C", repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+		body, err := cmd.Output()
+		cancel()
+		if err != nil {
+			return fmt.Errorf("enumerate repository inputs: %w", err)
+		}
+		for _, name := range strings.Split(string(body), "\x00") {
+			if name == "" || remoteExcludedRepositoryInput(name) {
+				continue
+			}
+			path := filepath.Join(repo, name)
+			rel, err := filepath.Rel(common, path)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return errors.New("repository input escapes source root")
+			}
+			if seen[rel] {
+				continue
+			}
+			seen[rel] = true
+			info, err := os.Lstat(path)
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			} // tracked deletion in this candidate
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() || info.Size() > 20<<20 {
+				continue
+			}
+			if err := visit(rel, path, info); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -276,19 +309,18 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if streams.Stderr == nil {
 		streams.Stderr = os.Stderr
 	}
-	started := time.Now()
-	defer func() {
-		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "operation": options.Command[1], "exit_code": exitCode, "failed": resultErr != nil})
-	}()
 	cwd, err := os.Getwd()
 	if err != nil {
 		return true, 1, err
 	}
 	// Ineligible commands keep local admission before anything is uploaded.
 	keepLocal := func(reason string) (bool, int, error) {
-		fmt.Fprintln(streams.Stderr, "session-pressure: running Go work locally: "+reason)
+		fmt.Fprintln(streams.Stderr, "session-pressure: retaining local admission for Go work: "+reason)
 		recordControlEvent(dir, map[string]any{"event": "remote_work_declined", "operation": options.Command[1], "reason": reason})
 		return false, 0, nil
+	}
+	if reason := remoteProfileReason(options.Command, os.Getenv); reason != "" {
+		return keepLocal(reason)
 	}
 	if reason := remoteWorkIneligibleReason(cwd, options.Command, os.Getenv); reason != "" {
 		return keepLocal(reason)
@@ -311,6 +343,10 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if err != nil {
 		return true, 1, err
 	}
+	started := time.Now()
+	defer func() {
+		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "operation": options.Command[1], "exit_code": exitCode, "failed": resultErr != nil})
+	}()
 	remote := "/srv/build/candidates/pressure-" + job
 	for i := range argv {
 		argv[i] = strings.ReplaceAll(argv[i], "/srv/build/candidates/OUTPUT", remote+"/artifact")
