@@ -5,7 +5,7 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
-Current checkpoint (20:24 UTC): product release `0535927f` is installed at
+Current checkpoint (20:33 UTC): product release `0535927f` is installed at
 both CLI prefixes. Its exact committed full race suite and Darwin native build
 passed on Hetzner (job `20261108T195328Z-205269`, 88 seconds). The canonical
 resident is PID 90605. Its latest monitor-scope self-test passes: normal CPU
@@ -22,8 +22,10 @@ real installed CLI/Unix-API integration and strict Developer ID signature check.
 The live UI confirms Day Gate's correct successful-read age. Both stale-intent
 and real downgrade attempts fail without changing the installed bundle.
 
-Two factory deliveries are landed, including legacy app installer forwarding
-`ae8f228a`. Five remain accepted, with active worker progress. All three factory front-door targets independently hash to
+Three factory deliveries are landed, including guarded index isolation
+`598a33c1` and legacy app installer forwarding `ae8f228a`. Two remain accepted;
+parent `64c635e4` is paused by a remote compiler-profile refusal, and child
+`2aca8f87` is held behind it. The worker is healthy and busy. All three factory front-door targets independently hash to
 `fe8275d0e428282baadc6d27cc93650cd312f3bf64dbe0355dbf1c641cc6c9c4`,
 with clean factory revision `483b1def`, native CGO/external linking and product
 stamp `0535927f`. Live artifact identity agrees. The publisher reports a passing
@@ -63,7 +65,7 @@ Remote work uses existing Hetzner jobs and receipts. This program does not add a
 | Local API | Product owns CLI/Unix API contracts. Unix socket permissions/peer UID, request deadlines and response bounds; native client has CLI fallback and loopback redirect limits. | Real installed Swift/Unix-API contract passes, including capabilities, SMART and live query. |
 | Privileged trace | Signed helper verifies Team ID; administrator authorization, PID identity, XPC completion and independent trace wall time are bounded. Restricted entitlement without provisioning profile removed after a real launch failure. | Signed app launches. Administrator-approved trace is not exercised by this audit. |
 | Validation | Entire Go race suite, targeted boundary/race tests, fresh Swift tests, GPUI tests/build, real installed API contract, native SMART read and UI review. | Immediate checks pass. Warm latency, idle and 24/72-hour evidence are recorded independently below. |
-| Delivery | Product changes published with guarded exact-path commits. Two factory deliveries landed and five remain accepted. Clean native bundle built on Hetzner and promoted with receipts. | Five factory deliveries, their installed builder/helper state, native producer recovery and long observation remain open. |
+| Delivery | Product changes published with guarded exact-path commits. Three factory deliveries landed, two are accepted, one is held and one is paused. Clean native bundle built on Hetzner and promoted with receipts. | Four factory deliveries, installed builder/filter/promotion state, native producer recovery and long observation remain open. |
 
 ## Baseline evidence (2026-11-08)
 
@@ -867,7 +869,7 @@ a new-release failure rate. No history was rebuilt or counters cleared.
 | Open gate | Owner and next action | Acceptance evidence |
 | --- | --- | --- |
 | Forward refusal-contract release | Product publisher Claude `72754fd6` is promoting committed `92eb891`; factory publisher `01a1bc3b` owns its matching native front door. The verified 053 factory source-closure receipt is retained. | Forward product/factory/helper identity agrees, normal resident health recovers, and a distinct post-upgrade observation starts. Do not roll back the typed refusal fix. |
-| Five queued factory deliveries | WORK-41 and delivery owner: keep retained wait; repair only printed producer/host faults, then install landed builder/helper/filter/promotion changes. | Each exact delivery is landed; source identity and installed dogfood checks pass. |
+| Four pending factory deliveries | WORK-41 and delivery owner: keep retained wait; repair only printed producer/host faults, then install landed builder/helper/filter/promotion changes. | Each exact delivery is landed; source identity and installed dogfood checks pass. |
 | Peer Hetzner source | Owner of `HetznerStore.swift`, `Views/HetznerView.swift` and related four tracked app files: publish the preserved hunks with exact ownership. | Guarded commit and combined 12-pane verification; no dropped peer pane or shortcut collision. |
 | Writer reliability and latency | WORK-52/factory telemetry owner: classify each unresolved/error cohort after final native install; measure new attempts/writes/failures and p95 without clearing history. WORK-41 retains standalone latency follow-up. | Zero new unaccounted attempts/errors; factory p95 <=25 ms and standalone p95 <=100 ms over a stated fresh workload. Historical failures stay visible. |
 | Work slowdown/calibration | Pressure coordinator owner: collect comparable host/revision/class cohorts; explain wait/CPU/reservation cost and pass replay promotion before changing weights. | Existing p95 slowdown and replay gates pass; no threshold relaxation. |
@@ -913,3 +915,78 @@ interrupted 053 JSON. After coherent 92 identities and at least four fresh norma
 samples pass, start a separate unique collector via the same launch-agent
 contract. The runtime owners have this exact handoff on the session board;
 WORK-41 remains open. Do not count the elapsed portions across upgrades.
+
+
+### Delivery state change at 20:26:49 UTC
+
+The final status changed to attention: parent
+`64c635e4-3fae-4254-bcd6-24e913bbaba0` is paused with
+`PRODUCER_BUILD_FAILED`. Its exact error is the host placement refusal:
+“remote Go work blocked: GOFLAGS needs an explicit runner profile; use the
+Hetzner gate-runner with an explicit compiler profile; local fallback is disabled.”
+Child `2aca8f87-72ad-4d63-95cb-58f5a7248b90` is held with
+`STACK_PARENT_PENDING`. The other three deliveries remain accepted. The worker
+is healthy and busy. Earlier “five accepted” checkpoints are historical.
+
+The native producer/refusal-contract owners must finish the placement repair,
+then run the parent's printed recovery command:
+`ndev-commit-delivery --json repo commit delivery drain --id 64c635e4-3fae-4254-bcd6-24e913bbaba0`.
+Act on the parent; the child resumes through its normal stack dependency. Do not
+recapture either change, use local heavy Go fallback, or retry the same unfixed
+host rejection. The board contains this exact owner handoff. The retained
+15-minute wait is still running (tool session 13340, private
+`delivery-wait-2022.json`); it does not change queue state.
+
+
+### Final live sampling correction and diagnostic improvement
+
+At 20:31 UTC the current observation had ten product checks, zero failures and
+all warm latency gates passing. It temporarily reported app PID zero at checks
+8 and 9, then rediscovered the same PID 56895. Independent app authority is
+still `d27fe84fb27eda1c95ccc3c7d290393e27427cc50be3a26d95b8152014452876`
+and `ps` confirms the same running process. A peer's `2f71e71f` is the app
+executable hash, not a replacement bundle authority. The earlier board inference
+of a replacement is corrected. One-shot launchd `pgrep` and `ps` probes both
+succeeded. The exact reason for the old collector's transient failure is unknown;
+it discarded errors. No valid 30-minute app window has been established.
+
+The release observer now records bounded, content-free failure codes and failure
+times/counts for process discovery, ambiguous or invalid PIDs, process reads and
+invalid CPU/RSS. Failed samples clear current CPU/RSS instead of retaining stale
+values. The app idle window restarts after any missing sample. Product health
+and app sampling remain separate. BSD CPU parsing accepts day-prefixed times
+and rejects negative, nonfinite and malformed metrics. These changes require
+remote race verification, a committed native release and coherent promotion;
+they are not retroactive evidence for the existing observer.
+
+Delivery `be3a3593-6e93-482c-8901-1b9c4289e446` landed as `598a33c1` at
+20:28 UTC. It closes the guarded owned-index isolation change. Current totals:
+three landed, two accepted, one held, one paused. The pending paths no longer
+include the guarded helper and its reference. Factory service reports healthy
+and busy, with source lag findings; do not restart the active worker.
+
+
+### Parent recovery after native-profile activation
+
+At 20:38 UTC the current worker is 2.33.1 and its owner confirms
+`config_current`. A live sealed native producer is running through the runner
+with an explicit clang-18 compiler, SDK digest and external-link profile. This
+is evidence of the placement repair that the earlier refused attempt lacked.
+I therefore ran the printed parent drain once. It returned `processed:0`,
+`deferred:1`, `deferred_reason:QUEUED_FOR_SERVICE` for `64c635e4`.
+This is a requeued recovery request, not proof of landing. The retained owned
+wait continues; child `2aca8f87` stays attached. Do not duplicate the captures
+or repeat the drain while the service owns this attempt.
+
+
+The diagnostic change passed its targeted race suite on the canonical runner
+(1.142 seconds) and landed as `1c12a2044ade8a9dd2c3ebdff7e3548b92a839c2`.
+An exact committed-source native observer build is now queued on the runner.
+It will be used from an immutable acceptance path against the installed CLI;
+this does not replace the managed product or interfere with the sole forward
+92 promoter (`01a1bc3b`). Source and helper identity will be recorded separately.
+The previous retained factory wait timed out after 15 minutes with guarded
+helper delivery landed and two accepted deliveries still queued. Parent recovery
+is deferred to the busy service, so its durable state can remain paused until
+processed. A single replacement owned wait is retained in
+`delivery-wait-2041.json`; no duplicate concurrent waiter is running.
