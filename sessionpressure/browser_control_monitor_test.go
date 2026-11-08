@@ -160,3 +160,45 @@ func TestRecoveryDemandDoesNotWaitOnWorkMutation(t *testing.T) {
 		t.Fatalf("diagnostic recovery probe replaced work state: %v", err)
 	}
 }
+
+func TestRecoveryDemandDoesNotMutateOrWaitOnBrowserControl(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	if _, err := BrowserControlStatus(ctx, dir, "auto"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "browser-control.json")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Authoritative status would reset this stale last sample and replace the
+	// record. Diagnostic scheduling must neither do that nor wait for its lock.
+	unlock, err := filelock.Acquire(filepath.Join(dir, "browser-control"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	probe, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	if got := recoverySampleDelay(probe, dir, DefaultPolicy(16*1024), 120*time.Second); got != 5*time.Second {
+		t.Fatalf("browser mutation hid recovery demand: %s", got)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("scheduling changed browser control: %v", err)
+	}
+}
+
+func TestBrowserSamplingControlRejectsOversizedAndInvalidRecords(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "browser-control.json")
+	for _, body := range []string{`{"mode":"invalid"}`, `{`, string(make([]byte, (16<<10)+1))} {
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := browserControlSamplingSnapshot(context.Background(), dir); err == nil {
+			t.Fatal("invalid record accepted")
+		}
+	}
+}
