@@ -1265,3 +1265,18 @@ telemetry responsibilities. The local `publish-ready` aggregate now requires
 `race`, matching CI, rather than only the non-race test target. `make -n
 publish-ready` and `git diff --check` pass. This changes documentation and gate
 composition only; the existing runtime source receipts remain separately bound.
+
+### Final review closeout (22:39 UTC)
+
+Commit `7852bff8` records installed d56/app1.4.2 and the new immutable diagnostic
+observer. The product telemetry full-baseline comparison adds 2,550 events;
+mixed-command p95 is 299.413 → 270.861 ms, with no lost source. This comparison
+spans changing workloads and does not prove causality or replace fixed-artifact
+gates. The global diff retains a separate delivery-queue-3d latency finding.
+
+The finish gate correctly refuses the still-paused parent `64c635e4`; existing
+recovery and one waiter remain active. No terminal completion is claimed.
+Scratchpad Agents note `01M6YN14GE6XF01K51JDR6SPMA` and WORK-41 comment
+`1c2bff4cfdfd21fd5a45e65c583f0e9d` record the installed outcome, outstanding
+owners and exact elapsed re-check times. The [review report](REVIEW.md) is the
+current concise handoff; private receipts preserve the full diagnostics.
