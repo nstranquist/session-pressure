@@ -1779,7 +1779,7 @@
         ]
       },
       "candidate": "Darwin same-user native browser root discovery; no all-process argv subprocess; exact birth at discovery and pre-signal checks",
-      "tests": "remote verification in progress",
+      "tests": "full three-package tests, focused race, vet, Darwin test compile and native fixture/benchmark passed",
       "release_authority": "WORK41 owns forward promotion; this session stopped promotions after mixed observation",
       "limitations": [
         "native candidate measurement pending",
@@ -2618,7 +2618,41 @@
           }
         }
       },
-      "kernel_response_bound": "Retain only the kernel-written argument bytes; truncated argc with a previous headless flag in reused capacity must not authorize enforcement."
+      "kernel_response_bound": "Retain only the kernel-written argument bytes; truncated argc with a previous headless flag in reused capacity must not authorize enforcement.",
+      "verification": {
+        "at": "2026-11-08T19:54:59.019392+00:00",
+        "revision": "e05405454a214e48cfb14402ccc1db6684cebb9b",
+        "candidate": "/srv/build/candidates/20261108T194523Z-11054",
+        "linux": {
+          "packages_seconds": {
+            "sessionpressure": 23.776,
+            "sessionpressurecmd": 0.924,
+            "sessionpressurecleanup": 0.006
+          },
+          "focused_race_seconds": 6.069,
+          "vet": "pass",
+          "darwin_test_compile": "pass",
+          "command_exit": 0
+        },
+        "native": {
+          "work_operation": "9483c6e11a53b6ec4db59033a75b70d5",
+          "admission_class": "express-test",
+          "exit": 0,
+          "top_level_tests": 9,
+          "argument_subcases": 10,
+          "owned_sleeping_fixture": "found with matching kernel birth; cleaned by bounded test; no actual browser launched",
+          "stale_tail_regression": "pass",
+          "benchmark": {
+            "iterations": 10,
+            "ns_per_op": 686308,
+            "bytes_per_op": 469600,
+            "allocations_per_op": 1506,
+            "measurement": "elapsed benchmark time, not a stable installed CPU-duty measurement"
+          },
+          "binary_sha256": "02e11f782886473636d81a730967d4fab06d38600ac5860a947ecc55158dcf43"
+        },
+        "installed_acceptance": "pending; WORK41 sole promoter"
+      }
     },
     "cli_telemetry_review": {
       "coverage": "strict coverage passed 131 covered, 13 exempt, 144 total, 53 sources",
@@ -2626,6 +2660,25 @@
       "usage_rows": 0,
       "limit": "no production trend claim",
       "agent_refresh_error": "parallel refresh caused self-contention writer lease failure; serial no-refresh retry passed"
+    },
+    "release_consolidation_2000": {
+      "candidate": "0535927",
+      "includes_cpu_commit": "e05405454a214e48cfb14402ccc1db6684cebb9b",
+      "owner_work": "WORK-41",
+      "state": "full race and native bundle queued; sole promoter",
+      "own_older_release": "cancelled only owned queued flock before build",
+      "installed_cpu_acceptance": "pending; retain all earlier failures"
+    },
+    "delivery_checkpoint_1957": {
+      "doctor_private_path": "/Users/nicostran/.nicos-dev/session-workspaces/v1/01a1b91e-5877-7453-98a6-9c1893931b54/process-guard/delivery-doctor-review-current.json",
+      "owned_accepted_stuck": 7,
+      "worker_no_motion_minutes": 17,
+      "service_healthy": true,
+      "service_busy": true,
+      "admission": "nicos-tools intentionally paused revision 1 by producer owner",
+      "owner_session": "01a1bc8f-bfe6-7ea1-a12c-3401e954d569",
+      "release_gate": "native external-CGO and SQLite canary",
+      "review_action": "preserve owner hold; no worker restart or resume"
     }
   }
 }
