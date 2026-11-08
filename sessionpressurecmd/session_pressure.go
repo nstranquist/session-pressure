@@ -50,7 +50,7 @@ Subcommands:
   policy profile show|apply NAME   Named balanced / throughput / interactive / observe work styles
                                    apply flags: --multi-agent (earlier soft-launch warnings), --with-auto-shed, --dry-run
   policy init [--force]            Write the tuned observe-only default policy
-  policy migrate                   Persist filled default work weights (express/benchmark) without changing enforcement
+  policy migrate                   Persist filled work defaults and former storage defaults; preserve enforcement
   policy enable [--with-auto-shed] Block growing work at red; automatic relief requires explicit opt-in
   policy observe                   Keep monitoring but disable admission blocks and automatic shedding
   monitor once                     Sample once and persist a manual telemetry event
@@ -933,6 +933,7 @@ func cmdSessionPressurePolicy(g *Flags, args []string) int {
 		}
 		defer mutation.Close()
 		runtime = mutation.Runtime
+		sessionpressure.MigrateLegacyStorageThresholds(&runtime.policy)
 		if err := sessionpressure.SavePolicy(runtime.path, runtime.policy); err != nil {
 			return sessionPressureError(err.Error(), 1)
 		}

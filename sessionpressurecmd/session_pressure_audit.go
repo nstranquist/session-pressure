@@ -330,9 +330,6 @@ func auditPressurePolicy(runtime pressureRuntime) pressureAuditCategory {
 	if !runtime.policy.EnforceAdmission {
 		findings = append(findings, pressureFinding(pressureAuditWarn, "admission_observe_only", "red-pressure admission is observe-only"))
 	}
-	if !runtime.policy.AutoShedCritical {
-		findings = append(findings, pressureFinding(pressureAuditWarn, "auto_relief_disabled", "sustained-critical automatic relief is disabled"))
-	}
 	return newPressureAuditCategory("policy", "durable protection policy and safety thresholds", metrics, findings...)
 }
 
