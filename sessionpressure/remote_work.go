@@ -57,14 +57,10 @@ func RemoteGoCommand(argv []string) bool {
 	return false
 }
 
-// normalizeRemoteBuildArgv rewrites a `go build` argv for remote execution.
-// Explicit -o outputs are redirected to the remote artifact placeholder and
-// reported so the artifact can be fetched back. Multi-package "..." builds
-// stay check-only (output ""). A bare or single-package build with no -o
-// becomes a validation build instead of an error: a placeholder -o is
-// appended and the output is reported as "/dev/null", which the caller
-// treats as discard (no fetch-back). Builds naming more than one package
-// without -o keep the historical error. Non-build commands pass through.
+// normalizeRemoteBuildArgv redirects explicit build outputs for fetch-back.
+// Multi-package validation builds do not produce an executable. Other builds
+// need an explicit local output so the remote route preserves the artifact
+// contract instead of silently discarding the executable.
 func normalizeRemoteBuildArgv(argv []string) ([]string, string, error) {
 	out := append([]string(nil), argv...)
 	if len(out) < 2 || out[1] != "build" {
@@ -87,17 +83,7 @@ func normalizeRemoteBuildArgv(argv []string) ([]string, string, error) {
 			return out, "", nil
 		}
 	}
-	positional := 0
-	for _, arg := range out[2:] {
-		if !strings.HasPrefix(arg, "-") {
-			positional++
-		}
-	}
-	if positional > 1 {
-		return out, "", errors.New("remote go build requires -o <local-output> (or a multi-package ... validation build)")
-	}
-	out = append(out, "-o=/srv/build/candidates/OUTPUT")
-	return out, "/dev/null", nil
+	return out, "", errors.New("remote go build requires -o <local-output> so its executable can be returned; use go build -o ./bin/<name> <package>, or go build ./... for validation")
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
@@ -174,11 +160,13 @@ func remoteModuleClosure(start string) ([]string, string, error) {
 	return modules, common, nil
 }
 
-func writeRemoteSources(out io.Writer, modules []string, common string) error {
-	tw := tar.NewWriter(out)
-	defer tw.Close()
+// remoteSourceLimit bounds one upload; larger closures keep local admission.
+const remoteSourceLimit = 512 << 20
+
+// walkRemoteSources visits each uploadable regular file of the module closure
+// once. Both the pre-upload size check and the upload use this one filter.
+func walkRemoteSources(modules []string, common string, visit func(rel, path string, info os.FileInfo) error) error {
 	seen := map[string]bool{}
-	var total int64
 	for _, module := range modules {
 		err := filepath.WalkDir(module, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
@@ -209,35 +197,58 @@ func writeRemoteSources(out io.Writer, modules []string, common string) error {
 			if err != nil {
 				return err
 			}
-			if !info.Mode().IsRegular() {
+			if !info.Mode().IsRegular() || info.Size() > 20<<20 {
 				return nil
 			}
-			if info.Size() > 20<<20 {
-				return nil
-			}
-			total += info.Size()
-			if total > 512<<20 {
-				return errors.New("remote source exceeds 512MiB; narrow the module")
-			}
-			h, err := tar.FileInfoHeader(info, "")
-			if err != nil {
-				return err
-			}
-			h.Name = filepath.ToSlash(rel)
-			if err = tw.WriteHeader(h); err != nil {
-				return err
-			}
-			f, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			_, err = io.Copy(tw, f)
-			closeErr := f.Close()
-			return errors.Join(err, closeErr)
+			return visit(rel, path, info)
 		})
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// remoteSourceSize returns the upload size, or an error once it passes limit.
+func remoteSourceSize(modules []string, common string, limit int64) (int64, error) {
+	var total int64
+	err := walkRemoteSources(modules, common, func(_, _ string, info os.FileInfo) error {
+		total += info.Size()
+		if total > limit {
+			return fmt.Errorf("remote source exceeds %dMiB; narrow the module", limit>>20)
+		}
+		return nil
+	})
+	return total, err
+}
+
+func writeRemoteSources(out io.Writer, modules []string, common string) error {
+	tw := tar.NewWriter(out)
+	defer tw.Close()
+	var total int64
+	err := walkRemoteSources(modules, common, func(rel, path string, info os.FileInfo) error {
+		total += info.Size()
+		if total > remoteSourceLimit {
+			return errors.New("remote source exceeds 512MiB; narrow the module")
+		}
+		h, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		h.Name = filepath.ToSlash(rel)
+		if err = tw.WriteHeader(h); err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(tw, f)
+		closeErr := f.Close()
+		return errors.Join(err, closeErr)
+	})
+	if err != nil {
+		return err
 	}
 	return tw.Close()
 }
@@ -270,16 +281,28 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if err != nil {
 		return true, 1, err
 	}
+	// Ineligible commands keep local admission before anything is uploaded.
+	keepLocal := func(reason string) (bool, int, error) {
+		fmt.Fprintln(streams.Stderr, "session-pressure: running Go work locally: "+reason)
+		recordControlEvent(dir, map[string]any{"event": "remote_work_declined", "operation": options.Command[1], "reason": reason})
+		return false, 0, nil
+	}
+	if reason := remoteWorkIneligibleReason(cwd, options.Command, os.Getenv); reason != "" {
+		return keepLocal(reason)
+	}
 	modules, common, err := remoteModuleClosure(cwd)
 	if err != nil {
-		return true, 1, err
+		return keepLocal(err.Error())
+	}
+	if _, err = remoteSourceSize(modules, common, remoteSourceLimit); err != nil {
+		return keepLocal(err.Error())
 	}
 	// Explicit outputs can be returned without guessing package/main names.
 	argv := append([]string(nil), options.Command...)
 	argv[0] = "go"
 	argv, output, err := normalizeRemoteBuildArgv(argv)
 	if err != nil {
-		return true, 2, err
+		return keepLocal(err.Error())
 	}
 	job, err := NewWorkOperationID()
 	if err != nil {
