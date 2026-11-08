@@ -1,6 +1,7 @@
 package sessionpressurecmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,6 +48,15 @@ func nicosDevDir() (string, error) {
 
 func nicosToolsRepoRoot() (string, error) {
 	dir, err := nicosDevDir()
+	return optionalFactoryRepoRoot(dir, err)
+}
+
+// The factory adapter is optional in the standalone product. Its absence is
+// already represented by observed coverage surfaces, not a failed board read.
+func optionalFactoryRepoRoot(dir string, err error) (string, error) {
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
 	if err != nil {
 		return "", err
 	}
