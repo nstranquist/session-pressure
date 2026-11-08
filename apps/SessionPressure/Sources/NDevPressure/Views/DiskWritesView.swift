@@ -97,7 +97,7 @@ struct DiskWritesView: View {
                 Button("Read SMART") { Task { await store.refreshDiskHealth() } }
             }
             if let sample = store.diskHealth {
-                HStack { Text("Sample age:"); Text(sample.capturedAt, style: .relative) }
+                HStack { Text("Sample age:"); ReadAgeView(date: sample.capturedAt) }
                     .font(.caption).foregroundStyle(.secondary)
                 if sample.available {
                     Text("Vendor estimated life used: \(sample.percentageUsed)%")
