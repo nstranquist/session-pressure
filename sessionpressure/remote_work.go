@@ -57,6 +57,49 @@ func RemoteGoCommand(argv []string) bool {
 	return false
 }
 
+// normalizeRemoteBuildArgv rewrites a `go build` argv for remote execution.
+// Explicit -o outputs are redirected to the remote artifact placeholder and
+// reported so the artifact can be fetched back. Multi-package "..." builds
+// stay check-only (output ""). A bare or single-package build with no -o
+// becomes a validation build instead of an error: a placeholder -o is
+// appended and the output is reported as "/dev/null", which the caller
+// treats as discard (no fetch-back). Builds naming more than one package
+// without -o keep the historical error. Non-build commands pass through.
+func normalizeRemoteBuildArgv(argv []string) ([]string, string, error) {
+	out := append([]string(nil), argv...)
+	if len(out) < 2 || out[1] != "build" {
+		return out, "", nil
+	}
+	for i := 2; i < len(out); i++ {
+		if out[i] == "-o" && i+1 < len(out) {
+			output := out[i+1]
+			out[i+1] = "/srv/build/candidates/OUTPUT"
+			return out, output, nil
+		}
+		if strings.HasPrefix(out[i], "-o=") {
+			output := strings.TrimPrefix(out[i], "-o=")
+			out[i] = "-o=/srv/build/candidates/OUTPUT"
+			return out, output, nil
+		}
+	}
+	for _, arg := range out[2:] {
+		if strings.Contains(arg, "...") {
+			return out, "", nil
+		}
+	}
+	positional := 0
+	for _, arg := range out[2:] {
+		if !strings.HasPrefix(arg, "-") {
+			positional++
+		}
+	}
+	if positional > 1 {
+		return out, "", errors.New("remote go build requires -o <local-output> (or a multi-package ... validation build)")
+	}
+	out = append(out, "-o=/srv/build/candidates/OUTPUT")
+	return out, "/dev/null", nil
+}
+
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 
 // remoteModuleClosure preserves relative replacement layout without copying
@@ -234,31 +277,9 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	// Explicit outputs can be returned without guessing package/main names.
 	argv := append([]string(nil), options.Command...)
 	argv[0] = "go"
-	output := ""
-	if argv[1] == "build" {
-		for i := 2; i < len(argv); i++ {
-			if argv[i] == "-o" && i+1 < len(argv) {
-				output = argv[i+1]
-				argv[i+1] = "/srv/build/candidates/OUTPUT"
-				break
-			}
-			if strings.HasPrefix(argv[i], "-o=") {
-				output = strings.TrimPrefix(argv[i], "-o=")
-				argv[i] = "-o=/srv/build/candidates/OUTPUT"
-				break
-			}
-		}
-	}
-	if argv[1] == "build" && output == "" {
-		checkOnly := false
-		for _, arg := range argv[2:] {
-			if strings.Contains(arg, "...") {
-				checkOnly = true
-			}
-		}
-		if !checkOnly {
-			return true, 2, errors.New("remote go build requires -o <local-output> (or a multi-package ... validation build)")
-		}
+	argv, output, err := normalizeRemoteBuildArgv(argv)
+	if err != nil {
+		return true, 2, err
 	}
 	job, err := NewWorkOperationID()
 	if err != nil {

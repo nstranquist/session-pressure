@@ -67,3 +67,47 @@ func TestAutomatedBrowserRootExcludesPersonalAndChildren(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeRemoteBuildArgv(t *testing.T) {
+	tests := []struct {
+		name       string
+		argv       []string
+		wantArgv   []string
+		wantOutput string
+		wantErr    bool
+	}{
+		{name: "bare build", argv: []string{"go", "build"}, wantArgv: []string{"go", "build", "-o=/srv/build/candidates/OUTPUT"}, wantOutput: "/dev/null"},
+		{name: "build dot", argv: []string{"go", "build", "."}, wantArgv: []string{"go", "build", ".", "-o=/srv/build/candidates/OUTPUT"}, wantOutput: "/dev/null"},
+		{name: "build single package", argv: []string{"go", "build", "./cmd/x"}, wantArgv: []string{"go", "build", "./cmd/x", "-o=/srv/build/candidates/OUTPUT"}, wantOutput: "/dev/null"},
+		{name: "explicit -o separate", argv: []string{"go", "build", "-o", "bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-o", "/srv/build/candidates/OUTPUT", "./cmd/x"}, wantOutput: "bin/app"},
+		{name: "explicit -o equals", argv: []string{"go", "build", "-o=bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-o=/srv/build/candidates/OUTPUT", "./cmd/x"}, wantOutput: "bin/app"},
+		{name: "multi-package check-only", argv: []string{"go", "build", "./..."}, wantArgv: []string{"go", "build", "./..."}, wantOutput: ""},
+		{name: "two packages without -o", argv: []string{"go", "build", "./a", "./b"}, wantArgv: []string{"go", "build", "./a", "./b"}, wantErr: true},
+		{name: "non-build untouched", argv: []string{"go", "test", "./..."}, wantArgv: []string{"go", "test", "./..."}, wantOutput: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotArgv, gotOutput, err := normalizeRemoteBuildArgv(tc.argv)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got argv=%v output=%q", gotArgv, gotOutput)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gotOutput != tc.wantOutput {
+				t.Errorf("output = %q, want %q", gotOutput, tc.wantOutput)
+			}
+			if len(gotArgv) != len(tc.wantArgv) {
+				t.Fatalf("argv = %v, want %v", gotArgv, tc.wantArgv)
+			}
+			for i := range tc.wantArgv {
+				if gotArgv[i] != tc.wantArgv[i] {
+					t.Fatalf("argv = %v, want %v", gotArgv, tc.wantArgv)
+				}
+			}
+		})
+	}
+}
