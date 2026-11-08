@@ -446,5 +446,5 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 // admission after a profile or source rejection.
 func rejectRemoteWork(dir, operation, reason string) (bool, int, error) {
 	recordControlEvent(dir, map[string]any{"event": "remote_work_declined", "operation": operation, "reason": reason, "local_blocked": true})
-	return true, 1, fmt.Errorf("remote Go work blocked: %s; use the Hetzner gate-runner with an explicit compiler profile; local fallback is disabled", reason)
+	return true, workExitPolicyDenied, workRefusal(WorkRefusalRemoteProfile, fmt.Errorf("remote Go work blocked: %s; use the Hetzner gate-runner with an explicit compiler profile; local fallback is disabled", reason))
 }

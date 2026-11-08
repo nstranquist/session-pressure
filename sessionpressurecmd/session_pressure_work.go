@@ -104,6 +104,10 @@ type pressureWorkRunOptions struct {
 	command       []string
 	noReuse       bool
 	priority      bool
+	// Placement must survive this adapter, or a declared local run
+	// would silently become auto placement.
+	placement       sessionpressure.WorkPlacement
+	placementReason string
 }
 
 func parsePressureWorkRunArgs(args []string) (pressureWorkRunOptions, error) {
@@ -111,7 +115,7 @@ func parsePressureWorkRunArgs(args []string) (pressureWorkRunOptions, error) {
 	if err != nil {
 		return pressureWorkRunOptions{}, err
 	}
-	return pressureWorkRunOptions{workload: options.Workload, cohort: options.Cohort, profileGoTest: options.ProfileGoTest, class: options.Class, wait: options.Wait, progress: options.Progress, command: options.Command, noReuse: options.NoReuse, priority: options.Priority}, nil
+	return pressureWorkRunOptions{workload: options.Workload, cohort: options.Cohort, profileGoTest: options.ProfileGoTest, class: options.Class, wait: options.Wait, progress: options.Progress, command: options.Command, noReuse: options.NoReuse, priority: options.Priority, placement: options.Placement, placementReason: options.PlacementReason}, nil
 }
 
 func cmdSessionPressureWork(g *Flags, args []string) int {
@@ -769,6 +773,7 @@ func runPressureWorkHelperMode(mode string, args []string) int {
 func runPressureWorkCommand(coordinator *sessionpressure.WorkCoordinator, options pressureWorkRunOptions) int {
 	code, err := sessionpressure.RunWorkCommandWithExpressReuse(coordinator, sessionpressure.WorkRunOptions{
 		Workload: options.workload, Cohort: options.cohort, ProfileGoTest: options.profileGoTest, Class: options.class, Wait: options.wait, Progress: options.progress, Command: options.command, NoReuse: options.noReuse, Priority: options.priority,
+		Placement: options.placement, PlacementReason: options.placementReason,
 	}, WorkHostAdmissionCheck, pressureWorkAdmissionRetryInterval, sessionpressure.WorkRunStreams{
 		Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, CommandFactory: pressureWorkCommandFactory,
 	})

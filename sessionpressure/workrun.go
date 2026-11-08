@@ -950,11 +950,11 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	}
 	if options.Class == WorkClassBrowser {
 		if err := CheckBrowserWork(context.Background()); err != nil {
-			return 14, err
+			return 14, workRefusal(WorkRefusalBrowser, err)
 		}
 		unlock, err := AcquireBrowserSlot(context.Background(), coordinator.Dir)
 		if err != nil {
-			return 14, fmt.Errorf("browser slot busy: %w", err)
+			return 14, workRefusal(WorkRefusalBrowser, fmt.Errorf("browser slot busy: %w", err))
 		}
 		defer unlock()
 	}
@@ -963,7 +963,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	}
 	if parent, nested := nestedWorkParent(coordinator, os.Environ()); nested {
 		if options.Class == WorkClassBrowser {
-			return 14, errors.New("browser work requires its own bounded wrapper; do not nest work-run browser commands")
+			return 14, workRefusal(WorkRefusalBrowser, errors.New("browser work requires its own bounded wrapper; do not nest work-run browser commands"))
 		}
 		return runNestedWorkCommand(parent, options, streams)
 	}
@@ -1222,7 +1222,8 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 			eventType = WorkEventCancelled
 			outcome = workCancelOutcome(waitCtx.Err(), 0)
 		}
-		return coordinatorFailureExit(admissionErr, workExitPolicyDenied), errors.Join(admissionErr, recordTerminal(eventType, outcome, nil))
+		code := coordinatorFailureExit(admissionErr, workExitPolicyDenied)
+		return code, errors.Join(admissionRefusal(code, admissionErr), recordTerminal(eventType, outcome, nil))
 	}
 	initialAdmission = admissionAfterWait
 	admissionReadyAt = time.Now().UTC()
@@ -1389,7 +1390,8 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 				eventType = WorkEventCancelled
 				outcome = workCancelOutcome(waitCtx.Err(), 0)
 			}
-			return coordinatorFailureExit(admissionErr, workExitPolicyDenied), errors.Join(admissionErr, releaseErr, recordTerminal(eventType, outcome, nil))
+			code := coordinatorFailureExit(admissionErr, workExitPolicyDenied)
+			return code, errors.Join(admissionRefusal(code, admissionErr), releaseErr, recordTerminal(eventType, outcome, nil))
 		}
 		postLeaseAdmission = admissionAfterLease
 		if pressureWaiter == nil {
