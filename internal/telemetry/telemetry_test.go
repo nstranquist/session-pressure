@@ -39,7 +39,7 @@ func TestWriterHealthAndPrivacy(t *testing.T) {
 	if err = json.Unmarshal(raw, &e); err != nil {
 		t.Fatal(err)
 	}
-	if e.Attrs["outcome"] != "policy_denied" || e.Attrs["operation_id"] != "session.pressure" {
+	if e.Attrs["outcome"] != "policy_denied" || e.Attrs["operation_id"] != "session.pressure" || e.Attrs["outcome_class"] != "policy_block" || e.Attrs["reason_code"] != "policy_denied" {
 		t.Fatalf("event %+v", e)
 	}
 	if v := ValidateEventPrivacy(e); len(v) != 0 {
@@ -48,6 +48,55 @@ func TestWriterHealthAndPrivacy(t *testing.T) {
 	e.Attrs["nested"] = map[string]any{"content": []any{"/Users/person/private", "bearer abc"}}
 	if v := ValidateEventPrivacy(e); len(v) != 2 {
 		t.Fatalf("privacy validation %+v", v)
+	}
+}
+
+func TestCommandResultClassification(t *testing.T) {
+	for _, tc := range []struct {
+		exit          int
+		gate          bool
+		class, reason string
+	}{
+		{0, false, "success", "none"},
+		{0, true, "success", "none"},
+		{1, false, "command_failure", "nonzero_exit"},
+		{1, true, "expected_negative", "gate_not_satisfied"},
+		{2, true, "user_input", "invalid_input"},
+		{3, false, "command_failure", "nonzero_exit"},
+		{11, false, "policy_block", "policy_denied"},
+		{15, false, "policy_block", "policy_denied"},
+		{16, false, "command_failure", "nonzero_exit"},
+		{124, false, "timeout", "deadline_exceeded"},
+		{126, false, "dependency_unavailable", "dependency_launch"},
+		{127, false, "dependency_unavailable", "dependency_launch"},
+		{130, false, "cancelled", "interrupted"},
+	} {
+		t.Run(fmt.Sprintf("exit_%d_gate_%t", tc.exit, tc.gate), func(t *testing.T) {
+			t.Setenv("SESSION_PRESSURE_TELEMETRY_DIR", t.TempDir())
+			t.Setenv("NDEV_PRESSURE_WRAPPER", "")
+			t.Setenv("NDEV_TELEMETRY", "1")
+			if err := RecordCommandResult("audit", time.Now(), tc.exit, tc.gate); err != nil {
+				t.Fatal(err)
+			}
+			paths, err := filepath.Glob(filepath.Join(filepath.Dir(DefaultSourceTelemetryPathAt(ProductSourceID, time.Now())), "events-*.jsonl"))
+			if err != nil || len(paths) != 1 {
+				t.Fatalf("paths=%v err=%v", paths, err)
+			}
+			raw, err := os.ReadFile(paths[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			var e Event
+			if err := json.Unmarshal(raw, &e); err != nil {
+				t.Fatal(err)
+			}
+			if e.Attrs["outcome_class"] != tc.class || e.Attrs["reason_code"] != tc.reason || e.OK == nil || *e.OK != (tc.exit == 0) {
+				t.Fatalf("wrong result: %+v", e)
+			}
+			if v := ValidateEventPrivacy(e); len(v) != 0 {
+				t.Fatal(v)
+			}
+		})
 	}
 }
 func TestWrapperRecordsExactlyOnce(t *testing.T) {

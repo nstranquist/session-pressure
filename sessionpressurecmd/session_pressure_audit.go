@@ -247,7 +247,7 @@ func cmdSessionPressureAudit(g *Flags, args []string) int {
 			payload["output_scope"] = "full"
 			payload["audit"] = report
 		}
-		return emitPressure(g, payload, "", auditExit(report))
+		return emitPressureAuditReport(g, payload, "", report)
 	}
 	var text strings.Builder
 	fmt.Fprintf(&text, "SessionPressure audit: overall=%s live=%t since=%s\n", report.Overall, report.LiveSampled, sinceDuration)
@@ -262,7 +262,18 @@ func cmdSessionPressureAudit(g *Flags, args []string) int {
 		payload["output_scope"] = "full"
 		payload["audit"] = report
 	}
-	return emitPressure(g, payload, text.String(), auditExit(report))
+	return emitPressureAuditReport(g, payload, text.String(), report)
+}
+
+func emitPressureAuditReport(g *Flags, payload any, text string, report pressureAuditReport) int {
+	exit := auditExit(report)
+	if err := emitPressureOutput(g, payload, text); err != nil {
+		return sessionPressureError(err.Error(), 1)
+	}
+	if g != nil && exit != 0 {
+		g.gateNotSatisfied = true
+	}
+	return exit
 }
 
 // compactPressureAuditCategory keeps pass/warn/fail status, summary, and

@@ -15,14 +15,17 @@ const ProductCLIMarker = "github.com/nstranquist/session-pressure/sessionpressur
 // Flags is the product-CLI subset of ndev global flags.
 type Flags struct {
 	JSON bool
+	// Set only after a completed detector report was successfully emitted.
+	gateNotSatisfied bool
 }
 
 // Main runs the SessionPressure dispatcher. jsonOutput is the ndev --json flag.
 func Main(jsonOutput bool, args []string) int {
 	started := time.Now()
 	args = StripSessionPressurePrefix(args)
-	code := cmdSessionPressure(&Flags{JSON: jsonOutput}, args)
-	if err := telemetry.RecordCommand(sessionpressure.CommandLeaf(args), started, code); err != nil {
+	flags := &Flags{JSON: jsonOutput}
+	code := cmdSessionPressure(flags, args)
+	if err := telemetry.RecordCommandResult(sessionpressure.CommandLeaf(args), started, code, flags.gateNotSatisfied); err != nil {
 		fmt.Fprintln(os.Stderr, "session-pressure: command telemetry could not be recorded; inspect telemetry audit")
 	}
 	return code
