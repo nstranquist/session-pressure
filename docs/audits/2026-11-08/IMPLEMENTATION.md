@@ -5,13 +5,16 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
-Current review checkpoint (21:44 UTC): the review corrections are committed:
+Current review checkpoint (21:51 UTC): the review corrections are committed:
 artifact-bound acceptance observer `b36ac47`, bounded gate-runner API
 `a20e450a`, and native app 1.4.2 build 10 `36f2a69e`. All 75 Swift tests pass,
 including actual candidate CLI, SSH health, a completed job log and installed
 CLI/Unix API contracts. The signed release build passes strict verification.
-The exact final Go race suite is queued on the canonical runner. These source
-and candidate results are not installation receipts. The app awaits the matching
+The exact final Go race suite passes on the canonical runner: job
+`20261108T213140Z-1666344`, exit 0 in 78 seconds, completed 21:50:39 UTC.
+Its base-plus-overlay manifest binds all nine final API paths. The later peer
+monitor-help commit has separate verification. These source and candidate
+results are not installation receipts. The app awaits the matching
 native API promotion; installed authority remains `0535927f` / app `c827a2d6`.
 
 The existing app passed its separate 30-minute resource gate at 0.30% CPU and
