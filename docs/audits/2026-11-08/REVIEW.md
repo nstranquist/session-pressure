@@ -183,6 +183,23 @@ two accepted, one held and one paused. No queued work is described as installed.
 | Scheduler owner | Calibrate from sufficient terminal evidence | Replay promotion meets the existing gap-closure gate. Keep admission weights unchanged until then. |
 | Operator and WORK-41 | Exercise administrator-approved privileged trace when authorization is available | Real helper authorization, bounded completion and independently measured trace duration. A signed launch is not this proof. |
 
+## Closeout evidence (22:39 UTC)
+
+The full telemetry baseline comparison records 2,550 additional product events,
+with mixed-command p95 299.413 → 270.861 ms (9.5% lower). This is directional
+usage evidence across changing artifacts and workloads, not causal proof or a
+replacement for the artifact-bound read gates. No source is lost. The global
+diff is not wholly green: the separate delivery-queue-3d source crosses its
+20% latency threshold (14.874 → 17.934 ms). That independent application is
+outside this product review. The private full diff is
+`review-telemetry-diff-2238.json`.
+
+The finish gate refuses completion because parent `64c635e4` is still paused.
+`review-closeout-refusal-2239.json` preserves that result and the verified exact
+factory paths. The existing recovery is queued; do not duplicate it. WORK-41
+remains in progress. The final outcome and timed re-check instructions are in
+Scratchpad Agents note `01M6YN14GE6XF01K51JDR6SPMA`, read back successfully.
+
 ## Self-review
 
 The final gate review also found that root Make targets and CI used fixed
@@ -202,6 +219,8 @@ lifecycle cancellation and agent-facing capability coverage. It also found two
 process weaknesses: repeated oversized board subjects and audit flag misuse.
 Use the source/CLI usage contract before a diagnostic call, keep board subjects
 under 240 characters, retain one remote wait handle and distinguish packaging
-failures from product test failures. No test or historical metric is rewritten
+failures from product test failures. Resolve paths with `rg --files` before
+reading them or putting them into a handoff; guessed paths caused avoidable
+failed reads during this review. No test or historical metric is rewritten
 to improve the score. WORK-41 remains in progress until its acceptance conditions
 are proved.
