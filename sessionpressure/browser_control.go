@@ -46,6 +46,7 @@ func BrowserControlStatus(ctx context.Context, dir string, mode string) (Browser
 				return fmt.Errorf("invalid browser control: %w", err)
 			}
 		}
+		previous := state
 		if state.Mode == "" {
 			state.Mode = "auto"
 			state.Blocked = true
@@ -61,7 +62,11 @@ func BrowserControlStatus(ctx context.Context, dir string, mode string) (Browser
 		}
 		state.MaxRuntimeSeconds = 120
 		now := time.Now().UTC()
-		snapshot, available := NewTelemetryStore(dir).ReadLatest()
+		var snapshot Snapshot
+		available := false
+		if state.Mode == "auto" {
+			snapshot, available = NewTelemetryStore(dir).ReadLatest()
+		}
 		if state.Mode == "paused" {
 			state.Blocked = true
 			state.RecoverySamples = 0
@@ -96,6 +101,11 @@ func BrowserControlStatus(ctx context.Context, dir string, mode string) (Browser
 			if state.LastSample.IsZero() || snapshot.Timestamp.After(state.LastSample.Add(5*time.Second)) {
 				state.LastSample = snapshot.Timestamp
 			}
+		}
+		// Cached reads must not flush an identical control record. In particular,
+		// paused status can be polled by multiple clients without new evidence.
+		if state == previous {
+			return nil
 		}
 		state.UpdatedAt = now
 		body, err = json.MarshalIndent(state, "", "  ")

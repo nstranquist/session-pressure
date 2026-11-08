@@ -651,17 +651,8 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 		}
 		delay := time.Duration(monitor.Policy.IntervalSeconds(lastLevel)) * time.Second
 		delay = recoverySampleDelay(ctx, monitor.Store.Dir, monitor.Policy, delay)
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
+		if !waitForResidentSample(ctx, monitor.Store.Dir, monitor.Policy, delay) {
 			return nil
-		case <-timer.C:
 		}
 	}
 }
