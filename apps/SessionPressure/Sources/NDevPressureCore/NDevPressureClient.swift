@@ -186,6 +186,23 @@ public struct NDevPressureClient: Sendable {
         return result
     }
 
+    public func gateRunnerInspection(includeBox: Bool = true, knownLedger: String? = nil) async throws -> GateRunnerEnvelope {
+        var args = ["--json", "session", "pressure", "remote", "inspect"]
+        if !includeBox { args.append("--no-box") }
+        if let knownLedger, !knownLedger.isEmpty { args += ["--known-ledger", knownLedger] }
+        return try await runJSON(GateRunnerEnvelope.self, arguments: args,
+                                 maximumResponseBytes: 2 * 1024 * 1024, timeoutSeconds: 16)
+    }
+
+    public func gateRunnerJobLog(id: String) async throws -> String {
+        struct Envelope: Decodable { let ok: Bool; let log: String }
+        let result = try await runJSON(Envelope.self,
+            arguments: ["--json", "session", "pressure", "remote", "job-log", "--id", id],
+            maximumResponseBytes: 1024 * 1024, timeoutSeconds: 16)
+        guard result.ok else { throw NDevPressureClientError.emptyResponse }
+        return result.log
+    }
+
     public func capabilities() async throws -> CapabilitiesEnvelope {
         if let api: CapabilitiesEnvelope = try await apiProjection(CapabilitiesEnvelope.self, route: "/v1/pressure/capabilities") { return api }
         return try await runJSON(CapabilitiesEnvelope.self, arguments: ["--json", "session", "pressure", "capabilities"])

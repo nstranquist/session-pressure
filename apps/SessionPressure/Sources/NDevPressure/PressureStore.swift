@@ -13,6 +13,7 @@ final class PressureStore: ObservableObject {
         case diskWrites = "Disk Writes"
         case storage = "Storage"
         case work = "Work Queue"
+        case hetzner = "Hetzner"
         case policy = "Policy"
         case monitor = "Monitor"
         case telemetry = "Telemetry"
@@ -29,6 +30,7 @@ final class PressureStore: ObservableObject {
             case .diskWrites: "internaldrive"
             case .storage: "externaldrive.badge.checkmark"
             case .work: "rectangle.stack"
+            case .hetzner: "server.rack"
             case .policy: "slider.horizontal.3"
             case .monitor: "heart.text.square"
             case .telemetry: "waveform.path.ecg"
@@ -46,6 +48,7 @@ final class PressureStore: ObservableObject {
             case .diskWrites: "3"
             case .storage: "4"
             case .work: "5"
+            case .hetzner: "2"
             case .policy: "6"
             case .monitor: "7"
             case .telemetry: "8"
@@ -54,11 +57,11 @@ final class PressureStore: ObservableObject {
         }
 
         var shortcutModifiers: EventModifiers {
-            self == .dayGate ? [.command, .shift] : [.command]
+            self == .dayGate || self == .hetzner ? [.command, .shift] : [.command]
         }
 
         var shortcutLabel: String {
-            (self == .dayGate ? "⇧⌘" : "⌘") + commandDigit
+            (self == .dayGate || self == .hetzner ? "⇧⌘" : "⌘") + commandDigit
         }
 
         var freshnessKey: String {
@@ -67,6 +70,7 @@ final class PressureStore: ObservableObject {
             case .dayGate: "advisor"
             case .diskWrites: "diskWrites"
             case .work: "work"
+            case .hetzner: "hetzner"
             case .policy: "policy"
             case .monitor: "monitor"
             case .telemetry: "telemetry"
@@ -668,6 +672,10 @@ final class PressureStore: ObservableObject {
         }
         if url.scheme == "ndev-pressure", url.host == "process-incidents" {
             selectedSection = .processIncidents
+            return
+        }
+        if url.scheme == "ndev-pressure", url.host == "hetzner" {
+            selectedSection = .hetzner
             return
         }
         guard url.scheme == "ndev-pressure", url.host == "disk-writes" else { return }

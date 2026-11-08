@@ -49,7 +49,7 @@ struct PressureStoreTests {
         let store = PressureStore()
         #expect(PressureStore.Section.allCases.map(\.rawValue) == [
             "Overview", "Day Gate", "Agent Trees", "Process Incidents", "Disk Writes", "Storage",
-            "Work Queue", "Policy", "Monitor", "Telemetry", "Settings",
+            "Work Queue", "Hetzner", "Policy", "Monitor", "Telemetry", "Settings",
         ])
         store.openStorage(tab: .idle)
         #expect(store.selectedSection == .storage)
