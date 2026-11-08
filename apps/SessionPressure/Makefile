@@ -7,13 +7,11 @@ TRACE_HELPER_LABEL := com.nstranquist.ndev-pressure.trace-helper
 CODE_SIGN_IDENTITY ?= -
 RELEASE_TOOL ?= $(HOME)/.local/bin/session-pressure-release
 CODE_SIGN_FLAGS := --force --sign "$(CODE_SIGN_IDENTITY)"
-# The service-management entitlement is restricted: AMFI refuses to spawn an
-# ad-hoc-signed binary that carries it (launchd error 153). Ad-hoc builds sign
-# without entitlements — the trace helper stays fail-closed unavailable.
-ENTITLEMENTS_FLAGS :=
+# SMAppService registration for this non-sandboxed app needs no restricted
+# entitlement. AMFI rejects unprovisioned restricted entitlements even with a
+# Developer ID signature. Helper trust still requires the same real Team ID.
 ifneq ($(CODE_SIGN_IDENTITY),-)
 CODE_SIGN_FLAGS += --options runtime --timestamp
-ENTITLEMENTS_FLAGS := --entitlements Resources/NDevPressure.entitlements
 endif
 BUILD_DIR := .build/release
 APP_DIR := $(BUILD_DIR)/$(APP_NAME).app
@@ -31,7 +29,7 @@ build: icon
 	@if [ -f "$(ICON)" ]; then cp "$(ICON)" "$(APP_DIR)/Contents/Resources/AppIcon.icns"; fi
 	@plutil -lint "$(APP_DIR)/Contents/Info.plist" "$(APP_DIR)/Contents/Library/LaunchDaemons/$(TRACE_HELPER_LABEL).plist" >/dev/null
 	@codesign $(CODE_SIGN_FLAGS) --identifier "$(TRACE_HELPER_LABEL)" "$(APP_DIR)/Contents/Library/LaunchServices/$(TRACE_HELPER)" >/dev/null
-	@codesign $(CODE_SIGN_FLAGS) --deep $(ENTITLEMENTS_FLAGS) "$(APP_DIR)" >/dev/null
+	@codesign $(CODE_SIGN_FLAGS) --deep "$(APP_DIR)" >/dev/null
 	@echo "  Built: $(APP_DIR)"
 
 icon: Resources/AppIcon.svg
@@ -70,8 +68,8 @@ run: install
 
 verify: test build
 	@codesign --verify --deep --strict "$(APP_DIR)"
-	@if [ "$(CODE_SIGN_IDENTITY)" = "-" ] && codesign -d --entitlements - "$(APP_DIR)" 2>/dev/null | grep -q 'com\.apple\.developer\.'; then \
-	  echo "  FAIL: ad-hoc build carries restricted entitlements (AMFI will refuse to spawn it)"; exit 1; \
+	@if codesign -d --entitlements - "$(APP_DIR)" 2>/dev/null | grep -q 'com\.apple\.developer\.'; then \
+	  echo "  FAIL: restricted entitlements require a provisioning profile; this app does not use them"; exit 1; \
 	fi
 	@echo "  verify ok"
 
