@@ -7,7 +7,7 @@
 //
 // Design:
 //
-//   - Cross-process safety: ownership JSON is written and fsynced privately,
+//   - Cross-process safety: ownership JSON is written and closed privately,
 //     then a same-directory hard link atomically publishes path + ".lock".
 //     Readers therefore never observe a half-initialized new sidecar.
 //   - In-process safety: a per-key channel queue serializes goroutines in the
@@ -174,7 +174,7 @@ func isStale(lockFile string) bool {
 	return !isProcessAlive(i.PID)
 }
 
-// tryCreateLock builds the ownership record privately, fsyncs it, then uses a
+// tryCreateLock builds and closes the ownership record privately, then uses a
 // same-directory hard link as the O_EXCL publication point. A competing reader
 // can therefore see either no sidecar or a complete sidecar, never the empty
 // initialization window that allowed two live processes to enter together.
@@ -210,9 +210,12 @@ func tryCreateLock(lockFile string) (*info, error) {
 	if _, err := f.Write(payload); err != nil {
 		return nil, err
 	}
-	if err := f.Sync(); err != nil {
-		return nil, err
-	}
+	// This record synchronizes live processes; it is not durable application
+	// state. Write and close make the complete payload visible before Link.
+	// Sync would force an extra disk flush for every lock attempt, including
+	// losing contenders. After a host restart its owner is gone and the
+	// existing dead-owner recovery applies. Data durability belongs to the
+	// protected writer, whose syncs remain unchanged.
 	if err := f.Close(); err != nil {
 		return nil, err
 	}
