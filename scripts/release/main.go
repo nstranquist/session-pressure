@@ -42,16 +42,17 @@ func run(args []string) error {
 		return observe(args[1:])
 	}
 	if len(args) == 0 {
-		return errors.New("usage: release build|install|install-app [flags]")
+		return errors.New("usage: release build|install|app-status|install-app [flags]")
 	}
 	f := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	out := f.String("out", "", "bundle directory")
 	platform := f.String("platform", "darwin/arm64", "build target")
 	prefix := f.String("prefix", "", "install bin directory")
-	expected := f.String("expected-current", "", "observed current revision, or none for first install")
-	allowRollback := f.Bool("allow-rollback", false, "explicitly permit an older build after checking current revision")
+	expected := f.String("expected-current", "", "observed current revision or app digest; none for first install")
+	allowRollback := f.Bool("allow-rollback", false, "explicitly permit an older release after checking current authority")
 	app := f.String("app", "", "signed .app source")
 	destination := f.String("destination", "/Applications/NDev Pressure.app", "app destination")
+	digestOnly := f.Bool("digest-only", false, "print only the app authority digest (app-status)")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -64,7 +65,17 @@ func run(args []string) error {
 	case "install":
 		return install(*out, *prefix, *expected, *allowRollback)
 	case "install-app":
-		return installApp(*app, *destination)
+		return installApp(*app, *destination, *expected, *allowRollback)
+	case "app-status":
+		identity, err := readAppIdentity(*app)
+		if err != nil {
+			return err
+		}
+		if *digestOnly {
+			fmt.Println(identity.authority())
+			return nil
+		}
+		return json.NewEncoder(os.Stdout).Encode(identity)
 	default:
 		return errors.New("unknown release action")
 	}
@@ -466,7 +477,7 @@ func install(dir, prefix, expected string, allowRollback bool) error {
 	fmt.Println("Installed", m.Revision, "at", prefix)
 	return nil
 }
-func installApp(source, destination string) error {
+func installApp(source, destination, expected string, allowRollback bool) error {
 	if source == "" || !filepath.IsAbs(destination) || !strings.HasSuffix(destination, ".app") {
 		return errors.New("--app and absolute .app destination required")
 	}
@@ -479,6 +490,17 @@ func installApp(source, destination string) error {
 		return fmt.Errorf("app install already active: %w", e)
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	current, e := readAppIdentity(destination)
+	if e != nil {
+		return e
+	}
+	candidate, e := readAppIdentity(source)
+	if e != nil {
+		return e
+	}
+	if e = validateAppPromotion(current, candidate, expected, allowRollback); e != nil {
+		return e
+	}
 	if _, e := command("codesign", "--verify", "--deep", "--strict", source); e != nil {
 		return e
 	}
@@ -492,6 +514,20 @@ func installApp(source, destination string) error {
 		return e
 	}
 	if _, e = command("codesign", "--verify", "--deep", "--strict", next); e != nil {
+		return e
+	}
+	staged, e := readAppIdentity(next)
+	if e != nil {
+		return e
+	}
+	if staged.Digest != candidate.Digest {
+		return errors.New("app source changed during staging")
+	}
+	latest, e := readAppIdentity(destination)
+	if e != nil {
+		return e
+	}
+	if e = validateAppPromotion(latest, staged, expected, allowRollback); e != nil {
 		return e
 	}
 	backup := destination + ".rollback-" + time.Now().UTC().Format("20060102T150405.000000000Z")
@@ -511,6 +547,14 @@ func installApp(source, destination string) error {
 		return e
 	}
 	if _, e = command("codesign", "--verify", "--deep", "--strict", destination); e != nil {
+		_ = os.Rename(destination, next)
+		if prior {
+			_ = os.Rename(backup, destination)
+		}
+		return e
+	}
+	receipt := map[string]any{"installed_at": time.Now().UTC(), "app": staged, "previous_app": current, "expected_current": expected, "allow_rollback": allowRollback, "backup": backup}
+	if e = writeJSON(destination+".install-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".json", receipt); e != nil {
 		_ = os.Rename(destination, next)
 		if prior {
 			_ = os.Rename(backup, destination)
