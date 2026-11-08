@@ -202,7 +202,7 @@ func writeRemoteSources(out io.Writer, modules []string, common string) error {
 // TryRemoteWork runs eligible commands on the tailnet runner. A failed route
 // never silently falls back onto the overloaded Mac. The remote lock is shared
 // by all these jobs; Go workers and compiler parallelism are bounded to two.
-func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (bool, int, error) {
+func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (handled bool, exitCode int, resultErr error) {
 	enabled, err := RemoteWorkEnabled(dir)
 	if err != nil {
 		return true, 1, err
@@ -221,7 +221,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	}
 	started := time.Now()
 	defer func() {
-		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "operation": options.Command[1]})
+		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "operation": options.Command[1], "exit_code": exitCode, "failed": resultErr != nil})
 	}()
 	cwd, err := os.Getwd()
 	if err != nil {
