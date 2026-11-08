@@ -5,7 +5,7 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
-Current review checkpoint (21:51 UTC): the review corrections are committed:
+Current review checkpoint (22:07 UTC): the review corrections are committed:
 artifact-bound acceptance observer `b36ac47`, bounded gate-runner API
 `a20e450a`, and native app 1.4.2 build 10 `36f2a69e`. All 75 Swift tests pass,
 including actual candidate CLI, SSH health, a completed job log and installed
@@ -16,6 +16,10 @@ Its base-plus-overlay manifest binds all nine final API paths. The later peer
 monitor-help commit has separate verification. These source and candidate
 results are not installation receipts. The app awaits the matching
 native API promotion; installed authority remains `0535927f` / app `c827a2d6`.
+The later telemetry correction `921c267` adds typed standalone outcomes and
+report-based audit findings; its exact targeted race test is queued separately.
+Peer `c8afd904` fixes release flag quoting and has one retained native build.
+Neither new cohort is installed yet.
 
 The existing app passed its separate 30-minute resource gate at 0.30% CPU and
 114.219 MiB peak RSS. Its status read p95 still fails at 266.788/250 ms. Four
@@ -1192,3 +1196,32 @@ and elapsed gates, and administrator trace. The private
 `finish-final-command-result.json` retains the refusal; no successful final
 finish receipt is claimed. WORK-41 stays in progress. The earlier score is
 a self-review measure, not proof of terminal acceptance.
+
+
+## Review follow-up at 22:07 UTC
+
+- Guarded commit `921c26785b8edaa3b335f8a458effa2b511d2f9d` adds closed
+  `outcome_class` and `reason_code` fields to standalone command events.
+  A completed audit finding is `expected_negative/gate_not_satisfied` only
+  after report output succeeds. Input, policy, timeout, cancellation and
+  command failures retain distinct classes. Encoding and output errors remain
+  command failures. Wrapper suppression and privacy checks are unchanged.
+- The exact six-path candidate is frozen under
+  `review-outcomes-source-2205`, based on `c8afd904`. Its manifest hashes all
+  owned files; targeted telemetry/dispatcher/CLI race tests use one retained
+  canonical remote handle. Source publication is not a passing test receipt.
+- Read-only primary-stream reconciliation: 6,238 product command events,
+  373 nonzero, zero malformed. The source-specific failure query groups them
+  as 373 unknown outcomes. Most are status (303), with 16 audits; no cause
+  is inferred for historical exit-1 rows. The detailed counts and private
+  capture names are recorded in the review report.
+- Native8c packaging failed after its passing race suite on malformed
+  `GOFLAGS`; c8 release guidance fixes complete-token quoting. The promoter
+  retains one c8 native build, separate from the later telemetry correction.
+- At 22:06, installed `doctor` remains healthy: matching `0535927f` CLI/helper,
+  PID 90605, normal host, no warnings, 19.203 MiB RSS, 0.346% normal CPU,
+  sample CPU p95 17.412 ms and 549,408 projected telemetry bytes/day.
+- At 22:04, the original app observer has 65 passing health checks, no
+  resident/app restarts or sample failures, and 3,864.6 observed app seconds
+  at 0.275% CPU, 114.219 MiB peak RSS. Its status read gate remains failed;
+  no elapsed or performance evidence is transferred to a new artifact pair.
