@@ -5,6 +5,8 @@ import NDevPressureCore
 struct ContentView: View {
     @EnvironmentObject private var store: PressureStore
     @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var hetzner = HetznerStore()
+    @State private var windowVisible = true
 
     var body: some View {
         NavigationSplitView {
@@ -16,23 +18,35 @@ struct ContentView: View {
         .frame(minWidth: 980, minHeight: 640)
         .toolbar { toolbar }
         .task { store.start() }
-        .onAppear { store.setWindowOpen(true) }
+        .onAppear {
+            windowVisible = true
+            store.setWindowOpen(true)
+            updateHetznerPolling()
+        }
         .onDisappear {
             // Do NOT stop the store here. The app deliberately outlives its
             // window to serve the menu-bar extra, and stopping the poll left
             // that gauge and the dock badge frozen at whatever the pressure
             // happened to be when the window closed.
+            windowVisible = false
+            hetzner.stop()
             store.setWindowOpen(false)
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
             store.setApplicationActive(phase == .active)
+            updateHetznerPolling()
         }
+        .onChange(of: store.selectedSection) { _, _ in updateHetznerPolling() }
         .onOpenURL { store.handleDeepLink($0) }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { _ in
+            windowVisible = false
+            hetzner.stop()
             store.setWindowVisible(false)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { _ in
+            windowVisible = true
             store.setWindowVisible(true)
+            updateHetznerPolling()
         }
     }
 
@@ -117,6 +131,7 @@ struct ContentView: View {
         case .diskWrites: DiskWritesView()
         case .storage: StorageView()
         case .work: WorkView()
+        case .hetzner: HetznerView(hetzner: hetzner)
         case .policy: PolicyView()
         case .monitor: MonitorView()
         case .telemetry: TelemetryView()
@@ -128,7 +143,7 @@ struct ContentView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            if let at = store.selectedSectionRefreshedAt {
+            if let at = store.selectedSection == .hetzner ? hetzner.ledgerCheckedAt : store.selectedSectionRefreshedAt {
                 ReadAgeView(date: at)
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -157,14 +172,18 @@ struct ContentView: View {
                 .help("\(error)\n\nClick to dismiss.")
             }
             Button {
-                Task { await store.refresh(live: false, light: false) }
+                Task {
+                    if store.selectedSection == .hetzner { await hetzner.refreshNow() }
+                    else { await store.refresh(live: false, light: false) }
+                }
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
-            .disabled(store.isRefreshing)
+            .disabled(store.selectedSection == .hetzner ? hetzner.refreshing : store.isRefreshing)
             .keyboardShortcut("r", modifiers: [.command])
             .help(PressureHelp.refresh + " (⌘R)")
 
+            if store.selectedSection != .hetzner {
             Button {
                 Task { await store.refresh(live: true, light: false) }
             } label: {
@@ -173,7 +192,13 @@ struct ContentView: View {
             .disabled(store.isRefreshing)
             .keyboardShortcut("r", modifiers: [.command, .shift])
             .help(PressureHelp.liveSample + " (⌘⇧R)")
+            }
         }
+    }
+
+    private func updateHetznerPolling() {
+        if scenePhase == .active && windowVisible && store.selectedSection == .hetzner { hetzner.start() }
+        else { hetzner.stop() }
     }
 
     private var summaryLine: String {

@@ -145,6 +145,8 @@ public enum PressureHelp {
             return "Live internal-SSD write volume, adaptive quiet baseline, likely all-volume process writers, bounded hourly history, and explicit interactive path tracing."
         case "Work Queue":
             return "Weighted heavy-work coordinator: capacity, protected-head drain, active leases, adaptive 2.5s busy / 10s idle focus polling while visible, Run now and Run all queue promotions, waiters, and a lifecycle detail drawer that becomes read-only history when work exits."
+        case "Hetzner":
+            return "Hetzner gate-runner (gaterunner-1): delivery-gate delegate runs from the local gate-delegate ledger - shadow-compared vs box verdict used - plus bounded box jobs and per-job logs read through the Go CLI. It refreshes while the pane is visible and active; failed reads retain prior data and its age."
         case "Policy":
             return "Protection mode controls and threshold / budget tables from the effective policy."
         case "Monitor":
