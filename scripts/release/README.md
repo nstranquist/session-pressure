@@ -45,8 +45,9 @@ binary does not qualify as a complete Darwin release.
 
 The runner can compile `go build -o /outside/checkout/release-cc ./scripts/release-cc`
 and use that adapter as `CC`, with `PRESSURE_TARGET_CC` naming the real compiler.
-It sends implicit stdin compile-probe output to `/dev/null`; explicit compiler
-outputs are unchanged. This prevents Zig's `-.o` probe artifact from making
+It isolates compiler invocations in temporary directories and preserves relative
+input, include and explicit output paths. Implicit stdin compile-probe output
+goes to `/dev/null`. This prevents Zig's `-.o` probe artifact from making
 later binaries report modified source. Build checks source cleanliness after
 each target and stops before producing a promotable bundle if it changes.
 For the current Zig toolchain, use `GOFLAGS=-ldflags=-linkmode=internal`.
