@@ -15,7 +15,7 @@ import (
 
 const processIncidentsHelp = `Usage: session-pressure [--json] processes <subcommand>
 
-  record --receipt FILE        Record an operator-confirmed historical stop
+  record --receipt FILE        Record an operator-confirmed historical exit
   list                         Show up to 200 retained process incidents
   stop --id ID --confirm       Stop exactly the selected process with SIGTERM
   stop --id ID --force --confirm  Escalate an earlier Stop to SIGKILL
@@ -33,7 +33,8 @@ owned group and records the incident. Use a narrow scan root as well:
 For expensive scans, wrap this command in work run --class heavy --.
 Command arguments and output are not stored in incident history.
 A historical receipt contains pid, ppid, executable (basename), at (RFC3339),
-and signal (TERM or KILL). It is marked operator-reported and cannot be stopped.
+and signal (TERM, KILL, or NONE for an exit observed without sending a signal).
+It is marked operator-reported and cannot be stopped.
 `
 
 func cmdSessionPressureProcesses(g *Flags, args []string) int {
@@ -110,7 +111,7 @@ func cmdSessionPressureProcesses(g *Flags, args []string) int {
 		if err != nil {
 			return sessionPressureError(err.Error(), 1)
 		}
-		return emitPressure(g, map[string]any{"ok": true, "incident": incident}, fmt.Sprintf("Recorded historical stop of PID %d (operator report)\n", incident.PID), 0)
+		return emitPressure(g, map[string]any{"ok": true, "incident": incident}, fmt.Sprintf("Recorded historical exit of PID %d (operator report)\n", incident.PID), 0)
 	case "run":
 		if len(args) < 5 || args[1] != "--timeout" || args[3] != "--" {
 			return sessionPressureError("processes run requires --timeout D -- COMMAND [ARGS...]", 2)

@@ -385,6 +385,17 @@ func TestProcessIncidentHistoricalRecordCannotSignal(t *testing.T) {
 	}
 }
 
+func TestProcessIncidentObservedExitDoesNotClaimSignal(t *testing.T) {
+	receipt := ResolvedProcessReceipt{PID: 5897, PPID: 5883, Executable: "Google Chrome", At: time.Now().Add(-time.Minute), Signal: "NONE"}
+	p, err := RecordResolvedProcessIncident(context.Background(), t.TempDir(), receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Reason != "operator_recorded_exit" || p.State != "recorded_closed" || p.Actions[0].Signal != "NONE" || p.Actions[0].Result != "operator_observed_exit" {
+		t.Fatal("observed exit was reported as a signal", p)
+	}
+}
+
 func TestBoundedProcessCancellationIsRecorded(t *testing.T) {
 	dir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())

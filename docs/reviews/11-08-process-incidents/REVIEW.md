@@ -30,3 +30,5 @@ The tests cover sustained thresholds, normal and low-power inventory cadence, st
 7. A second existing fixture discarded the closure that owns its lock file and waited forever with `select {}`. The full suite observed the lock released while the child should still be alive. The fixture now retains the unlock closure and has a one-minute deadline, avoiding finalizer release and runtime deadlock exit.
 
 Human guide: [Process Incidents](../../human/process-incidents.html).
+
+8. Live review found three unmanaged headless screenshot jobs, running for one to three hours with GPU helpers consuming more than three cores. Nico approved stopping them, but all three had exited before the final identity check. No signal was sent by this session. Historical receipts now distinguish an observed exit (`NONE`, `operator_observed_exit`) from a reported TERM/KILL action. Reused or absent PIDs do not receive a signal.
