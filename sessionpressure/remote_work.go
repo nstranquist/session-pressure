@@ -47,6 +47,9 @@ func RemoteWorkEnabled(dir string) (bool, error) {
 // RemoteGoCommand only delegates direct, finite Go operations. Shell scripts,
 // install and commands with unknown semantics retain local admission.
 func RemoteGoCommand(argv []string) bool {
+	if remoteProfileReason(argv, os.Getenv) != "" {
+		return false
+	}
 	if len(argv) < 2 || filepath.Base(argv[0]) != "go" {
 		return false
 	}
