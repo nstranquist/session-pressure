@@ -5,26 +5,37 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
-Current checkpoint (19:59 UTC): the installed resident bundle and factory front
-door both report product `8e6cb978`. The factory binary is clean `483b1def`,
-SHA-256 `cf1ce6c58fd435a7b949e132152919c814fdb9dc0d536dacbf33a696449ffa10`,
-independently verified at all three install targets. Normal-state resident duty
-still fails at 0.654% against 0.5%; RSS, sample CPU and telemetry volume pass.
-Native browser discovery and read-only recovery sampling are committed in
-`e0540545`; its macOS fixture and stale-buffer tests pass. The combined forward
-release `0535927f` adds full-bundle app authority and downgrade guards; its exact
-committed full race suite and native bundle are queued on the gate runner.
+Current checkpoint (20:24 UTC): product release `0535927f` is installed at
+both CLI prefixes. Its exact committed full race suite and Darwin native build
+passed on Hetzner (job `20261108T195328Z-205269`, 88 seconds). The canonical
+resident is PID 90605. Its latest monitor-scope self-test passes: normal CPU
+0.387% against 0.5%, RSS 16.672 MiB against 30 MiB, sample CPU p95 16.970 ms
+against 150 ms, and projected telemetry 528,384 bytes/day against 1 MiB/day.
+These are current resource results, separate from the earlier failed cohorts.
 
-A fresh desktop check found signed app 1.1.0 build 3 installed, despite an earlier
-verified 1.3.0 build 5 installation. The exact actor is not established. The
-preserved clean signed 1.3.0 candidate must be restored through the new guard,
-and the app observation window must restart. The acceptance collector stays
-stopped until final identity and the normal-state CPU gate pass. Factory
-integration `aa7b8fa9` is landed and installed; five later factory deliveries
-remain accepted. Delivery admission is paused by its owner for native producer
-routing repair; the active batch continues. Historical writer/scheduler
-performance, human-authorized privileged trace, and elapsed acceptance remain
-open. WORK-41 stays in progress.
+The signed canonical desktop is now 1.4.0 build 7, with all twelve panes from the
+reviewed combined snapshot. Day Gate's bounded advisor contract and UI are
+committed in `37383cd` and `28fa1ce`; the concurrent Hetzner source remains
+separately owned and is preserved with file-hash provenance. All 68 exact-owned
+Swift tests pass; the combined snapshot also passes its full verification,
+real installed CLI/Unix-API integration and strict Developer ID signature check.
+The live UI confirms Day Gate's correct successful-read age. Both stale-intent
+and real downgrade attempts fail without changing the installed bundle.
+
+Two factory deliveries are landed, including legacy app installer forwarding
+`ae8f228a`. Five remain accepted, with active worker progress. All three factory front-door targets independently hash to
+`fe8275d0e428282baadc6d27cc93650cd312f3bf64dbe0355dbf1c641cc6c9c4`,
+with clean factory revision `483b1def`, native CGO/external linking and product
+stamp `0535927f`. Live artifact identity agrees. The publisher reports a passing
+private SQLite native canary; its final canonical source-digest/promotion receipt
+still needs linking. Do not stop the busy worker.
+
+A new durable 72-hour product/app observation started at 20:21:39 UTC. Its
+30-minute, 24-hour and 72-hour gates are pending; it does not establish factory
+alignment. Earlier interrupted/failed observations remain intact. Historical
+writer gaps/latency, scheduler slowdown, privileged trace with normal human macOS
+authorization, queued factory work and elapsed acceptance remain open. WORK-41
+stays in progress.
 
 ## Product contract
 
@@ -38,19 +49,19 @@ Remote work uses existing Hetzner jobs and receipts. This program does not add a
 
 | Area | Implemented result | Acceptance state |
 | --- | --- | --- |
-| Installation identity | Capabilities expose product version, revision, executable and platform. Five-binary promotion verifies hashes, clean source, Darwin CGO and identity before switching one authority link; previous authority and first-migration files are preserved. | Installed; all five release hashes verified. Factory front door `483b1def` is landed and installed. CLI authority guard installed; combined forward native process/app guard release queued. |
-| Readiness | Admission-only is a valid ready mode; persisted policy, storage, monitor freshness and resident baseline remain explicit gates. | Installed. Four fresh normal samples are required after restart. The longer 19:18 Automatic-mode baseline failed normal-state CPU duty; a forward fix is building. |
+| Installation identity | Capabilities expose product version, revision, executable and platform. Five-binary promotion verifies hashes, clean source, Darwin CGO and identity before switching one authority link; previous authority and first-migration files are preserved. | Installed; all five release hashes verified. Factory front door `483b1def` is landed and installed. CLI and full-bundle app authority guards installed; stale-intent and downgrade negative checks pass. Factory 0535927f stamp independently verified at all three targets; final publisher receipt needs linking. |
+| Readiness | Admission-only is a valid ready mode; persisted policy, storage, monitor freshness and resident baseline remain explicit gates. | Installed. Current 0535927f normal-state CPU and all resource budgets pass. Earlier CPU failures are preserved; elapsed observation remains pending. |
 | Telemetry | Real product writer and reader; privacy validation, closed fields, failure classes, attempted/written/failed/gap counters and freshness; bounded sharding and full lock-to-append timing. Factory correlation and product-owned registry fragment implemented. | Product and factory integration installed. Historical gaps and factory latency failures remain visible. |
 | Retention | Owned JSONL, writer health, disk maintenance and monitor streams have bounded retention; pruning and append failures are reported. Helper artifacts retain active plus two rollback revisions. | Implemented and tested. Unique legacy install backups are preserved. |
 | Work coordinator | Private host identity and OS/architecture/CPU/revision cohorts, explicit legacy counts and reuse miss reasons. Mixed-cohort retunes fail closed. Current CPU/fairness/capacity gates remain in force. | Installed. Replay promotion and live slowdown SLO still fail; no unsupported weight increase applied. |
-| Native desktop | Ten sections, including concurrent WORK-82 Process Incidents, refresh on entry; requests coalesce and have time/output bounds; per-section age/errors retain prior results. Settings show executing identity. SMART age and native write-window units are correct. | 59 tests passed and ten sections were inspected. A later check found installed 1.1.0 build 3; restore clean signed 1.3.0 build 5 through the new authority guard. Idle acceptance must restart. |
+| Native desktop | Twelve sections, including Day Gate and concurrent Process Incidents and Hetzner, refresh on entry; requests coalesce and have time/output bounds; per-section age/errors retain prior results. Settings show executing identity. SMART age and native write-window units are correct. | 68 exact-owned tests and combined signed verification pass. Twelve-pane 1.4.0 build 7 installed and live reviewed; peer Hetzner source is preserved separately. New idle/elapsed observation started. |
 | GPUI preview | Executable validation, bounded stdout/stderr, nonblocking reads, process-group cleanup, timeouts and explicit failed envelopes; supported-operation matrix documented. | Ten core tests and full Rust build pass; remains a preview. |
 | Policy | Exact legacy defaults migrate idempotently; custom settings stay intact. Admission and storage enforcement enabled, automatic shedding disabled. Cleanup remains confirmed and manual. | Installed and live policy audit passes. |
 | Go cache helper | Immutable content-addressed objects, cross-process pinning until close, crash recovery, strict sizes and bounded streaming/journal/maintenance. Pinned objects can temporarily exceed the soft limit. | Race tests and real Go cache integration pass on runner. Live reuse history still reports zero hits and concrete miss reasons. |
 | Local API | Product owns CLI/Unix API contracts. Unix socket permissions/peer UID, request deadlines and response bounds; native client has CLI fallback and loopback redirect limits. | Real installed Swift/Unix-API contract passes, including capabilities, SMART and live query. |
 | Privileged trace | Signed helper verifies Team ID; administrator authorization, PID identity, XPC completion and independent trace wall time are bounded. Restricted entitlement without provisioning profile removed after a real launch failure. | Signed app launches. Administrator-approved trace is not exercised by this audit. |
 | Validation | Entire Go race suite, targeted boundary/race tests, fresh Swift tests, GPUI tests/build, real installed API contract, native SMART read and UI review. | Immediate checks pass. Warm latency, idle and 24/72-hour evidence are recorded independently below. |
-| Delivery | Product changes published with guarded exact-path commits. One factory delivery landed and five remain accepted. Clean native bundle built on Hetzner and promoted with receipts. | Five factory deliveries, their installed builder/helper state, native producer recovery and long observation remain open. |
+| Delivery | Product changes published with guarded exact-path commits. Two factory deliveries landed and five remain accepted. Clean native bundle built on Hetzner and promoted with receipts. | Five factory deliveries, their installed builder/helper state, native producer recovery and long observation remain open. |
 
 ## Baseline evidence (2026-11-08)
 
@@ -252,7 +263,7 @@ and verify the receipt. Never replace the installed executable with a dirty tree
 build or a manual copy. Re-run installed wrapper, trace, registry coverage and
 telemetry queries after promotion.
 
-### Remaining gates and ownership
+### Remaining gates and ownership (earlier checkpoint)
 
 | Gate | Owner / next action | Acceptance |
 | --- | --- | --- |
@@ -781,3 +792,106 @@ acceptance and must not be copied to its producer. Fresh strict telemetry
 coverage passed: 131 covered, 13 exempt, 144 total. The 19:42 full telemetry
 summary is retained as a future comparison baseline, not a fabricated pre-change
 comparison.
+
+
+### Final desktop integration and fresh observation (20:22 UTC)
+
+The earlier proposal to restore the nine/ten-pane 1.3.0 app was superseded after
+comparison with the installed concurrent factory app. The canonical desktop now
+includes the bounded read-only Day Gate projection, current Process Incidents
+and the preserved peer Hetzner pane. The factory app's Makefile forwards every
+target to the canonical app; its unsafe independent install paths are removed.
+Three fixture targets verify argument forwarding. Delivery
+`e1b4c18a-8dff-45b1-962f-1c90ec1355cb` landed as `ae8f228a0750b846f2332202a12a74fe99f1aaa9`.
+
+The Day Gate model reads the real scrubbed recorded advisor wire contract through
+the full `ndev` control plane, never through pressure-only argv. Reads have a
+10-second wall-time limit, 8 KiB output ceiling, schema/day validation and
+30-minute coalesced cache/backoff. Deep links only navigate. Residue badges do
+not mask critical host pressure. Main menu commands include all panes. A live
+review found a false “No successful read” toolbar; its regression test now checks
+advisor freshness separately from pressure-board freshness. Source commits are
+`37383cdc28cd7afb84fac3246523acd470758a6a` and
+`28fa1ce577eb9bb7ccb1060af86018fe54bbb7ec`. Guarded staged patches exclude peer
+Hetzner changes; none of that source is claimed as this audit's landed work.
+
+Immutable snapshots `desktop-owned-source-2017` and
+`desktop-union-source-2017` retain exact source inputs; the latter's JSON manifest
+records every source hash and the owned index tree. The exact owned snapshot
+passed 68 tests in nine suites. Combined `make verify` passed its tests, real
+installed product contract, release compilation and strict signing with Team ID
+`C82D23RNQ9`. The signed 1.4.0 build 7 bundle digest is
+`d27fe84fb27eda1c95ccc3c7d290393e27427cc50be3a26d95b8152014452876`.
+Guarded promotion receipt: `desktop-union-install-2024.json`. The previous build
+is retained as `/Applications/NDev Pressure.app.rollback-20261108T202033.695329000Z`.
+The real older 1.1.0 candidate is rejected with “app version downgrade requires
+explicit --allow-rollback”; before/after bundle hashes match. Receipt:
+`app-guard-downgrade-2022.json`. Earlier stale-intent receipt:
+`app-guard-installed-stale.json`.
+
+A monitor-scope self-test passes after build completion. During the concurrent
+Swift builds, the broader operator self-test correctly refused its browser work
+probe under red host CPU/swap pressure; that failed result remains in
+`self-test-2020.json`. Resource health was passing in that same result. Do not
+classify this admission refusal as a broken monitor, or erase it to obtain a green
+summary. Future candidate verification should serialize these native builds to
+reduce host CPU/swap pressure; both distinct source candidates still need tests.
+
+New collector label: `com.nicos.session-pressure.acceptance-20261108T202139Z`.
+Private output: `observation-0535927f-20261108T202139Z.json`. It reads the actual
+installed product, retains its original identity and resident PID, records
+continuity/restart failures, samples app CPU/RSS, and tests 100 warm reads per
+endpoint. It refuses existing output on login/restart. Deadline is November 11
+at about 20:21:39 UTC. The 30-minute app gate cannot pass before about 20:52 UTC;
+24-hour and 72-hour elapsed gates require November 9 and 11 respectively. A
+revision, resident restart, login interruption or timing gap can invalidate this
+run; keep the failed evidence and start a distinct run after repair.
+
+### Final telemetry review and remaining owners
+
+The full-summary comparison at 20:18:51 UTC adds 2,185 events and zero sources
+since 19:42:47 UTC. Session Pressure source p95 shifts from 299.413 to 285.684 ms
+in this mixed historical projection (4.59% lower); this is directional, not a
+matched causal release benchmark. The controlled paired measurements remain
+17.7% lower writer p95 and 27.2% lower coordinator-read median. Strict telemetry
+coverage passes: 131 covered, 13 exempt, 144 total, 57 registered sources.
+There are eleven additional `telemetry.write_failed` events. The installed
+`usage --failures --operation-id` still returns unrelated clusters until queued
+filter delivery `b20237d3` lands and is installed. Its pressure-specific command
+failure cluster has 156 records, compared with 142 at 19:25; both windows mix
+revisions. Neither global cluster totals nor these historical counts establish
+a new-release failure rate. No history was rebuilt or counters cleared.
+
+| Open gate | Owner and next action | Acceptance evidence |
+| --- | --- | --- |
+| Factory native source closure receipt | All three targets, clean build identity, product stamp 0535927f and artifact audit independently agree. Factory publisher `01a1bc3b`: link the final canonical source-digest/promotion receipt and private native SQLite canaries. | Receipt binds the observed installed hash to its complete clean source closure and native ingest plus matched/unmatched queries. |
+| Five queued factory deliveries | WORK-41 and delivery owner: keep retained wait; repair only printed producer/host faults, then install landed builder/helper/filter/promotion changes. | Each exact delivery is landed; source identity and installed dogfood checks pass. |
+| Peer Hetzner source | Owner of `HetznerStore.swift`, `Views/HetznerView.swift` and related four tracked app files: publish the preserved hunks with exact ownership. | Guarded commit and combined 12-pane verification; no dropped peer pane or shortcut collision. |
+| Writer reliability and latency | WORK-52/factory telemetry owner: classify each unresolved/error cohort after final native install; measure new attempts/writes/failures and p95 without clearing history. WORK-41 retains standalone latency follow-up. | Zero new unaccounted attempts/errors; factory p95 <=25 ms and standalone p95 <=100 ms over a stated fresh workload. Historical failures stay visible. |
+| Work slowdown/calibration | Pressure coordinator owner: collect comparable host/revision/class cohorts; explain wait/CPU/reservation cost and pass replay promotion before changing weights. | Existing p95 slowdown and replay gates pass; no threshold relaxation. |
+| App idle and elapsed acceptance | Durable collector above; next agent reads its JSON and independent installed identities. | Same app/resident authority, continuity, 30-minute app CPU <=1% and RSS <=128 MiB; actual 24/72-hour windows pass. |
+| Privileged trace | Human: approve the normal macOS helper registration/trace action on a chosen live process; agent inspects the bounded receipt. | Signed same-Team helper, process identity, 5–30 s trace, bounded XPC completion and one final result. |
+
+WORK-41 remains in progress until these gates have evidence. Source tests,
+accepted captures, landed commits, installed artifacts and elapsed runtime
+acceptance are separate states throughout this ledger.
+
+
+At 20:23 UTC the fresh complete live audit passes policy, resident, readings,
+cleanup and artifacts. Scheduler and telemetry are warnings; performance still
+fails. Factory current-hour writer evidence is 401 attempts/401 writes, zero
+errors/gaps, p95 histogram bound 50 ms against a 25 ms target. Its full history
+still has 119 unresolved attempts. Standalone evidence is 4,728/4,728, zero
+errors/gaps, p95 132.228 ms against 100 ms. The recent scheduler window has no
+evaluated slowdown breach, but test/build cohorts have only 16/18 samples, below
+the required 20; full history remains breached. These partial improvements do
+not satisfy the outstanding performance gates. Evidence: `audit-2024.json` and
+`factory-install-recheck-2024.json`.
+
+The new collector's first 100 reads per endpoint all pass with zero errors:
+status p95 95.726 ms /250 ms, board 76.181 ms /500 ms, rich 344.815 ms /1,000 ms.
+Its first resident check passes with PID 90605; app PID 56895 starts observation
+at 85.594 MiB RSS. First checks are not elapsed acceptance. The live artifact
+read is `artifact status` (singular); an accidental `artifacts` invocation was
+rejected without mutation. The failure response lists the valid singular
+command. This misuse is retained in telemetry and is not a runtime defect.
