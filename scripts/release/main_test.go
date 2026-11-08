@@ -234,3 +234,135 @@ func TestAppSampleFailureClearsStaleMetricsAndRetainsProductHealth(t *testing.T)
 		t.Fatal("failure history reset")
 	}
 }
+
+func TestAcceptanceRequiresWholeHealthyArtifactBoundWindow(t *testing.T) {
+	now := time.Now().UTC()
+	valid := func() observation {
+		return observation{Started: now.Add(-80 * time.Hour), MonitoringStarted: now.Add(-72 * time.Hour), ContinuityPassed: true, HealthPassed: true, Checks: 4321, AppSampleOK: true, AppBudgetPassed: true, BinaryDigest: strings.Repeat("a", 64), AppIdentity: appIdentity{Exists: true}, Reads: map[string]readGate{"status": {Samples: 100, Passed: true}, "board": {Samples: 100, Passed: true}, "rich": {Samples: 100, Passed: true}}}
+	}
+	s := valid()
+	s.updateAcceptance(now)
+	if !s.Accepted24H || !s.Accepted72H {
+		t.Fatalf("healthy complete window rejected: %+v", s)
+	}
+	for _, tc := range []struct {
+		name      string
+		breakGate func(*observation)
+	}{
+		{"warmup is not soak", func(s *observation) { s.MonitoringStarted = now.Add(-23 * time.Hour) }},
+		{"monitoring never started", func(s *observation) { s.MonitoringStarted = time.Time{} }},
+		{"health failure", func(s *observation) { s.Failures = 1 }},
+		{"health not checked", func(s *observation) { s.Checks = 0 }},
+		{"health verdict", func(s *observation) { s.HealthPassed = false }},
+		{"gap", func(s *observation) { s.ContinuityPassed = false }},
+		{"resident restart", func(s *observation) { s.ResidentRestarts = 1 }},
+		{"app restart", func(s *observation) { s.AppRestarts = 1 }},
+		{"app sample history", func(s *observation) { s.AppSampleFailures = 1 }},
+		{"app unavailable", func(s *observation) { s.AppSampleOK = false }},
+		{"app budget", func(s *observation) { s.AppBudgetPassed = false }},
+		{"binary unbound", func(s *observation) { s.BinaryDigest = "" }},
+		{"app unbound", func(s *observation) { s.AppIdentity.Exists = false }},
+		{"missing endpoint", func(s *observation) { delete(s.Reads, "rich") }},
+		{"failed read budget", func(s *observation) { s.Reads["status"] = readGate{Samples: 100, Passed: false} }},
+		{"read error", func(s *observation) { s.Reads["board"] = readGate{Samples: 100, Passed: true, Failures: 1} }},
+		{"insufficient reads", func(s *observation) { s.Reads["rich"] = readGate{Samples: 99, Passed: true} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := valid()
+			tc.breakGate(&s)
+			s.updateAcceptance(now)
+			if s.Accepted24H || s.Accepted72H {
+				t.Fatalf("accepted broken gate: %+v", s)
+			}
+		})
+	}
+}
+
+func TestAppCounterRegressionCannotBecomePassingCPU(t *testing.T) {
+	now := time.Now().UTC()
+	s := observation{ContinuityPassed: true}
+	var w appObservationWindow
+	s.recordAppSample(now, 42, 100, 60, &w)
+	s.recordAppSample(now.Add(30*time.Minute), 42, 101, 64, &w)
+	if !s.AppBudgetPassed || s.AppPeakRSSMiB != 64 {
+		t.Fatalf("valid idle window rejected: %+v", s)
+	}
+	// Even a counter still above the first value must not go backwards.
+	s.recordAppSample(now.Add(31*time.Minute), 42, 100.5, 64, &w)
+	if s.AppSampleOK || s.AppBudgetPassed || s.AppSampleFailures != 1 || s.LastAppSampleError != "app_sample_counter_regressed" {
+		t.Fatalf("regressed counter accepted: %+v", s)
+	}
+	s.recordAppSample(now.Add(32*time.Minute), 42, 1, 63, &w)
+	if s.AppBudgetPassed || s.AppObservedSeconds != 0 || s.AppSampleFailures != 1 {
+		t.Fatalf("recovery inherited old window: %+v", s)
+	}
+	s.recordAppSample(now.Add(63*time.Minute), 43, 1, 63, &w)
+	if s.AppRestarts != 1 || s.AppBudgetPassed {
+		t.Fatalf("restart inherited budget: %+v", s)
+	}
+}
+
+func TestObservationRejectsSameRevisionReplacementBytes(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "session-pressure")
+	if err := os.WriteFile(binary, []byte("original binary"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	app := fixtureApp(t, "1.4.1", "9")
+	hash, err := digest(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := readAppIdentity(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := observation{Binary: binary, BinaryDigest: hash, AppPath: app, AppIdentity: identity}
+	if err = s.verifyArtifacts(); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(binary, []byte("same revision, different bytes"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.verifyArtifacts(); err == nil || err.Error() != "installed binary identity changed" {
+		t.Fatalf("binary replacement accepted: %v", err)
+	}
+	if err = os.WriteFile(binary, []byte("original binary"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(app, "Contents/Resources/icon"), []byte("replacement resource"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.verifyArtifacts(); err == nil || err.Error() != "installed app identity changed" {
+		t.Fatalf("app resource replacement accepted: %v", err)
+	}
+}
+
+func TestAppProcessMustMatchInstalledExecutable(t *testing.T) {
+	expected := "/Applications/NDev Pressure.app/Contents/MacOS/NDevPressure"
+	for _, path := range []string{expected, "/elsewhere/NDevPressure"} {
+		calls := 0
+		_, _, _, err := sampleAppWith(func(name string, args ...string) ([]byte, error) {
+			calls++
+			switch calls {
+			case 1:
+				return []byte("42\n"), nil
+			case 2:
+				return []byte("0:13.41 65792\n"), nil
+			default:
+				if name != "ps" || strings.Join(args, " ") != "-p 42 -o comm=" {
+					t.Fatalf("unexpected identity probe: %s %v", name, args)
+				}
+				return []byte(path + "\n"), nil
+			}
+		}, expected)
+		if (err == nil) != (path == expected) {
+			t.Fatalf("path %q: %v", path, err)
+		}
+	}
+}
+
+func TestObserveRejectsUnboundedSamplingInterval(t *testing.T) {
+	if err := observe([]string{"--out", filepath.Join(t.TempDir(), "evidence.json"), "--binary", "/bin/echo", "--interval", "24h"}); err == nil {
+		t.Fatal("day-long sampling gaps accepted")
+	}
+}
