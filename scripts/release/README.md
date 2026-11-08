@@ -51,12 +51,20 @@ Run the installed release helper's `observe --binary /absolute/session-pressure
 --out /absolute/evidence.json --duration 72h`. Keep it under a user launch agent
 for a durable run. The JSON records 100 warm reads for status, board and rich
 board; p95 budgets are 250, 500 and 1,000 ms. It then checks identity and status
-each minute. A successful JSON read alone does not pass health: the resident
+each minute (allowed interval: 10 seconds to 5 minutes). The monitoring
+window and its deadline start after warm-up; warm-up time does not count toward
+the soak. The collector binds the CLI SHA-256 and the whole app bundle identity
+at startup, checks both each cycle, and checks the process executable path.
+Any observed artifact change remains a health failure for this run. Set `--app`
+when the bundle is outside `/Applications/NDev Pressure.app`.
+A successful JSON read alone does not pass health: the resident
 must be installed, loaded, verified, healthy, fresh and within its resource
 budget, with persisted policy. Resident PID changes count as failures.
 `health_passed` requires continuous sampling and zero failures.
 App CPU and peak RSS use the same PID over at least 30 minutes;
-the budget is 1% CPU and 128 MiB RSS. An app restart or failed process sample starts a new app window.
+the budget is 1% CPU and 128 MiB RSS. An app restart or failed process sample starts a new app window. CPU counters
+that decrease invalidate the sample and start a fresh window on recovery.
+`app_restarts` preserves observed PID changes.
 `app_sample_ok` distinguishes a current sample from a missing one.
 `app_sample_failures`, `last_app_sample_error` and `last_app_sample_failure`
 preserve diagnostic history after recovery. Missing samples clear current CPU,
@@ -65,7 +73,11 @@ find exactly one app PID. CPU parsing accepts long-running BSD process times.
 Use a parked app for the idle budget. Interactive use is an activity sample.
 The 24/72-hour flags require actual elapsed time and continuous sampling, with
 no gap greater than twice the sample interval plus 30 seconds. These flags
-describe elapsed observation; also check failures and all budget results.
+describe elapsed observation. Use `accepted_24h` and `accepted_72h` for the
+combined verdict: the full monitored interval, all three read gates, healthy
+resident, bound artifacts, app budget, and zero health/sample failures or
+resident/app restarts must all pass. A recovered 30-minute app window alone
+cannot erase an earlier failure from the combined verdict.
 Failures remain counted. Each run requires an unused output path. A launch
 agent restart refuses to overwrite an interrupted run's evidence. Review that
 run and choose a new dated path to begin a new continuous window.

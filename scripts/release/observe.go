@@ -28,6 +28,13 @@ type readGate struct {
 	Passed   bool    `json:"passed"`
 }
 type observation struct {
+	MonitoringStarted    time.Time           `json:"monitoring_started"`
+	BinaryDigest         string              `json:"binary_sha256"`
+	AppPath              string              `json:"app_path"`
+	AppIdentity          appIdentity         `json:"app_identity"`
+	Accepted24H          bool                `json:"accepted_24h"`
+	Accepted72H          bool                `json:"accepted_72h"`
+	AppRestarts          int                 `json:"app_restarts"`
 	Started              time.Time           `json:"started"`
 	Updated              time.Time           `json:"updated"`
 	Deadline             time.Time           `json:"deadline"`
@@ -98,20 +105,21 @@ func observe(args []string) error {
 	f := flag.NewFlagSet("observe", flag.ContinueOnError)
 	out := f.String("out", "", "absolute evidence JSON path")
 	binary := f.String("binary", "", "installed product CLI")
+	app := f.String("app", "/Applications/NDev Pressure.app", "installed native app bundle")
 	duration := f.Duration("duration", 72*time.Hour, "elapsed observation window")
-	interval := f.Duration("interval", time.Minute, "health sample interval (at least 10s)")
+	interval := f.Duration("interval", time.Minute, "health sample interval (10s..5m)")
 	samples := f.Int("samples", 100, "warm reads per endpoint (100..1000)")
 	if e := f.Parse(args); e != nil {
 		return e
 	}
-	if !filepath.IsAbs(*out) || !filepath.IsAbs(*binary) || *duration <= 0 || *duration > 7*24*time.Hour || *interval < 10*time.Second || *samples < 100 || *samples > 1000 || f.NArg() != 0 {
-		return errors.New("absolute --out/--binary, duration <=7d, interval >=10s, samples 100..1000 required")
+	if !filepath.IsAbs(*out) || !filepath.IsAbs(*binary) || !filepath.IsAbs(*app) || *duration <= 0 || *duration > 7*24*time.Hour || *interval < 10*time.Second || *interval > 5*time.Minute || *samples < 100 || *samples > 1000 || f.NArg() != 0 {
+		return errors.New("absolute --out/--binary/--app, duration <=7d, interval 10s..5m, samples 100..1000 required")
 	}
 	if e := os.MkdirAll(filepath.Dir(*out), 0700); e != nil {
 		return e
 	}
 	started := time.Now().UTC()
-	s := observation{Started: started, Updated: started, Deadline: started.Add(*duration), Binary: *binary, Reads: map[string]readGate{}}
+	s := observation{Started: started, Updated: started, Deadline: started.Add(*duration), Binary: *binary, AppPath: *app, Reads: map[string]readGate{}}
 	// A launch agent can run again after login. Preserve the interrupted run's
 	// evidence rather than silently replacing its failures and elapsed window.
 	if e := startObservation(*out, s); e != nil {
@@ -120,6 +128,14 @@ func observe(args []string) error {
 	identity, e := readCLI(*binary, "capabilities")
 	if e != nil {
 		return fmt.Errorf("identity: %w", e)
+	}
+	s.BinaryDigest, e = digest(*binary)
+	if e != nil {
+		return fmt.Errorf("binary identity: %w", e)
+	}
+	s.AppIdentity, e = readAppIdentity(*app)
+	if e != nil || !s.AppIdentity.Exists {
+		return fmt.Errorf("installed app identity unavailable: %v", e)
 	}
 	s.Identity = identity
 	if e = writeJSON(*out, s); e != nil {
@@ -151,10 +167,11 @@ func observe(args []string) error {
 			return e
 		}
 	}
-	lastSample := time.Now().UTC()
+	s.MonitoringStarted = time.Now().UTC()
+	s.Deadline = s.MonitoringStarted.Add(*duration)
+	lastSample := s.MonitoringStarted
 	s.ContinuityPassed = true
-	var appStart time.Time
-	var cpuStart float64
+	var window appObservationWindow
 	for {
 		now := time.Now().UTC()
 		gap := now.Sub(lastSample)
@@ -180,6 +197,9 @@ func observe(args []string) error {
 			}
 		}
 		if err == nil {
+			err = s.verifyArtifacts()
+		}
+		if err == nil {
 			var status []byte
 			status, err = readCLI(*binary, "status")
 			if err == nil {
@@ -200,30 +220,14 @@ func observe(args []string) error {
 			s.LastFailure = err.Error()
 		}
 		s.HealthPassed = s.Checks > 0 && s.Failures == 0 && s.ContinuityPassed
-		if pid, cpu, rss, sampleErr := appSample(); sampleErr == nil {
-			s.AppSampleOK = true
-			if pid != s.AppPID {
-				s.AppPID = pid
-				appStart = now
-				cpuStart = cpu
-				s.AppPeakRSSMiB = 0
-				s.AppCPUPercent = 0
-				s.AppBudgetPassed = false
-			}
-			s.AppObservedSeconds = now.Sub(appStart).Seconds()
-			if rss > s.AppPeakRSSMiB {
-				s.AppPeakRSSMiB = rss
-			}
-			if s.AppObservedSeconds > 0 {
-				s.AppCPUPercent = 100 * (cpu - cpuStart) / s.AppObservedSeconds
-			}
-			s.AppBudgetPassed = s.ContinuityPassed && s.AppObservedSeconds >= 1800 && s.AppCPUPercent <= 1 && s.AppPeakRSSMiB <= 128
+		pid, cpu, rss, sampleErr := appSample(filepath.Join(s.AppPath, "Contents", "MacOS", "NDevPressure"))
+		sampleTime := time.Now().UTC()
+		if sampleErr == nil {
+			s.recordAppSample(sampleTime, pid, cpu, rss, &window)
 		} else {
-			s.recordAppSampleFailure(now, sampleErr)
+			s.recordAppSampleFailure(sampleTime, sampleErr)
 		}
-		elapsed := now.Sub(started)
-		s.Observed24H = elapsed >= 24*time.Hour && s.ContinuityPassed
-		s.Observed72H = elapsed >= 72*time.Hour && s.ContinuityPassed
+		s.updateAcceptance(sampleTime)
 		if e = writeJSON(*out, s); e != nil {
 			return e
 		}
@@ -297,15 +301,15 @@ func (s *observation) recordAppSampleFailure(now time.Time, err error) {
 	s.AppBudgetPassed = false
 }
 
-func appSample() (int, float64, float64, error) {
+func appSample(executable string) (int, float64, float64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return sampleAppWith(func(name string, args ...string) ([]byte, error) {
 		return processtree.CommandContext(ctx, name, args...).Output()
-	})
+	}, executable)
 }
 
-func sampleAppWith(run func(string, ...string) ([]byte, error)) (int, float64, float64, error) {
+func sampleAppWith(run func(string, ...string) ([]byte, error), executable ...string) (int, float64, float64, error) {
 	raw, err := run("pgrep", "-x", "NDevPressure")
 	if err != nil {
 		return 0, 0, 0, errors.New("app_discovery_failed")
@@ -333,6 +337,12 @@ func sampleAppWith(run func(string, ...string) ([]byte, error)) (int, float64, f
 	rss, err := strconv.ParseFloat(fields[1], 64)
 	if err != nil || rss < 0 || math.IsNaN(rss) || math.IsInf(rss, 0) {
 		return 0, 0, 0, errors.New("app_rss_invalid")
+	}
+	if len(executable) > 0 {
+		path, err := run("ps", "-p", ids[0], "-o", "comm=")
+		if err != nil || strings.TrimSpace(string(path)) != executable[0] {
+			return 0, 0, 0, errors.New("app_executable_identity_mismatch")
+		}
 	}
 	return pid, cpu, rss / 1024, nil
 }
@@ -380,4 +390,63 @@ func parseAppCPUTime(value string) (float64, error) {
 		return 0, invalid
 	}
 	return cpu, nil
+}
+
+// Artifact failures latch through the run's health failure count, even after
+// the original files return. A revision string alone does not bind installed bytes.
+func (s *observation) verifyArtifacts() error {
+	actual, err := digest(s.Binary)
+	if err != nil || actual != s.BinaryDigest {
+		return errors.New("installed binary identity changed")
+	}
+	app, err := readAppIdentity(s.AppPath)
+	if err != nil || !app.Exists || app != s.AppIdentity {
+		return errors.New("installed app identity changed")
+	}
+	return nil
+}
+
+type appObservationWindow struct {
+	started           time.Time
+	firstCPU, lastCPU float64
+}
+
+func (s *observation) recordAppSample(now time.Time, pid int, cpu, rss float64, w *appObservationWindow) {
+	if pid == s.AppPID && !w.started.IsZero() && (cpu < w.lastCPU || !now.After(w.started)) {
+		s.recordAppSampleFailure(now, errors.New("app_sample_counter_regressed"))
+		return
+	}
+	if pid != s.AppPID {
+		if s.AppPID != 0 {
+			s.AppRestarts++
+		}
+		s.AppPID = pid
+		*w = appObservationWindow{started: now, firstCPU: cpu, lastCPU: cpu}
+		s.AppPeakRSSMiB = 0
+		s.AppCPUPercent = 0
+	}
+	s.AppSampleOK = true
+	w.lastCPU = cpu
+	s.AppObservedSeconds = now.Sub(w.started).Seconds()
+	s.AppPeakRSSMiB = max(s.AppPeakRSSMiB, rss)
+	if s.AppObservedSeconds > 0 {
+		s.AppCPUPercent = 100 * (cpu - w.firstCPU) / s.AppObservedSeconds
+	}
+	s.AppBudgetPassed = s.ContinuityPassed && s.AppObservedSeconds >= 1800 && s.AppCPUPercent >= 0 && s.AppCPUPercent <= 1 && s.AppPeakRSSMiB <= 128
+}
+
+func (s *observation) updateAcceptance(now time.Time) {
+	elapsed := time.Duration(0)
+	if !s.MonitoringStarted.IsZero() {
+		elapsed = now.Sub(s.MonitoringStarted)
+	}
+	s.Observed24H = elapsed >= 24*time.Hour && s.ContinuityPassed
+	s.Observed72H = elapsed >= 72*time.Hour && s.ContinuityPassed
+	ready := s.HealthPassed && s.Failures == 0 && s.Checks > 0 && s.ContinuityPassed && s.ResidentRestarts == 0 && s.AppSampleOK && s.AppSampleFailures == 0 && s.AppRestarts == 0 && s.AppBudgetPassed && s.BinaryDigest != "" && s.AppIdentity.Exists
+	for _, name := range []string{"status", "board", "rich"} {
+		g, ok := s.Reads[name]
+		ready = ready && ok && g.Passed && g.Failures == 0 && g.Samples >= 100
+	}
+	s.Accepted24H = s.Observed24H && ready
+	s.Accepted72H = s.Observed72H && ready
 }
