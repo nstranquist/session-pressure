@@ -42,6 +42,24 @@ func TestObserveRefusesShortSampleAsAcceptance(t *testing.T) {
 	}
 }
 
+func TestObservationRestartPreservesPriorEvidence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "evidence.json")
+	if e := startObservation(path, observation{Failures: 7}); e != nil {
+		t.Fatal(e)
+	}
+	before, e := os.ReadFile(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = observe([]string{"--out", path, "--binary", "/bin/echo"}); e == nil || !strings.Contains(e.Error(), "unused --out") {
+		t.Fatalf("restart did not preserve the original run: %v", e)
+	}
+	after, e := os.ReadFile(path)
+	if e != nil || string(after) != string(before) {
+		t.Fatalf("prior evidence changed: %q %v", after, e)
+	}
+}
+
 func TestDarwinReleaseRejectsDisabledNativeReader(t *testing.T) {
 	t.Setenv("CGO_ENABLED", "0")
 	if _, e := releaseEnvironment("darwin", "arm64"); e == nil {

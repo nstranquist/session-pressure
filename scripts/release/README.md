@@ -31,7 +31,12 @@ board; p95 budgets are 250, 500 and 1,000 ms. It then checks identity and status
 each minute. App CPU and peak RSS use the same PID over at least 30 minutes;
 the budget is 1% CPU and 128 MiB RSS. An app restart starts a new app window.
 Use a parked app for the idle budget. Interactive use is an activity sample.
-The 24/72-hour flags require actual elapsed time. Failures remain counted.
+The 24/72-hour flags require actual elapsed time and continuous sampling, with
+no gap greater than twice the sample interval plus 30 seconds. These flags
+describe elapsed observation; also check failures and all budget results.
+Failures remain counted. Each run requires an unused output path. A launch
+agent restart refuses to overwrite an interrupted run's evidence. Review that
+run and choose a new dated path to begin a new continuous window.
 The output has constant size; collection ends at the requested deadline.
 
 Automatic shedding stays off. Calibration promotion still requires its replay

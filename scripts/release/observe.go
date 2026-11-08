@@ -100,7 +100,12 @@ func observe(args []string) error {
 		return e
 	}
 	started := time.Now().UTC()
-	s := observation{Started: started, Deadline: started.Add(*duration), Binary: *binary, Reads: map[string]readGate{}}
+	s := observation{Started: started, Updated: started, Deadline: started.Add(*duration), Binary: *binary, Reads: map[string]readGate{}}
+	// A launch agent can run again after login. Preserve the interrupted run's
+	// evidence rather than silently replacing its failures and elapsed window.
+	if e := startObservation(*out, s); e != nil {
+		return e
+	}
 	identity, e := readCLI(*binary, "capabilities")
 	if e != nil {
 		return fmt.Errorf("identity: %w", e)
@@ -204,6 +209,27 @@ func observe(args []string) error {
 		time.Sleep(min(*interval, time.Until(s.Deadline)))
 	}
 }
+
+func startObservation(path string, initial observation) error {
+	raw, e := json.MarshalIndent(initial, "", "  ")
+	if e != nil {
+		return e
+	}
+	f, e := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if e != nil {
+		return fmt.Errorf("new observation requires an unused --out path: %w", e)
+	}
+	_, e = f.Write(append(raw, '\n'))
+	if e == nil {
+		e = f.Sync()
+	}
+	e = errors.Join(e, f.Close())
+	if e != nil {
+		return e
+	}
+	return syncDir(filepath.Dir(path))
+}
+
 func appSample() (int, float64, float64, bool) {
 	raw, e := exec.Command("pgrep", "-x", "NDevPressure").Output()
 	if e != nil {
