@@ -57,6 +57,11 @@ func CommandLeaf(args []string) string {
 		}
 		return leaf
 	case "monitor":
+		for _, arg := range args[1:] {
+			if arg == "help" || arg == "--help" || arg == "-h" {
+				return "monitor.help"
+			}
+		}
 		return AllowedLeaf("monitor", args[1:], "status", []string{"once", "run", "install", "status", "uninstall"})
 	case "cleanup":
 		leaf := AllowedLeaf("cleanup", args[1:], "help", []string{"help", "status", "plan", "history", "policy", "claim", "enforce"})
@@ -102,6 +107,10 @@ func CommandLeafFromCLIArgs(args []string) string {
 			continue
 		}
 		if strings.HasPrefix(arg, "-") {
+			if (arg == "--help" || arg == "-h") && len(path) >= 2 && path[0] == "session" && path[1] == "pressure" {
+				path = append(path, arg)
+				continue
+			}
 			switch arg {
 			case "--wait", "--since", "--limit", "--class", "--event", "--operation-id",
 				"--include", "--progress", "--file", "--priority", "--claim-id":

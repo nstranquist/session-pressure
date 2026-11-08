@@ -1022,6 +1022,12 @@ func cmdSessionPressurePolicy(g *Flags, args []string) int {
 }
 
 func cmdSessionPressureMonitor(g *Flags, args []string) int {
+	for _, arg := range args {
+		if arg == "help" || arg == "--help" || arg == "-h" {
+			fmt.Print("Usage: session-pressure monitor status|once|run|install [--enforce]|uninstall\n")
+			return 0
+		}
+	}
 	sub := "status"
 	if len(args) > 0 {
 		sub = args[0]
