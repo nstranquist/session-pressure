@@ -943,6 +943,18 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	if err := ValidateWorkPlacement(options.Placement, options.PlacementReason); err != nil {
 		return 2, err
 	}
+	if runtime.GOOS == "darwin" && options.Placement != WorkPlacementLocal {
+		if operation := unsupportedWrappedGoOperation(options.Command); operation != "" {
+			enabled, err := RemoteWorkEnabled(coordinator.Dir)
+			if err != nil {
+				return 1, err
+			}
+			if enabled {
+				_, code, err := rejectRemoteWork(coordinator.Dir, operation, "wrapped Go requires an explicit remote command and environment profile; it cannot enter local admission")
+				return code, err
+			}
+		}
+	}
 	if options.Placement == WorkPlacementLocal {
 		recordLocalPlacement(coordinator.Dir, options, streams)
 	} else if handled, code, err := TryRemoteWork(coordinator.Dir, options, streams); handled {
