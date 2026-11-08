@@ -42,20 +42,11 @@ jobs:
             exit 1
           fi
       - name: Vet
-        run: go vet ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./sessionpressurecontrol ./cmd/session-pressure ./cmd/session-pressure-api ./cmd/session-pressure-helper ./sessionpressure/gocachelru ./cmd/gocache-lru
-      - name: Test
-        if: runner.os == 'macOS'
-        run: go test ./sessionpressure ./sessionpressurecmd ./sessionpressurecleanup ./sessionpressurecontrol ./internal/hostcleanup ./cmd/session-pressure ./internal/filelock ./internal/jsonl ./internal/notifyinbox ./internal/operationcontract ./packages/processtree ./sessionpressure/gocachelru ./cmd/gocache-lru -count=1 -timeout 10m
-      - name: Portable packages
-        if: runner.os != 'macOS'
-        run: go test ./sessionpressurecleanup ./sessionpressurecontrol ./internal/hostcleanup ./internal/filelock ./internal/jsonl ./internal/notifyinbox ./internal/operationcontract ./packages/processtree ./cmd/session-pressure ./sessionpressure/gocachelru ./cmd/gocache-lru -count=1 -timeout 10m
+        run: make vet
+      - name: Race tests
+        run: make race
       - name: Build
-        run: |
-          mkdir -p bin
-          go build -o bin/session-pressure ./cmd/session-pressure
-          go build -o bin/session-pressure-api ./cmd/session-pressure-api
-          go build -o bin/session-pressure-helper ./cmd/session-pressure-helper
-          go build -o bin/gocache-lru ./cmd/gocache-lru
+        run: make build
       - name: Build without cgo
         run: CGO_ENABLED=0 go build -o /dev/null ./cmd/session-pressure
 

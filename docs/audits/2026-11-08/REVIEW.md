@@ -136,6 +136,16 @@ two accepted, one held and one paused. No queued work is described as installed.
 
 ## Self-review
 
+The final gate review also found that root Make targets and CI used fixed
+package lists. Those lists omitted the release observer, compiler adapter,
+product telemetry and gate-runner packages. `make vet` and `make test` now
+cover `./...`; `make race` runs the same full module with the race detector.
+Both CI operating systems use these shared targets. `make build` also builds
+the release installer/observer and compiler adapter. A dry run verifies the
+expanded commands; the earlier full-module Linux race receipt supplies the
+source test evidence. No new local heavy Go build was run for this gate-only
+change, and a GitHub CI execution is not claimed.
+
 The review improved artifact identity, evidence semantics, bounded reads,
 lifecycle cancellation and agent-facing capability coverage. It also found two
 process weaknesses: repeated oversized board subjects and audit flag misuse.
