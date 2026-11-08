@@ -101,7 +101,8 @@ later binaries report modified source. Build checks source cleanliness after
 each target and stops before producing a promotable bundle if it changes.
 The preferred Darwin profile is LLVM clang 18 with external linking:
 `CC=/srv/build/opt/pressure-darwin-clang` and
-`GOFLAGS='-ldflags=-s -w -linkmode=external'`. Record the actual compiler, linker
+`GOFLAGS="-ldflags='-s -w -linkmode=external'"`. The inner quotes keep the
+three linker arguments in one Go flag value. Record the actual compiler, linker
 and SDK identity in the build evidence. The older Zig/internal profile was
 tested for the small standalone product, but it broke SQLite parameter binding
 in the factory binary despite passing a version probe. Do not use that profile
