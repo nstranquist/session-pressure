@@ -5,28 +5,45 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
-Current review checkpoint (22:07 UTC): the review corrections are committed:
-artifact-bound acceptance observer `b36ac47`, bounded gate-runner API
-`a20e450a`, and native app 1.4.2 build 10 `36f2a69e`. All 75 Swift tests pass,
-including actual candidate CLI, SSH health, a completed job log and installed
-CLI/Unix API contracts. The signed release build passes strict verification.
-The exact final Go race suite passes on the canonical runner: job
-`20261108T213140Z-1666344`, exit 0 in 78 seconds, completed 21:50:39 UTC.
-Its base-plus-overlay manifest binds all nine final API paths. The later peer
-monitor-help commit has separate verification. These source and candidate
-results are not installation receipts. The app awaits the matching
-native API promotion; installed authority remains `0535927f` / app `c827a2d6`.
-The later telemetry correction `921c267` adds typed standalone outcomes and
-report-based audit findings; its exact targeted race test is queued separately.
-Peer `c8afd904` fixes release flag quoting and has one retained native build.
-Neither new cohort is installed yet.
+Current review checkpoint (22:21 UTC): the reviewed native app **1.4.2 build
+10 is installed**, with full-bundle authority
+`0b92fbfd67424e0b9651bf81a6b5fc8aa843c09f2a90e0a925052591d18b086a`.
+The guarded installer preserved the previous bundle; strict signature verification
+passes. All twelve installed panes were reviewed, including the Hetzner divergence
+filter, recorded agreement, job details and a real completed test log. The installed
+CLI/Unix API Swift contract passes. After interactive use, idle RSS fell naturally
+to about 120 MiB; this short sample is not the new 30-minute resource gate.
 
-The existing app passed its separate 30-minute resource gate at 0.30% CPU and
-114.219 MiB peak RSS. Its status read p95 still fails at 266.788/250 ms. Four
-factory deliveries remain nonterminal (one paused, one held, two accepted), and
-factory writer completeness and latency remain open. The detailed review,
-ownership and acceptance conditions are in [REVIEW.md](REVIEW.md). Historical
-checkpoints below retain their own times and artifact identities.
+Native product `c8afd904` is installed at both prefixes, with matching helper and
+factory product stamp. Fresh doctor and artifact checks pass: resident PID 72783,
+39 normal samples, 16.813 MiB RSS, 0.269% normal CPU duty, sample CPU p95 17.139 ms,
+and projected telemetry 528,384 bytes/day. Artifact drift is false. The final
+native `d56f7cf3` build remains promoter-owned and includes the later telemetry
+correction `921c267` and canonical remote toolchain correction. Do not describe
+these later commits as already installed.
+
+The exact telemetry/dispatcher/CLI race test passed on the canonical runner:
+`20261108T220457Z-1906275`, exit 0 in 16 seconds. Its receipt binds all six
+committed `921c267` files to the frozen candidate and captured log. The earlier
+full-module race suite passed in 78 seconds. All 75 Swift tests, signed release
+build and installed CLI contract pass. Commit `d02b491` expands Make and both CI
+platforms to the complete Go module; a GitHub CI execution is not claimed.
+
+The fresh no-live audit exits 0 with warnings. Current controller authority is
+clean across 177 attempts; the prior controller's missing write remains visible.
+Factory/product writer p95 is 50/75.503 ms: above the 25 ms target and below the
+100 ms failure ceiling. Strict telemetry coverage passes. Scheduler evidence is
+still insufficient for capacity promotion. Worker 2.34.0 is installed and healthy;
+one recovery attempt for parent `64c635e4` was queued after this activation, with
+one retained completion wait. Its child and two accepted deliveries remain
+nonterminal until a landing receipt proves otherwise.
+
+The old observer was stopped before app promotion and its output preserved.
+A new immutable 72-hour observer must start after the final product/factory pair
+is installed. No previous elapsed time, read failure or resource result transfers
+to the new cohort. WORK-41 remains in progress. [REVIEW.md](REVIEW.md) records the
+current review and remaining acceptance conditions; historical checkpoints below
+retain their own times and artifact identities.
 
 Historical checkpoint (20:59 UTC): product release `0535927f` is installed at
 both CLI prefixes. Its exact committed full race suite and Darwin native build
