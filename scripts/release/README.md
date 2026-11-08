@@ -82,7 +82,14 @@ input, include and explicit output paths. Implicit stdin compile-probe output
 goes to `/dev/null`. This prevents Zig's `-.o` probe artifact from making
 later binaries report modified source. Build checks source cleanliness after
 each target and stops before producing a promotable bundle if it changes.
-For the current Zig toolchain, use `GOFLAGS=-ldflags=-linkmode=internal`.
+The preferred Darwin profile is LLVM clang 18 with external linking:
+`CC=/srv/build/opt/pressure-darwin-clang` and
+`GOFLAGS='-ldflags=-s -w -linkmode=external'`. Record the actual compiler, linker
+and SDK identity in the build evidence. The older Zig/internal profile was
+tested for the small standalone product, but it broke SQLite parameter binding
+in the factory binary despite passing a version probe. Do not use that profile
+for `ndev` or a delivery producer. Native acceptance must exercise filtered
+SQLite queries and ingestion when a binary includes that dependency.
 
 
 The factory compatibility target uses the same installer contract. After building

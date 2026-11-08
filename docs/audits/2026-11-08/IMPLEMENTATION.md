@@ -5,18 +5,26 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
-Current checkpoint (19:41 UTC): the installed resident bundle and factory front
+Current checkpoint (19:59 UTC): the installed resident bundle and factory front
 door both report product `8e6cb978`. The factory binary is clean `483b1def`,
 SHA-256 `cf1ce6c58fd435a7b949e132152919c814fdb9dc0d536dacbf33a696449ffa10`,
-independently verified at all three install targets. The explicit release authority
-guard is installed. Normal-state resident duty still fails at 0.654% against 0.5%;
-RSS, sample CPU and telemetry volume pass. A concurrent owner is replacing the
-measured browser enforcement subprocess scan and its recovery-demand reads with
-native, read-only lookup. The acceptance collector stays stopped. Factory
-integration `aa7b8fa9` is landed and installed; five later factory deliveries remain
-accepted. Delivery admission is paused by its owner for producer-routing repair;
-the active batch continues. Historical writer/scheduler performance and elapsed
-acceptance remain open. WORK-41 stays in progress.
+independently verified at all three install targets. Normal-state resident duty
+still fails at 0.654% against 0.5%; RSS, sample CPU and telemetry volume pass.
+Native browser discovery and read-only recovery sampling are committed in
+`e0540545`; its macOS fixture and stale-buffer tests pass. The combined forward
+release `0535927f` adds full-bundle app authority and downgrade guards; its exact
+committed full race suite and native bundle are queued on the gate runner.
+
+A fresh desktop check found signed app 1.1.0 build 3 installed, despite an earlier
+verified 1.3.0 build 5 installation. The exact actor is not established. The
+preserved clean signed 1.3.0 candidate must be restored through the new guard,
+and the app observation window must restart. The acceptance collector stays
+stopped until final identity and the normal-state CPU gate pass. Factory
+integration `aa7b8fa9` is landed and installed; five later factory deliveries
+remain accepted. Delivery admission is paused by its owner for native producer
+routing repair; the active batch continues. Historical writer/scheduler
+performance, human-authorized privileged trace, and elapsed acceptance remain
+open. WORK-41 stays in progress.
 
 ## Product contract
 
@@ -30,19 +38,19 @@ Remote work uses existing Hetzner jobs and receipts. This program does not add a
 
 | Area | Implemented result | Acceptance state |
 | --- | --- | --- |
-| Installation identity | Capabilities expose product version, revision, executable and platform. Five-binary promotion verifies hashes, clean source, Darwin CGO and identity before switching one authority link; previous authority and first-migration files are preserved. | Installed; all five release hashes verified. Factory front door `483b1def` is landed and installed. Explicit promotion authority guard is built, awaiting forward promotion. |
+| Installation identity | Capabilities expose product version, revision, executable and platform. Five-binary promotion verifies hashes, clean source, Darwin CGO and identity before switching one authority link; previous authority and first-migration files are preserved. | Installed; all five release hashes verified. Factory front door `483b1def` is landed and installed. CLI authority guard installed; combined forward native process/app guard release queued. |
 | Readiness | Admission-only is a valid ready mode; persisted policy, storage, monitor freshness and resident baseline remain explicit gates. | Installed. Four fresh normal samples are required after restart. The longer 19:18 Automatic-mode baseline failed normal-state CPU duty; a forward fix is building. |
 | Telemetry | Real product writer and reader; privacy validation, closed fields, failure classes, attempted/written/failed/gap counters and freshness; bounded sharding and full lock-to-append timing. Factory correlation and product-owned registry fragment implemented. | Product and factory integration installed. Historical gaps and factory latency failures remain visible. |
 | Retention | Owned JSONL, writer health, disk maintenance and monitor streams have bounded retention; pruning and append failures are reported. Helper artifacts retain active plus two rollback revisions. | Implemented and tested. Unique legacy install backups are preserved. |
 | Work coordinator | Private host identity and OS/architecture/CPU/revision cohorts, explicit legacy counts and reuse miss reasons. Mixed-cohort retunes fail closed. Current CPU/fairness/capacity gates remain in force. | Installed. Replay promotion and live slowdown SLO still fail; no unsupported weight increase applied. |
-| Native desktop | Ten sections, including concurrent WORK-82 Process Incidents, refresh on entry; requests coalesce and have time/output bounds; per-section age/errors retain prior results. Settings show executing identity. SMART age and native write-window units are correct. | 59 tests pass; signed app installed and all ten sections inspected. Idle budget is an elapsed gate. |
+| Native desktop | Ten sections, including concurrent WORK-82 Process Incidents, refresh on entry; requests coalesce and have time/output bounds; per-section age/errors retain prior results. Settings show executing identity. SMART age and native write-window units are correct. | 59 tests passed and ten sections were inspected. A later check found installed 1.1.0 build 3; restore clean signed 1.3.0 build 5 through the new authority guard. Idle acceptance must restart. |
 | GPUI preview | Executable validation, bounded stdout/stderr, nonblocking reads, process-group cleanup, timeouts and explicit failed envelopes; supported-operation matrix documented. | Ten core tests and full Rust build pass; remains a preview. |
 | Policy | Exact legacy defaults migrate idempotently; custom settings stay intact. Admission and storage enforcement enabled, automatic shedding disabled. Cleanup remains confirmed and manual. | Installed and live policy audit passes. |
 | Go cache helper | Immutable content-addressed objects, cross-process pinning until close, crash recovery, strict sizes and bounded streaming/journal/maintenance. Pinned objects can temporarily exceed the soft limit. | Race tests and real Go cache integration pass on runner. Live reuse history still reports zero hits and concrete miss reasons. |
 | Local API | Product owns CLI/Unix API contracts. Unix socket permissions/peer UID, request deadlines and response bounds; native client has CLI fallback and loopback redirect limits. | Real installed Swift/Unix-API contract passes, including capabilities, SMART and live query. |
 | Privileged trace | Signed helper verifies Team ID; administrator authorization, PID identity, XPC completion and independent trace wall time are bounded. Restricted entitlement without provisioning profile removed after a real launch failure. | Signed app launches. Administrator-approved trace is not exercised by this audit. |
 | Validation | Entire Go race suite, targeted boundary/race tests, fresh Swift tests, GPUI tests/build, real installed API contract, native SMART read and UI review. | Immediate checks pass. Warm latency, idle and 24/72-hour evidence are recorded independently below. |
-| Delivery | Product changes published with guarded exact-path commits. One factory delivery landed and three remain accepted. Clean native bundle built on Hetzner and promoted with receipts. | Three factory deliveries, their installed builder/helper state and long observation remain open. |
+| Delivery | Product changes published with guarded exact-path commits. One factory delivery landed and five remain accepted. Clean native bundle built on Hetzner and promoted with receipts. | Five factory deliveries, their installed builder/helper state, native producer recovery and long observation remain open. |
 
 ## Baseline evidence (2026-11-08)
 
@@ -736,3 +744,40 @@ argument classification. The owning agent received that review and the request
 for a stale-tail regression test. The final runtime gate must include this
 correction and all placement ancestry. Shared source was not edited across the
 owner's claim.
+
+
+### Desktop rollback prevention and final candidate
+
+A direct 19:45 UTC bundle read found `/Applications/NDev Pressure.app` at 1.1.0
+build 3, with strict deep code-signature verification passing. The running app
+was PID 82123. This invalidates the current desktop acceptance window; prior
+1.3.0 evidence remains historical. No actor is inferred from timestamps alone.
+The clean preserved 1.3.0 build 5 candidate has executable SHA-256
+`7f3396400e4983343bb46e7b550148b9141522f181ac6da2f38e88fc9eb8bc55`.
+The shared worktree's different app build contains separately owned changes and
+is not this audit's installation candidate.
+
+Commit `0535927f` adds `app-status`, a deterministic bounded full-bundle digest,
+and mandatory `install-app --expected-current`. The digest covers executable,
+helper, resources, plist and signature bytes. Symlinks, special files, oversized
+bundles, duplicate identity keys and malformed version/build values fail closed.
+The installer verifies signatures before staging, after staging and after
+promotion; it checks authority under its lock and again before the rename.
+Older semantic versions and lower numeric builds require explicit rollback intent;
+that intent never bypasses a stale authority. A private receipt and the previous
+app are retained. Receipt or verification failure restores the prior app. Both
+native Makefile install targets capture authority before building.
+
+Regression tests cover helper/resource mutation, malformed identities, stale
+intent, missing intent, downgrade ordering and stale rollback. Final remote
+full-race and native-build evidence is pending. Real installed stale/downgrade
+negative checks and restoration must follow the tested native build.
+
+The release README now prefers external LLVM clang 18 linking and records the
+SQLite query/ingestion acceptance requirement for factory binaries. The queued
+0535927 standalone bundle uses the previously verified product-only Zig/internal
+profile. This product has no SQLite dependency; that profile is not factory
+acceptance and must not be copied to its producer. Fresh strict telemetry
+coverage passed: 131 covered, 13 exempt, 144 total. The 19:42 full telemetry
+summary is retained as a future comparison baseline, not a fabricated pre-change
+comparison.
