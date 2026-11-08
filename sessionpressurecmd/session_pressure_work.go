@@ -40,7 +40,7 @@ Subcommands:
   cancel --operation-id ID --confirm  Signal the live lease tree and release the lease
   reschedule --operation-id ID --confirm  Cancel a scheduled lease, then ndev schedule run-now
   handoff --operation-id ID        Write an operator brief for an interactive agent
-  run [--class <express-test|express-build|test|build|install|emulator|browser|heavy|benchmark|benchmark-exclusive|reclaim>] [--workload ID] [--cohort warm|cold|cached|fixture|live] [--profile-go-test] [--exclusive] [--no-reuse] [--priority] [--wait DURATION] [--progress <human|jsonl|quiet>] -- COMMAND [ARGS...]
+  run [--class <express-test|express-build|test|build|install|emulator|browser|heavy|benchmark|benchmark-exclusive|reclaim>] [--workload ID] [--cohort warm|cold|cached|fixture|live] [--profile-go-test] [--exclusive] [--no-reuse] [--priority] [--placement auto|local --placement-reason SLUG] [--wait DURATION] [--progress <human|jsonl|quiet>] -- COMMAND [ARGS...]
   batch --file <MANIFEST.json|-> [--wait DURATION] [--progress <human|jsonl|quiet>]
 
 Batch manifests use strict schema_version 1 argv steps and hold one lease across
@@ -64,6 +64,9 @@ invisible next to an empty queue.
 The default wait is 10m and covers singleflight, red host pressure, and shared capacity.
 Use --wait 0 to fail immediately when either gate is closed.
 Use --no-reuse to force a real execution and record the disabled reuse decision.
+Use --placement local --placement-reason SLUG only for work that is correct on this Mac alone
+(a darwin cgo producer, Mac-local module files). It skips remote routing and keeps local admission;
+the default auto placement rejects ineligible Go work while remote routing is enabled.
 Use --priority for an audited agent self-priority request. It appends behind any
 operator-pinned sequence and changes queue order only; it cannot bypass host
 pressure, capacity, storage, active leases, or the operator's existing order.
