@@ -70,14 +70,16 @@ and low terminal sample counts still do not justify increasing capacity.
 
 ## Acceptance still required
 
-Source and candidate verification at 21:44 UTC:
+Source and candidate verification at 21:51 UTC:
 
 - `b36ac47`: observer race tests pass (1.143 seconds).
 - `a20e450a`: final API snapshot matches all nine committed owned paths.
   Targeted API/CLI/observer race tests pass (1.266/2.478/1.142 seconds), canonical
   job `20261108T212723Z-1593804`. The later full race snapshot also includes
-  stable row IDs and the final I/O/identity telemetry leaves; its receipt is
-  still pending.
+  stable row IDs and the final I/O/identity telemetry leaves. The full
+  `go test -race ./...` suite passes: canonical job
+  `20261108T213140Z-1666344`, exit 0 in 78 seconds at 21:50:39 UTC.
+  `review-go-full-race-receipt.json` binds the log and source manifest hashes.
 - `36f2a69e`: all 75 Swift tests in 11 suites pass, with real CLI/SSH/log
   integration enabled. Developer ID release build and strict signature
   verification pass (`review-desktop-final-verify-2.log`). Installed full-bundle
