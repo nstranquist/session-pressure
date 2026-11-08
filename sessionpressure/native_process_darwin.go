@@ -432,10 +432,18 @@ func (reader *darwinProcessArgsReader) args(pid int) ([]string, error) {
 	if darwinLibproc.sysctl(&mib[0], uint32(len(mib)), unsafe.Pointer(&reader.buffer[0]), &written, nil, 0) != 0 {
 		return nil, fmt.Errorf("read kern.procargs2 for pid %d", pid)
 	}
+	return reader.parseResponse(written)
+}
+
+func (reader *darwinProcessArgsReader) parseResponse(written uintptr) ([]string, error) {
 	if written < 5 || written > uintptr(len(reader.buffer)) {
-		return nil, fmt.Errorf("invalid kern.procargs2 response size %d for pid %d", written, pid)
+		return nil, fmt.Errorf("invalid kern.procargs2 response size %d", written)
 	}
-	return parseDarwinProcessArgs(reader.buffer[:written])
+	// The size query is an allocation ceiling. A shorter response must also
+	// shorten the retained view so callers cannot classify a previous PID's
+	// arguments left in the reused capacity.
+	reader.buffer = reader.buffer[:written]
+	return parseDarwinProcessArgs(reader.buffer)
 }
 
 // parseDarwinProcessArgs scans the complete kernel response but retains only a

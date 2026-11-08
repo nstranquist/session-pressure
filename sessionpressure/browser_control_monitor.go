@@ -2,6 +2,11 @@ package sessionpressure
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -11,7 +16,7 @@ func recoverySampleDelay(ctx context.Context, dir string, policy Policy, normal 
 	if normal <= 5*time.Second {
 		return normal
 	}
-	control, err := BrowserControlStatus(ctx, dir, "")
+	control, err := browserControlSamplingSnapshot(ctx, dir)
 	// A manual pause cannot recover from CPU samples. Keep the normal cadence
 	// until work actually waits; otherwise an idle paused host samples forever
 	// at five seconds despite its two-minute normal policy.
@@ -32,6 +37,39 @@ func recoverySampleDelay(ctx context.Context, dir string, policy Policy, normal 
 		return 5 * time.Second
 	}
 	return normal
+}
+
+// Scheduling is diagnostic. Do not advance recovery, decode the full host
+// snapshot, or contend with operator mutations on each five-second wakeup.
+// EnforceBrowserControl and actual admission still reconcile authoritative
+// evidence. An atomic stale control record can only request an extra sample.
+func browserControlSamplingSnapshot(ctx context.Context, dir string) (BrowserControl, error) {
+	if err := ctx.Err(); err != nil {
+		return BrowserControl{}, err
+	}
+	f, err := os.Open(filepath.Join(dir, "browser-control.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return BrowserControl{}, nil
+	}
+	if err != nil {
+		return BrowserControl{}, err
+	}
+	defer f.Close()
+	body, err := io.ReadAll(io.LimitReader(f, 16<<10+1))
+	if err != nil {
+		return BrowserControl{}, err
+	}
+	if len(body) > 16<<10 {
+		return BrowserControl{}, errors.New("oversized browser sampling control")
+	}
+	var control BrowserControl
+	if err := json.Unmarshal(body, &control); err != nil {
+		return BrowserControl{}, err
+	}
+	if control.Mode != "auto" && control.Mode != "paused" {
+		return BrowserControl{}, errors.New("invalid browser sampling mode")
+	}
+	return control, nil
 }
 
 // Recheck demand without taking a full host sample. An operator can enable

@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"github.com/nstranquist/session-pressure/internal/filelock"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -32,30 +30,15 @@ func EnforceBrowserControl(ctx context.Context, dir string) error {
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	body, err := exec.CommandContext(probeCtx, "ps", "-axo", "pid=,lstart=,command=").Output()
+	roots, err := automatedBrowserProcesses(probeCtx)
 	if err != nil {
 		return err
 	}
 	slotOccupied := false
-	for _, row := range strings.Split(string(body), "\n") {
-		fields := strings.Fields(row)
-		if len(fields) < 7 {
-			continue
-		}
-		pid, err := strconv.Atoi(fields[0])
-		if err != nil || pid <= 1 {
-			continue
-		}
-		command := strings.Join(fields[6:], " ")
-		if !automatedBrowserRoot(command) {
-			continue
-		}
-		started, err := time.ParseInLocation("Mon Jan 2 15:04:05 2006", strings.Join(fields[1:6], " "), time.Local)
-		if err != nil {
-			continue
-		}
+	for _, root := range roots {
+		pid, started := root.PID, root.StartedAt
 		identity, uid, err := processGuardIdentity(pid)
-		if err != nil || uid != os.Getuid() {
+		if err != nil || uid != os.Getuid() || (root.StartIdentity != "" && identity != root.StartIdentity) {
 			continue
 		}
 		if !state.Blocked && time.Since(started) < 120*time.Second && !slotOccupied {
