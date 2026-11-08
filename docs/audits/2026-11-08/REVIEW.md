@@ -18,6 +18,7 @@ Private receipts are under `~/.nicos-dev/session-pressure/acceptance/2026-11-08/
 | History and receipt inputs had no complete resource contract. | Reject links, FIFOs and special files; close the open/stat race; read at most 4 MiB and 1,000 complete ledger rows. Bound emitted history and jobs to 512 KiB each, configuration to 256 KiB, SSH output to 1 MiB and job logs to 100,000 bytes. | Tests cover oversized input, response encoding expansion, malformed rows, invalid job IDs, non-finite health and bounded capture. |
 | Capabilities omitted existing commands, and some read leaves had incomplete telemetry vocabulary. | Cover dispatcher operations and categorize remote inspection/job logs, I/O health and identity reads without retaining private flag values. | A dispatcher-based test detects future capability omissions. |
 | The pane displayed only the first 100 runs and 120 jobs without access to later matching rows. Unknown decisions looked like shadow decisions. | Add bounded incremental display with lazy rows. Preserve unknown decision text. Counts explicitly describe the loaded window. | Source review; final native verification and live review are recorded below when available. |
+| Standalone command events omitted the shared outcome class and reason. All 373 nonzero calls projected into one unknown group. | Add the factory's closed result vocabulary. Mark a completed audit finding only after successful report output; preserve loading, encoding and output failures as command failures. Keep the stable operation ID, bounded action and legacy outcome fields. | `921c267`: guarded publication complete. Exact-source targeted race test is retained; installation is still pending. Historical events are unchanged. |
 
 The Hetzner UI originated in a concurrent, uncommitted six-path change. Its owner
 was inactive after board coordination. WORK-41 explicitly adopted integration at
@@ -67,6 +68,33 @@ Product recent writer p95 was 66.057 ms and factory recent writer p95 was 50 ms;
 both exceed the 25 ms target. The previous paired writer improvement remains
 directional evidence, separate from these current windows. Scheduler replay
 and low terminal sample counts still do not justify increasing capacity.
+
+A bounded read-only primary-stream review at 22:06 UTC reconciles all 373
+nonzero product events among 6,238 command events, with zero malformed rows:
+303 status exits, 16 audit exits, 13 old I/O unknown leaves, 3 process-stop exits,
+3 self-test exits, 2 job-log exits, 3 process-run timeouts, 1 other process-run
+exit and 29 usage exits. These are call outcomes, not 373 independently proved
+product defects. Historical status rows do not distinguish an unhealthy report
+from a report-loading error, so their cause remains unknown. The new audit
+marker is set by the report path, never inferred from an exit-1 action alone.
+The stable operation ID remains `session.pressure`; the existing categorical
+`action` continues to identify the leaf. The factory failure query now confirms
+that the source-specific cluster contains 373 unknown outcomes; a default
+`cli-invocations` query does not measure this product stream.
+
+At 21:52 UTC, 30 diagnostic installed status calls all succeeded. First-byte
+latency was 24.029 ms p95 and full process completion was 47.682 ms p95
+(maximum 56.653 ms). This is a 30-call diagnostic of the old installed CLI,
+not a replacement for its failed 100-call acceptance cohort or a causal claim
+about writer performance. The private receipt binds the installed binary hash.
+
+The native `8c042d24` packaging job passed its full race tests, then failed on
+malformed `GOFLAGS` quoting (`unknown flag -linkmode`). The whole flag token
+must be quoted, including `-ldflags=`. Correct parsing was checked on the Mac
+and runner without compilation. Peer `c8afd904` corrects the release guidance;
+its clean named-ref bundle and parser preflight passed. The promoter retains
+one canonical native build for that cohort. The later telemetry commit is a
+separate follow-up and must not be described as part of the sealed c8 build.
 
 ## Acceptance still required
 
