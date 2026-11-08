@@ -13,6 +13,7 @@ This is the extracted open-core product. `ndev session pressure` in nicos-tools 
 - Identifies Claude, Codex, Grok, and Kimi process trees.
 - Watches internal-SSD write pressure and NVMe SMART lifetime wear.
 - Inspects live work and lets an operator cancel, reschedule, or hand it off.
+- Alerts on sustained runaway processes, offers identity-checked stop controls, and retains incident history.
 - Ships a resident helper, a local opt-in API, and a thin native macOS client.
 
 ## Quick Start
@@ -87,6 +88,26 @@ Default state directory: `~/.nicos-dev/session-pressure`.
 | `SESSION_PRESSURE_API_BIN` | Exact `session-pressure-api` path for `session-pressure api` |
 
 Policy lives at `$SESSION_PRESSURE_HOME/policy.json`. `policy init` writes observe-only defaults. `policy enable` is the first command that can block launches. `policy profile apply` accepts `balanced`, `throughput`, `interactive`, or `observe`. Add `--multi-agent` to any profile for earlier soft-launch warnings when many agents share the host. Enforcement stays as the profile sets it.
+
+### Process incidents and bounded scans
+
+The resident records sustained CPU incidents from its existing process inventory.
+An orphaned process must be at least 10 minutes old and use 60% of one core
+for two minutes. Other processes require 30 minutes of age and five hot minutes.
+An alert opens **Process Incidents** in the native app. Inspect its evidence,
+then use **Stop** or the separate **Force Stop** action. Detection never stops
+a process automatically. Each action checks ownership and kernel start identity
+and retains its result in private, bounded history.
+
+Scope scans to a named project and give them a deadline:
+
+```bash
+session-pressure processes run --timeout 2m -- rg --files /path/to/project
+```
+
+For expensive work, run that command through `work run --class heavy --`.
+`processes list` reads history; `processes --help` describes the controls and
+their limits. See the [human guide](docs/human/process-incidents.html).
 
 ### SSD burst alerts
 

@@ -91,7 +91,7 @@ struct ProcessIncidentsView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(incident.executable).font(.title2.bold())
             LabeledContent("State", value: incident.state.replacingOccurrences(of: "_", with: " "))
-            if incident.source == "operator_record" { Text("Historical stop reported by an operator. Kernel identity was not available for this record.").font(.caption).foregroundStyle(.secondary) }
+            if incident.source == "operator_record" { Text("Historical exit reported by an operator. Kernel identity was not available for this record.").font(.caption).foregroundStyle(.secondary) }
             LabeledContent("Process", value: incident.source == "operator_record" ? "PID \(incident.pid) · owner not captured" : "PID \(incident.pid) · user \(incident.uid)")
             LabeledContent("Parent", value: "\(incident.parentExecutable ?? "unknown") · PID \(incident.ppid ?? 0)")
             LabeledContent("Incident", value: incident.id)
@@ -117,7 +117,7 @@ struct ProcessIncidentsView: View {
             if incident.actions?.isEmpty ?? true { Text("No stop action requested.").foregroundStyle(.secondary) }
             ForEach(Array((incident.actions ?? []).enumerated()), id: \.offset) { _, action in
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(action.signal) · \(action.result.replacingOccurrences(of: "_", with: " "))")
+                    Text("\(action.signal == "NONE" ? "No signal" : action.signal) · \(action.result.replacingOccurrences(of: "_", with: " "))")
                     Text(action.at, style: .time).font(.caption).foregroundStyle(.secondary)
                     if let error = action.error { Text(error).font(.caption).foregroundStyle(.red) }
                 }
