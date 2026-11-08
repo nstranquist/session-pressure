@@ -114,3 +114,23 @@ At 19:57 UTC the delivery doctor reported all seven owned accepted deliveries as
 ### Install self-review correction
 
 The factory restore from this session repaired the missing page, but installed factory version 1.1.0 over the product app's 1.3.0 version line. Its executable and controls were tested; that does not preserve the other release owner's app acceptance window. This was an install coordination error. Both paths need one canonical feature-preserving build, a captured full-bundle authority before build, and guarded promotion. WORK-41 added the signed app authority and downgrade guard in 0535927 and owns the canonical union and compatibility-installer correction. Do not restore a version from a different tree using an older installed hash alone.
+
+### Canonical installed app recheck
+
+WORK-41 installed the combined app version 1.4.0, build 7. At 20:31 UTC its whole-bundle authority was `d27fe84fb27eda1c95ccc3c7d290393e27427cc50be3a26d95b8152014452876`; the executable SHA-256 was `2f71e71f2e882184faa9e8a31304b85183253c66e9fa63160f1169da05a4301d`. These are different hash scopes for the same app. Comparing them does not prove that an installer replaced the app. The source owner reported 68 passing Swift tests. This session separately verified the installed twelve-pane sidebar, all five real incidents, disabled Stop on historical and recovered records, the No signal label, and selection retained after Refresh.
+
+A new private copy of this exact installed app passed `TestProcessIncidentNativeReview` in 130.21 seconds, operation `16939704a89c275cf41795cd4735b27c`. Cancel left the owned sleeping child active with no action. Stale birth identity recorded NONE / revalidation rejected. TERM confirmed exit. The TERM-resistant child stayed pending until a separate Force Stop confirmation recorded KILL / exit confirmed. Refresh retained its selection and action history. The private app quit; the bounded harness completed and cleaned its children. No production ledger was changed. This result supersedes the earlier app identity for current control acceptance.
+
+The 20:31 resident check passed every policy budget with a full rolling 64-sample window: 0.3617% idle CPU against 0.5%, 16.92 MiB RSS against 30 MiB, sample CPU p95 14.606 ms against 150 ms, and projected telemetry 528,384 bytes/day against 1,048,576. CLI, helper, and front door agreed on 0535927; PID 90605 remained fixed. A longer bounded observation remains separate from this policy-health checkpoint. Forward promotion to 92eb891 is owned by the other release sessions and must retain any interrupted cohort.
+
+At this checkpoint four more owned captures had landed after worker 2.33.1 activation. The one owned producer refusal, 8c37a6e1, was fully represented in main with no residual according to `delivery assess`; its owner queued a drain after announcing the narrow recovery. No foreign capture was replaced or drained by this session.
+
+### Review cost and process correction
+
+The user asked whether the chat was making progress. The own-session ledger at 20:32:53 UTC reported 101,607,117 cumulative tokens for the whole chat: 98,406,528 cached input, 2,616,173 uncached input, and 584,416 output including reasoning. Cached input counts repeated context across calls; it is not unique written text or a dollar-cost measurement. The installed controls and CPU correction are concrete progress, but repeated release tracking and context were excessive. Keep one release owner, retain one bounded wait, stop adding independent review scope during closeout, and report exact open acceptance gates. Do not replace failed evidence with a later green sample.
+
+### Final bounded CPU observation
+
+The same installed 0535927 revision and resident PID 90605 remained coherent for 1085.5 seconds across 37 checkpoints, adding 78 resident samples. Final CPU was 0.3672% against the unchanged 0.5% limit; the full 64-sample window included 51 normal samples. Actual policy passed. The custom probe returned false because it incorrectly required 64 normal samples instead of the policy minimum of 4. Its raw result and hash remain in evidence; no failed result was overwritten. This proves the bounded observation, not a 72-hour soak.
+
+Final delivery check: 12 owned captures landed, one accepted capture remains queued, and represented capture 8c37a6e1 remains paused after its narrow drain was queued for the service. Worker 2.33.1 is healthy and busy. No foreign delivery was drained or worker restarted.

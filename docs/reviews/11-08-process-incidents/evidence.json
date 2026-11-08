@@ -2658,8 +2658,12 @@
       "coverage": "strict coverage passed 131 covered, 13 exempt, 144 total, 53 sources",
       "usage_failures_7d": 0,
       "usage_rows": 0,
-      "limit": "no production trend claim",
-      "agent_refresh_error": "parallel refresh caused self-contention writer lease failure; serial no-refresh retry passed"
+      "limit": "No usage rows; do not claim a production reliability trend.",
+      "agent_refresh_error": "parallel refresh caused self-contention writer lease failure; serial no-refresh retry passed",
+      "strict_source_count_latest": 57,
+      "latest_usage_rows": 0,
+      "latest_usage_failures_7d": 0,
+      "latest_query_since": "2026-11-08T20:03:00Z"
     },
     "release_consolidation_2000": {
       "candidate": "0535927",
@@ -2736,6 +2740,412 @@
       "limit_percent": 0.5,
       "stable_installed_acceptance": false,
       "factory_native_canary": "PASS reported by owner 20:16; final digest pending"
+    },
+    "canonical_app_review": {
+      "recorded_at": "2026-11-08T20:34:27.664654+00:00",
+      "version": "1.4.0",
+      "build": "7",
+      "whole_bundle_authority": "d27fe84fb27eda1c95ccc3c7d290393e27427cc50be3a26d95b8152014452876",
+      "executable_sha256": "2f71e71f2e882184faa9e8a31304b85183253c66e9fa63160f1169da05a4301d",
+      "installed_ui": "PASS: 12 panes, five real incidents, disabled closed/legacy Stop, No signal label, refresh keeps selection",
+      "swift_tests": {
+        "count": 68,
+        "status": "PASS reported by WORK41; separate from own native result"
+      },
+      "native_fixture": {
+        "operation": "16939704a89c275cf41795cd4735b27c",
+        "status": "PASS",
+        "duration_seconds": 130.21,
+        "result": {
+          "cpu_load": "sleeping children only",
+          "passed": true,
+          "report": {
+            "schema_version": 1,
+            "updated_at": "2026-11-08T20:30:09.967476Z",
+            "incidents": [
+              {
+                "source": "review_fixture",
+                "id": "b2d5389722366535f1482e5e",
+                "pid": 99477,
+                "ppid": 99464,
+                "start_identity": "darwin:1794169707:259934",
+                "executable": "Review child Force",
+                "uid": 501,
+                "cpu_percent": 0,
+                "rss_mb": 0,
+                "age_seconds": 0,
+                "reason": "review_fixture_no_cpu_load",
+                "first_seen": "2026-11-08T20:28:27.26571Z",
+                "last_seen": "2026-11-08T20:28:27.26571Z",
+                "sustained_seconds": 0,
+                "state": "stopped",
+                "actions": [
+                  {
+                    "at": "2026-11-08T20:30:01.233795Z",
+                    "signal": "TERM",
+                    "result": "signal_sent_unconfirmed"
+                  },
+                  {
+                    "at": "2026-11-08T20:30:09.881134Z",
+                    "signal": "KILL",
+                    "result": "exit_confirmed"
+                  }
+                ]
+              },
+              {
+                "source": "review_fixture",
+                "id": "e2a6779c18471544aa53048a",
+                "pid": 99475,
+                "ppid": 99464,
+                "start_identity": "darwin:1794169707:253595",
+                "executable": "Review child TERM",
+                "uid": 501,
+                "cpu_percent": 0,
+                "rss_mb": 0,
+                "age_seconds": 0,
+                "reason": "review_fixture_no_cpu_load",
+                "first_seen": "2026-11-08T20:28:27.259725Z",
+                "last_seen": "2026-11-08T20:28:27.259725Z",
+                "sustained_seconds": 0,
+                "state": "stopped",
+                "actions": [
+                  {
+                    "at": "2026-11-08T20:29:49.335787Z",
+                    "signal": "TERM",
+                    "result": "exit_confirmed"
+                  }
+                ]
+              },
+              {
+                "source": "review_fixture",
+                "id": "review-stale-identity",
+                "pid": 99475,
+                "ppid": 99464,
+                "start_identity": "darwin:0:1",
+                "executable": "Review stale identity",
+                "uid": 501,
+                "cpu_percent": 0,
+                "rss_mb": 0,
+                "age_seconds": 0,
+                "reason": "review_fixture_no_cpu_load",
+                "first_seen": "2026-11-08T20:28:27.259725Z",
+                "last_seen": "2026-11-08T20:28:27.259725Z",
+                "sustained_seconds": 0,
+                "state": "active",
+                "actions": [
+                  {
+                    "at": "2026-11-08T20:29:26.260976Z",
+                    "signal": "NONE",
+                    "result": "revalidation_rejected",
+                    "error": "process identity changed or unavailable; no signal sent"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "checks": [
+          "Cancel leaves active child and no action",
+          "stale birth NONE / revalidation_rejected",
+          "TERM / exit_confirmed",
+          "TERM resistant remains pending",
+          "separate force confirmation KILL / exit_confirmed",
+          "refresh retains selected history"
+        ],
+        "review_app": "quit",
+        "cleanup": "bounded harness completed and cleaned owned sleeping children",
+        "production_history": "unchanged"
+      },
+      "digest_scope_correction": "Executable hash 2f71 and whole-bundle d27 identify the same install; different hash scopes do not establish replacement."
+    },
+    "policy_health_post_canonical_ui": {
+      "action": "doctor",
+      "auto_shed_critical": false,
+      "coverage_status": "ready-with-explicit-boundaries",
+      "doctor": {
+        "schema_version": 1,
+        "ok": true,
+        "protection_mode": "admission-only",
+        "policy_persisted": true,
+        "enforce_admission": true,
+        "auto_shed_critical": false,
+        "monitor": {
+          "healthy": true,
+          "fresh": true,
+          "age_seconds": 8.925175,
+          "pid": 90605,
+          "loaded": true,
+          "running": true
+        },
+        "host": {
+          "level": "warning",
+          "source": "resident"
+        },
+        "work": {
+          "capacity": 8,
+          "used": 1,
+          "queue_depth": 0,
+          "express_green": false
+        },
+        "launch_soft_pressure": {
+          "would_block": false,
+          "noise_suppressed": false,
+          "enforced": true
+        },
+        "coverage_status": "ready-with-explicit-boundaries",
+        "source_revisions": {
+          "cli": "0535927f42ec78bc45aaf0903fd3041ce7d3705c",
+          "front_door": "0535927f42ec78bc45aaf0903fd3041ce7d3705c",
+          "installed_helper": "0535927f42ec78bc45aaf0903fd3041ce7d3705c",
+          "checked": true,
+          "mismatch": false
+        },
+        "health": {
+          "monitor_healthy": true,
+          "daily_driver_ready": true,
+          "operator_ready": true,
+          "protection_mode": "admission-only",
+          "latest_monitor_fresh": true,
+          "latest_monitor_age_seconds": 8.925175,
+          "latest_monitor_max_age_seconds": 75,
+          "resident_samples": 122,
+          "resident_normal_samples": 48,
+          "required_normal_samples": 4,
+          "budget_headroom": {
+            "rolling_sample_count": 64,
+            "rolling_window_size": 64,
+            "samples_until_single_outlier_excluded": 0,
+            "p95_excludes_single_maximum": true,
+            "rss_observed_mb": 16.921875,
+            "rss_limit_mb": 30,
+            "rss_margin_mb": 13.078125,
+            "idle_duty_observed_percent": 0.3617070628562984,
+            "idle_duty_limit_percent": 0.5,
+            "idle_duty_margin_percent": 0.1382929371437016,
+            "sample_cpu_p95_observed_ms": 14.606,
+            "sample_cpu_max_observed_ms": 17.545,
+            "sample_cpu_limit_ms": 150,
+            "sample_cpu_margin_ms": 135.394,
+            "telemetry_projected_bytes_per_day": 528384,
+            "telemetry_limit_bytes_per_day": 1048576,
+            "telemetry_margin_bytes_per_day": 520192
+          }
+        }
+      },
+      "enforce_admission": true,
+      "fixes": [],
+      "health": {
+        "monitor_healthy": true,
+        "daily_driver_ready": true,
+        "operator_ready": true,
+        "protection_mode": "admission-only",
+        "latest_monitor_fresh": true,
+        "latest_monitor_age_seconds": 8.925175,
+        "latest_monitor_max_age_seconds": 75,
+        "resident_samples": 122,
+        "resident_normal_samples": 48,
+        "required_normal_samples": 4,
+        "budget_headroom": {
+          "rolling_sample_count": 64,
+          "rolling_window_size": 64,
+          "samples_until_single_outlier_excluded": 0,
+          "p95_excludes_single_maximum": true,
+          "rss_observed_mb": 16.921875,
+          "rss_limit_mb": 30,
+          "rss_margin_mb": 13.078125,
+          "idle_duty_observed_percent": 0.3617070628562984,
+          "idle_duty_limit_percent": 0.5,
+          "idle_duty_margin_percent": 0.1382929371437016,
+          "sample_cpu_p95_observed_ms": 14.606,
+          "sample_cpu_max_observed_ms": 17.545,
+          "sample_cpu_limit_ms": 150,
+          "sample_cpu_margin_ms": 135.394,
+          "telemetry_projected_bytes_per_day": 528384,
+          "telemetry_limit_bytes_per_day": 1048576,
+          "telemetry_margin_bytes_per_day": 520192
+        }
+      },
+      "host": {
+        "level": "warning",
+        "source": "resident"
+      },
+      "launch_soft_pressure": {
+        "would_block": false,
+        "noise_suppressed": false,
+        "enforced": true
+      },
+      "monitor": {
+        "healthy": true,
+        "fresh": true,
+        "age_seconds": 8.925175,
+        "pid": 90605,
+        "loaded": true,
+        "running": true
+      },
+      "ok": true,
+      "policy_persisted": true,
+      "protection_mode": "admission-only",
+      "schema_version": 1,
+      "warnings": [],
+      "work": {
+        "capacity": 8,
+        "used": 1,
+        "queue_depth": 0,
+        "express_green": false
+      }
+    },
+    "queue_post_canonical_ui": {
+      "schema_version": "nicos.commit-delivery.status-brief.v1",
+      "verdict": "attention",
+      "scope": "owner-session",
+      "counts": {
+        "accepted": 1,
+        "held": 1,
+        "landed": 11,
+        "paused": 1,
+        "superseded": 2
+      },
+      "active": [
+        {
+          "delivery_id": "20af4088-6965-4fcb-9a37-1cae47679e4d",
+          "state": "held",
+          "age_ms": 8985778,
+          "path_count": 1,
+          "last_error_code": "STACK_PARENT_PENDING",
+          "last_error": "waits for a delivery that it stacks on: it changes paths of your delivery fe676c93-1edb-4881-a169-b893b87c3b97, which is accepted",
+          "hold_code": "STACK_PARENT_PENDING",
+          "recovery_command": "ndev-commit-delivery --json repo commit delivery status --id fe676c93-1edb-4881-a169-b893b87c3b97",
+          "owner": "codex",
+          "session": "01a1b91e-5877-7453-98a6-9c1893931b54",
+          "host": "Nicos-MacBook-Pro-2.local",
+          "runtime": "codex"
+        },
+        {
+          "delivery_id": "8c37a6e1-9af1-4d4d-a895-555bc7f50604",
+          "state": "paused",
+          "age_ms": 6358215,
+          "path_count": 1,
+          "last_error_code": "PRODUCER_BUILD_FAILED",
+          "last_error": "go build of candidate ndev: exit status 1: session-pressure: remote Go work blocked: GOFLAGS needs an explicit runner profile; use the Hetzner gate-runner with an explicit compiler profile; local fallback is disabled",
+          "recovery_command": "ndev-commit-delivery --json repo commit delivery drain --id 8c37a6e1-9af1-4d4d-a895-555bc7f50604",
+          "owner": "codex",
+          "session": "01a1b91e-5877-7453-98a6-9c1893931b54",
+          "host": "Nicos-MacBook-Pro-2.local",
+          "runtime": "codex"
+        },
+        {
+          "delivery_id": "fe676c93-1edb-4881-a169-b893b87c3b97",
+          "state": "accepted",
+          "age_ms": 4462606,
+          "path_count": 4,
+          "owner": "codex",
+          "session": "01a1b91e-5877-7453-98a6-9c1893931b54",
+          "host": "Nicos-MacBook-Pro-2.local",
+          "runtime": "codex"
+        }
+      ],
+      "service": {
+        "healthy": true,
+        "busy": true,
+        "worker_version": "2.33.1",
+        "expected_worker_version": "2.33.1",
+        "finding_codes": [
+          "SERVICE_WORKER_SOURCE_LAG",
+          "SERVICE_PREFLIGHT_SOURCE_LAG"
+        ]
+      },
+      "remote": {
+        "state": "ahead",
+        "ahead": 50,
+        "behind": 0,
+        "fetch_stale": true
+      },
+      "next_actions": [
+        {
+          "code": "assess_paused",
+          "command": "ndev-commit-delivery --json delivery assess",
+          "reason": "1 paused deliveries need an owner decision: 8c37a6e1"
+        },
+        {
+          "code": "publish",
+          "command": "ndev-commit-delivery --json delivery remote publish --preview --fetch",
+          "reason": "50 landed commit(s) are not on the remote; the remote view may be stale, so add --fetch to the preview"
+        },
+        {
+          "code": "wait_for_landing",
+          "command": "ndev-commit-delivery delivery wait --owned",
+          "reason": "2 deliveries are queued or in progress; accepted is durable but not landed"
+        }
+      ],
+      "coordination": {
+        "state": "open"
+      },
+      "queue": {
+        "state": "landing",
+        "waiting": 14,
+        "still_ms": 1019,
+        "last_outcome_age_ms": 1019
+      }
+    },
+    "review_cost_self_eval": {
+      "session_token_checkpoint": "2026-11-08T20:32:53.832Z",
+      "whole_chat_total_tokens": 101607117,
+      "cached_input_tokens": 98406528,
+      "uncached_input_tokens": 2616173,
+      "output_tokens_including_reasoning": 584416,
+      "finding": "Excessive repeated context and release tracking. Stop extending review scope; use one promoter, retained bounded waits, one final outcome note, and separate installed acceptance from source verification."
+    },
+    "final_cpu_observation": {
+      "raw_path": "/Users/nicostran/.nicos-dev/session-workspaces/v1/01a1b91e-5877-7453-98a6-9c1893931b54/process-guard/cpu053-observation.json",
+      "raw_sha256": "973687223b836218faed0988cf36dd3d9e7490cf3c6205821a2ecae034d8b2af",
+      "complete": true,
+      "probe_accepted": false,
+      "probe_failure": "Final full-window CPU/health/cohort acceptance did not pass",
+      "probe_criterion_error": "The custom probe required 64 normal samples. Product policy requires a full 64-sample window and at least 4 normal samples. Raw evidence is retained unchanged.",
+      "actual_policy_passed": true,
+      "same_pid_revision_all_checkpoints": true,
+      "cohort_checkpoints": 37,
+      "duration_seconds": 1085.547,
+      "pid": 90605,
+      "resident_samples_added": 78,
+      "final_health": {
+        "monitor_healthy": true,
+        "daily_driver_ready": true,
+        "operator_ready": true,
+        "protection_mode": "admission-only",
+        "latest_monitor_fresh": true,
+        "latest_monitor_age_seconds": 10.189222000000001,
+        "latest_monitor_max_age_seconds": 75,
+        "resident_samples": 149,
+        "resident_normal_samples": 51,
+        "required_normal_samples": 4,
+        "budget_headroom": {
+          "rolling_sample_count": 64,
+          "rolling_window_size": 64,
+          "samples_until_single_outlier_excluded": 0,
+          "p95_excludes_single_maximum": true,
+          "rss_observed_mb": 18.28125,
+          "rss_limit_mb": 30,
+          "rss_margin_mb": 11.71875,
+          "idle_duty_observed_percent": 0.3671551351023536,
+          "idle_duty_limit_percent": 0.5,
+          "idle_duty_margin_percent": 0.1328448648976464,
+          "sample_cpu_p95_observed_ms": 15.22,
+          "sample_cpu_max_observed_ms": 18.662,
+          "sample_cpu_limit_ms": 150,
+          "sample_cpu_margin_ms": 134.78,
+          "telemetry_projected_bytes_per_day": 528384,
+          "telemetry_limit_bytes_per_day": 1048576,
+          "telemetry_margin_bytes_per_day": 520192
+        }
+      },
+      "source_revisions": {
+        "cli": "0535927f42ec78bc45aaf0903fd3041ce7d3705c",
+        "front_door": "0535927f42ec78bc45aaf0903fd3041ce7d3705c",
+        "installed_helper": "0535927f42ec78bc45aaf0903fd3041ce7d3705c",
+        "checked": true,
+        "mismatch": false
+      }
     }
   }
 }
