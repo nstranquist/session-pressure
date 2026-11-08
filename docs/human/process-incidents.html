@@ -19,5 +19,5 @@
 <pre>session-pressure --json processes list
 session-pressure --json processes stop --id INCIDENT_ID --confirm
 session-pressure --json processes stop --id INCIDENT_ID --force --confirm</pre>
-<p><code>processes record --receipt FILE</code> imports an operator-confirmed historical stop. The JSON receipt has <code>pid</code>, <code>ppid</code>, <code>executable</code> (basename), <code>at</code> (RFC3339), and <code>signal</code> (TERM or KILL). These closed records have no kernel identity and cannot authorize a stop.</p>
+<p><code>processes record --receipt FILE</code> imports a historical stop or observed exit. The JSON receipt has <code>pid</code>, <code>ppid</code>, <code>executable</code> (basename), <code>at</code> (RFC3339), and <code>signal</code> (TERM, KILL, or NONE). Use NONE when the process had already exited and no signal was sent. An observed exit does not claim that this session stopped the process. These closed records have no kernel identity and cannot authorize a stop.</p>
 </html>

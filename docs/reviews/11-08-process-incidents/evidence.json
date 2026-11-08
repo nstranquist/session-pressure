@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "work": "WORK-82",
+  "date": "2026-11-08",
+  "state": "implemented_installed_and_dogfooded",
+  "source": {
+    "feature_commit": "2aa0284452f6b060f89e6946d1abc5a61c9db8bf",
+    "observed_exit_commit": "acff0fbb96965b2c41c48b39d5ba2e8084e6fd47",
+    "installed_revision": "d4a08a745e0a0bd688ad5b06bfc947218cd7c937",
+    "version": "0.7.0"
+  },
+  "verification": [
+    {
+      "host": "gaterunner-1 Linux ARM64",
+      "job": "20261108T172221Z-2762349",
+      "checks": [
+        "targeted Go tests",
+        "race checks",
+        "go vet",
+        "Darwin compilation",
+        "full sessionpressure, sessionpressurecmd and daemon tests"
+      ],
+      "result": "pass"
+    },
+    {
+      "host": "gaterunner-1 Linux ARM64",
+      "candidate": "observed-exit correction",
+      "checks": [
+        "targeted Go tests",
+        "race checks",
+        "go vet"
+      ],
+      "result": "pass"
+    },
+    {
+      "host": "gaterunner-1 Linux ARM64",
+      "job": "20261108T174812Z-3034403",
+      "revision": "d4a08a745e0a0bd688ad5b06bfc947218cd7c937",
+      "checks": [
+        "full sessionpressure, sessionpressurecmd and daemon tests",
+        "official Darwin ARM64 release with native SMART"
+      ],
+      "result": "pass",
+      "duration_seconds": 105
+    },
+    {
+      "host": "Mac ARM64",
+      "command": "PRESSURE_PROCESS_CONTRACT_BIN=~/.local/bin/session-pressure process-guard.darwin.test -test.run ^TestProcessIncidentInstalledCLIStopsOwnedChild$",
+      "result": "pass",
+      "duration_seconds": 0.16,
+      "scope": "real owned child, private test ledger; no foreign process signalled"
+    },
+    {
+      "host": "Mac ARM64",
+      "command": "PRESSURE_PROCESS_CONTRACT_BIN=~/.local/bin/session-pressure swift test --filter ProcessIncidentContractTests",
+      "result": "pass",
+      "tests": 2
+    },
+    {
+      "host": "Mac ARM64",
+      "source": "immutable git archive of d4a08a745e0a0bd688ad5b06bfc947218cd7c937",
+      "command": "make verify through build admission",
+      "result": "pass",
+      "swift_tests": 59,
+      "suites": 8,
+      "includes": "native CLI decode and navigation-only alert contract; signed release build and codesign verification"
+    },
+    {
+      "host": "Mac ARM64",
+      "command": "make install through build admission",
+      "result": "pass",
+      "installed_app": "/Applications/NDev Pressure.app",
+      "installed_executable_sha256": "14e0b7db48fdca164c465fcbc549eed402f7295997e10bf32762faf8256ade1d",
+      "matches_verified_candidate": true
+    }
+  ],
+  "installed_dogfood": {
+    "deadline_runner": {
+      "at": "2026-11-08T17:35:49.492071+00:00",
+      "fixture": "owned sleep child; isolated temporary history",
+      "exit_code": 124,
+      "stderr": "",
+      "elapsed_seconds": 0.374059,
+      "report": {
+        "ok": true,
+        "report": {
+          "schema_version": 1,
+          "updated_at": "2026-11-08T17:35:49.746639Z",
+          "incidents": [
+            {
+              "id": "a6e49922c9c368811c512a4a",
+              "pid": 77480,
+              "ppid": 0,
+              "start_identity": "darwin:1794159349:509530",
+              "executable": "sleep",
+              "uid": 501,
+              "cpu_percent": 0,
+              "rss_mb": 0,
+              "age_seconds": 0,
+              "reason": "guard_deadline",
+              "first_seen": "2026-11-08T17:35:49.50947Z",
+              "last_seen": "2026-11-08T17:35:49.714142Z",
+              "sustained_seconds": 0,
+              "state": "stopped",
+              "actions": [
+                {
+                  "at": "2026-11-08T17:35:49.714142Z",
+                  "signal": "KILL",
+                  "result": "exit_confirmed"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "operator_records": [
+      {
+        "pid": 8523,
+        "signal": "TERM",
+        "classification": "operator_reported_exit"
+      },
+      {
+        "pid": 5897,
+        "signal": "NONE",
+        "classification": "operator_observed_exit"
+      },
+      {
+        "pid": 6944,
+        "signal": "NONE",
+        "classification": "operator_observed_exit"
+      },
+      {
+        "pid": 12544,
+        "signal": "NONE",
+        "classification": "operator_observed_exit"
+      }
+    ],
+    "native_ui": {
+      "view": "Process Incidents",
+      "observed": "all three Chrome records visible; selected historical record shows No signal and disabled Stop",
+      "tool": "CUA accessibility state"
+    },
+    "resident": {
+      "revision": "d4a08a745e0a0bd688ad5b06bfc947218cd7c937",
+      "pid_at_install": 65732,
+      "artifact_verified": true
+    }
+  },
+  "performance": {
+    "benchmark": "ProcessGuard idle inventory, 4000 processes",
+    "before": {
+      "ns_per_op": 15440000,
+      "bytes_per_op": 923000,
+      "allocs_per_op": 4073
+    },
+    "after": {
+      "ns_per_op": 3257632,
+      "bytes_per_op": 148101,
+      "allocs_per_op": 22
+    },
+    "interpretation": "microbenchmark evidence; no host-level speedup or production trend claim"
+  },
+  "telemetry": {
+    "coverage_strict": "pass: 131 covered, 13 exempt, 53 sources",
+    "query": "ndev telemetry query --command ndev session pressure --since 2026-11-08T16:20:00Z",
+    "returned_rows": 0,
+    "interpretation": "CLI projection supplied no rows; usage and error-rate trend remain unmeasured. Installed incident ledger and bounded owned-child tests provide functional evidence."
+  },
+  "limits": [
+    "Alerts depend on sparse resident process inventory; default detection can take several minutes.",
+    "Sustained CPU can be legitimate. Detection never stops work automatically.",
+    "No artificial production CPU load was created to force a live alert; notification persistence and retry were tested in isolated fixtures.",
+    "The deadline runner guards newly launched owned groups, not arbitrary commands launched elsewhere or descendants that escape the group.",
+    "Historical receipts cannot authorize a stop and do not imply retrospective kernel proof.",
+    "The ndev front door still selects an old pressure binary; another session owns the resolver fix. Native app and public session-pressure CLI use the verified installed release."
+  ],
+  "shared_workspace": {
+    "foreign_edits_preserved": true,
+    "native_install_source": "committed export excludes in-flight Hetzner UI changes",
+    "root_scan_guidance_delivery": "fb281cc9-b7b2-4a93-b8ba-7092d9e8b4cd",
+    "root_scan_guidance_state_at_capture": "accepted, not landed"
+  },
+  "recorded_at": "2026-11-08T17:55:16.590786+00:00"
+}
