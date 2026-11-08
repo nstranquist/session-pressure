@@ -27,6 +27,7 @@ func TestRemoteModuleClosureAndSourceBoundaries(t *testing.T) {
 	write(filepath.Join(a, "main.go"), "package main")
 	write(filepath.Join(a, ".env"), "sensitive")
 	write(filepath.Join(a, "node_modules", "ignored.js"), "cache")
+	write(filepath.Join(a, ".tmp", "ignored.go"), "generated build tree")
 	modules, root, err := remoteModuleClosure(a)
 	if err != nil || root != base || len(modules) != 2 {
 		t.Fatal(modules, root, err)
@@ -47,7 +48,7 @@ func TestRemoteModuleClosureAndSourceBoundaries(t *testing.T) {
 		}
 		found[h.Name] = true
 	}
-	if !found["a/main.go"] || !found["b/go.mod"] || found["a/.env"] || found["a/node_modules/ignored.js"] {
+	if !found["a/main.go"] || !found["b/go.mod"] || found["a/.env"] || found["a/node_modules/ignored.js"] || found["a/.tmp/ignored.go"] {
 		t.Fatal(found)
 	}
 }
@@ -76,9 +77,9 @@ func TestNormalizeRemoteBuildArgv(t *testing.T) {
 		wantOutput string
 		wantErr    bool
 	}{
-		{name: "bare build", argv: []string{"go", "build"}, wantArgv: []string{"go", "build", "-o=/srv/build/candidates/OUTPUT"}, wantOutput: "/dev/null"},
-		{name: "build dot", argv: []string{"go", "build", "."}, wantArgv: []string{"go", "build", ".", "-o=/srv/build/candidates/OUTPUT"}, wantOutput: "/dev/null"},
-		{name: "build single package", argv: []string{"go", "build", "./cmd/x"}, wantArgv: []string{"go", "build", "./cmd/x", "-o=/srv/build/candidates/OUTPUT"}, wantOutput: "/dev/null"},
+		{name: "bare build", argv: []string{"go", "build"}, wantErr: true},
+		{name: "build dot", argv: []string{"go", "build", "."}, wantErr: true},
+		{name: "build single package", argv: []string{"go", "build", "./cmd/x"}, wantErr: true},
 		{name: "explicit -o separate", argv: []string{"go", "build", "-o", "bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-o", "/srv/build/candidates/OUTPUT", "./cmd/x"}, wantOutput: "bin/app"},
 		{name: "explicit -o equals", argv: []string{"go", "build", "-o=bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-o=/srv/build/candidates/OUTPUT", "./cmd/x"}, wantOutput: "bin/app"},
 		{name: "multi-package check-only", argv: []string{"go", "build", "./..."}, wantArgv: []string{"go", "build", "./..."}, wantOutput: ""},

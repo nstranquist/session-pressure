@@ -36,6 +36,7 @@ func EnforceBrowserControl(ctx context.Context, dir string) error {
 	if err != nil {
 		return err
 	}
+	slotOccupied := false
 	for _, row := range strings.Split(string(body), "\n") {
 		fields := strings.Fields(row)
 		if len(fields) < 7 {
@@ -53,11 +54,12 @@ func EnforceBrowserControl(ctx context.Context, dir string) error {
 		if err != nil {
 			continue
 		}
-		if !state.Blocked && time.Since(started) < 120*time.Second {
-			continue
-		}
 		identity, uid, err := processGuardIdentity(pid)
 		if err != nil || uid != os.Getuid() {
+			continue
+		}
+		if !state.Blocked && time.Since(started) < 120*time.Second && !slotOccupied {
+			slotOccupied = true
 			continue
 		}
 		again, againUID, err := processGuardIdentity(pid)
