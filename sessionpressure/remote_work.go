@@ -186,7 +186,7 @@ func writeRemoteSources(out io.Writer, modules []string, common string) error {
 			}
 			if d.IsDir() {
 				switch d.Name() {
-				case ".git", ".build", "target", "node_modules", "bin", ".cache", ".ndev", ".next", "dist":
+				case ".git", ".tmp", ".build", "target", "node_modules", "bin", ".cache", ".ndev", ".next", "dist":
 					return filepath.SkipDir
 				}
 				return nil
