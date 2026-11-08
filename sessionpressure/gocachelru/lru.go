@@ -55,6 +55,8 @@ type indexEntry struct {
 	Size    int64  `json:"size"`
 	Access  int64  `json:"access"`
 	Deleted bool   `json:"deleted,omitempty"`
+	// Retry order is process-local. It never changes the persisted last use.
+	retryAt int64
 }
 type Cache struct {
 	dir        string
@@ -79,8 +81,16 @@ type evictionHeap struct {
 	positions map[string]int
 }
 
-func (h evictionHeap) Len() int           { return len(h.rows) }
-func (h evictionHeap) Less(i, j int) bool { return h.rows[i].Access < h.rows[j].Access }
+func (h evictionHeap) Len() int { return len(h.rows) }
+func (h evictionHeap) Less(i, j int) bool {
+	priority := func(r indexEntry) int64 {
+		if r.retryAt > r.Access {
+			return r.retryAt
+		}
+		return r.Access
+	}
+	return priority(h.rows[i]) < priority(h.rows[j])
+}
 func (h evictionHeap) Swap(i, j int) {
 	h.rows[i], h.rows[j] = h.rows[j], h.rows[i]
 	h.positions[h.rows[i].Key] = i
@@ -248,6 +258,12 @@ func (c *Cache) loadIndex() error {
 		var row indexEntry
 		if err = json.Unmarshal(line, &row); err != nil {
 			return fmt.Errorf("invalid cache index: %w", err)
+		}
+		key := strings.TrimPrefix(row.Key, "action-")
+		decoded, decodeErr := hex.DecodeString(key)
+		action := strings.HasPrefix(row.Key, "action-")
+		if decodeErr != nil || key != strings.ToLower(key) || (!action && len(decoded) != 32) || (action && !validID(decoded)) || row.Size < 0 || row.Size > MaxObjectBytes || row.Access < 0 {
+			return fmt.Errorf("invalid cache index identity or size")
 		}
 		c.applyRow(row)
 		c.offset += int64(len(line))
@@ -458,6 +474,7 @@ func (c *Cache) evictLocked() error {
 			break
 		}
 		if strings.HasPrefix(row.Key, "action-") && len(c.index) <= c.maxEntries() {
+			row.retryAt = time.Now().Add(time.Second).UnixNano()
 			skipped = append(skipped, row)
 			continue
 		}
@@ -465,6 +482,7 @@ func (c *Cache) evictLocked() error {
 		info, err := os.Stat(path)
 		if err == nil {
 			if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Nlink > 1 {
+				row.retryAt = time.Now().Add(time.Second).UnixNano()
 				skipped = append(skipped, row)
 				continue
 			}

@@ -13,6 +13,51 @@ import (
 	"time"
 )
 
+func TestPinnedCandidatesDoNotStarveLaterEviction(t *testing.T) {
+	c, err := New(t.TempDir(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	// More than one maintenance budget of old pinned objects precedes a
+	// reclaimable object. The next pass must advance past the pinned prefix.
+	for i := 0; i < 300; i++ {
+		key := fmt.Sprintf("%064x", i)
+		path := c.objectPath(key)
+		if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.pin(key); err != nil {
+			t.Fatal(err)
+		}
+		c.applyRow(indexEntry{Key: key, Size: 1, Access: int64(i + 1)})
+	}
+	key := fmt.Sprintf("%064x", 1000)
+	if err := os.WriteFile(c.objectPath(key), []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c.applyRow(indexEntry{Key: key, Size: 1, Access: 1000})
+	for i := 0; i < 2; i++ {
+		if err := c.evictLocked(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(c.objectPath(key)); !os.IsNotExist(err) {
+		t.Fatalf("reclaimable object starved: %v", err)
+	}
+}
+
+func TestCorruptIndexCannotEscapeCache(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.jsonl"), []byte("{\"key\":\"../../outside\",\"size\":1,\"access\":1}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := New(dir, 1); err == nil {
+		c.Close()
+		t.Fatal("unsafe index accepted")
+	}
+}
+
 func TestCachePinsReturnedPathsUntilClose(t *testing.T) {
 	dir := t.TempDir()
 	cache, err := New(dir, 50)
