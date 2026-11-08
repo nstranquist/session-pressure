@@ -32,3 +32,11 @@ The tests cover sustained thresholds, normal and low-power inventory cadence, st
 Human guide: [Process Incidents](../../human/process-incidents.html).
 
 8. Live review found three unmanaged headless screenshot jobs, running for one to three hours with GPU helpers consuming more than three cores. Nico approved stopping them, but all three had exited before the final identity check. No signal was sent by this session. Historical receipts now distinguish an observed exit (`NONE`, `operator_observed_exit`) from a reported TERM/KILL action. Reused or absent PIDs do not receive a signal.
+
+## Installed result
+
+The public CLI, resident helper and native app now use committed source `d4a08a745e0a0bd688ad5b06bfc947218cd7c937` (0.7.0). All 59 Swift tests passed from an immutable committed export. The signed installed executable matches that verified export. The installed CLI stopped an owned child in 0.16 seconds; a guarded sleep hit its deadline in 0.374 seconds and returned 124. The native page shows all three Chrome exits with no signal and disables Stop for historical records. Exact evidence is in [evidence.json](evidence.json).
+
+The full shared native worktree had one navigation assertion failure from in-flight Hetzner sidebar changes; those edits were preserved and excluded from installation. Two earlier native builds reached their admission deadline while the host was under real CPU pressure. No gate was bypassed. A remote invocation with an incorrect manually transcribed revision failed before tests or compilation; the corrected run read the exact revision from the captured source file and passed.
+
+The CLI telemetry query returned no rows, so no production usage or reliability trend is claimed. Isolated notification tests pass; a high-CPU production incident was not manufactured. Normal launchd-parented apps can meet the sustained CPU thresholds too. Alerts require operator judgement. The ndev front door still selects an older pressure binary; its resolver fix is owned by the parallel factory session. The native app resolves the public installed pressure binary correctly.
