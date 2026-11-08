@@ -6,6 +6,12 @@ Build Go binaries on gaterunner-1 from a clean committed checkout:
 go run ./scripts/release build --platform darwin/arm64 --out /absolute/export
 ```
 
+Before admitting a sealed bundle to the runner, run `git bundle verify BUNDLE`
+and `git bundle list-heads BUNDLE`. Clone its named ref explicitly with
+`git clone --branch main BUNDLE DESTINATION`, then check that `git rev-parse HEAD`
+matches the intended revision and that the clone is clean. A bundle with only
+`refs/heads/main` does not define the remote's default HEAD.
+
 Before the remote build, read `.session-pressure-releases/current` under the
 install prefix. Retain that observed revision with the job. On first install,
 use `none`. Copy the bundle to the Mac, then run its installer:
@@ -101,8 +107,10 @@ later binaries report modified source. Build checks source cleanliness after
 each target and stops before producing a promotable bundle if it changes.
 The preferred Darwin profile is LLVM clang 18 with external linking:
 `CC=/srv/build/opt/pressure-darwin-clang` and
-`GOFLAGS="-ldflags='-s -w -linkmode=external'"`. The inner quotes keep the
-three linker arguments in one Go flag value. Record the actual compiler, linker
+`GOFLAGS="'-ldflags=-s -w -linkmode=external'"`. The inner quotes enclose the
+complete Go flag token, including `-ldflags=`. Quotes around only its value do
+not work. Check the exact environment with `go list -m` before remote admission;
+this parses the flags without compiling. Record the actual compiler, linker
 and SDK identity in the build evidence. The older Zig/internal profile was
 tested for the small standalone product, but it broke SQLite parameter binding
 in the factory binary despite passing a version probe. Do not use that profile
