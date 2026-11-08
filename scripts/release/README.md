@@ -32,6 +32,15 @@ installer executables predate this guard; always use the current installer.
 The native Makefile uses `install-app` to stage and verify a signed app before
 promotion. It preserves the prior app beside the destination with `.rollback-`
 and a UTC timestamp. Concurrent app and CLI installations use kernel locks.
+Before building an app, capture `session-pressure-release app-status --app
+"/Applications/NDev Pressure.app" --digest-only`. Pass that digest to
+`install-app --expected-current DIGEST`. First installation uses `none`.
+The digest binds the full bundle, including the privileged helper and resources.
+The installer checks it under the app lock and again before promotion. It also
+rejects a lower SemVer version or, at the same version, a lower numeric build.
+An intentional rollback needs the actual current digest and `--allow-rollback`.
+Both native install targets capture the authority before their build. A signed
+older app alone is not authority to overwrite the current installation.
 
 Run installed integration checks with `PRESSURE_CONTRACT_BIN` set to the
 absolute installed CLI, then `swift test --filter InstalledContractTests` from

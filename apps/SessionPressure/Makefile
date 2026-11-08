@@ -54,13 +54,17 @@ icon: Resources/AppIcon.svg
 test:
 	swift test
 
-install: build
-	@"$(RELEASE_TOOL)" install-app --app "$(APP_DIR)" --destination "$(INSTALLED_APP)"
+install:
+	@expected="$$("$(RELEASE_TOOL)" app-status --app "$(INSTALLED_APP)" --digest-only)" && \
+	  $(MAKE) build && \
+	  "$(RELEASE_TOOL)" install-app --app "$(APP_DIR)" --destination "$(INSTALLED_APP)" --expected-current "$$expected"
 	@pkill -x "$(EXECUTABLE)" 2>/dev/null || true
 	@/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$(INSTALLED_APP)" 2>/dev/null || true
 
-install-headless: build
-	@"$(RELEASE_TOOL)" install-app --app "$(APP_DIR)" --destination "$(INSTALLED_APP)"
+install-headless:
+	@expected="$$("$(RELEASE_TOOL)" app-status --app "$(INSTALLED_APP)" --digest-only)" && \
+	  $(MAKE) build && \
+	  "$(RELEASE_TOOL)" install-app --app "$(APP_DIR)" --destination "$(INSTALLED_APP)" --expected-current "$$expected"
 	@echo "  Updated without relaunch: $(INSTALLED_APP)"
 
 run: install
