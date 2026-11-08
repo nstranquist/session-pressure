@@ -31,8 +31,10 @@ func TestRemoteNestedModuleRetainsRepositoryFixtures(t *testing.T) {
 	write("cmd/fixture.go", "fixture")
 	write(".env", "secret")
 	write(".tmp/generated", "cache")
-	write(".gitignore", "ignored\n")
+	write(".gitignore", "ignored\nnested/generated-binary\nnested/.venv/\n")
 	write("ignored", "ignored")
+	write("nested/generated-binary", "not source")
+	write("nested/.venv/cache", "not source")
 	modules, common, err := remoteModuleClosure(filepath.Join(root, "nested"))
 	if err != nil || common != root {
 		t.Fatalf("common=%q err=%v", common, err)
@@ -58,7 +60,7 @@ func TestRemoteNestedModuleRetainsRepositoryFixtures(t *testing.T) {
 			t.Errorf("missing repository input %s", name)
 		}
 	}
-	for _, name := range []string{".env", ".tmp/generated", "ignored", ".git/HEAD"} {
+	for _, name := range []string{".env", ".tmp/generated", "ignored", ".git/HEAD", "nested/generated-binary", "nested/.venv/cache"} {
 		if found[name] {
 			t.Errorf("excluded input %s uploaded", name)
 		}
