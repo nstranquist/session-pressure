@@ -27,8 +27,10 @@ Two factory deliveries are landed, including legacy app installer forwarding
 `fe8275d0e428282baadc6d27cc93650cd312f3bf64dbe0355dbf1c641cc6c9c4`,
 with clean factory revision `483b1def`, native CGO/external linking and product
 stamp `0535927f`. Live artifact identity agrees. The publisher reports a passing
-private SQLite native canary; its final canonical source-digest/promotion receipt
-still needs linking. Do not stop the busy worker.
+private SQLite native canary. Its schema-v4 receipt at
+`nicos-tools/nicos-dev/bin/ndev-install-receipt.json` binds that hash to clean
+factory source digest `4d70882e53036a002a676d6d8ab6d3e9ff4061a16cde95e4c039934a28354e8a`,
+published at 20:19:30 UTC; a private copy is retained. Do not stop the busy worker.
 
 A new durable 72-hour product/app observation started at 20:21:39 UTC. Its
 30-minute, 24-hour and 72-hour gates are pending; it does not establish factory
@@ -49,7 +51,7 @@ Remote work uses existing Hetzner jobs and receipts. This program does not add a
 
 | Area | Implemented result | Acceptance state |
 | --- | --- | --- |
-| Installation identity | Capabilities expose product version, revision, executable and platform. Five-binary promotion verifies hashes, clean source, Darwin CGO and identity before switching one authority link; previous authority and first-migration files are preserved. | Installed; all five release hashes verified. Factory front door `483b1def` is landed and installed. CLI and full-bundle app authority guards installed; stale-intent and downgrade negative checks pass. Factory 0535927f stamp independently verified at all three targets; final publisher receipt needs linking. |
+| Installation identity | Capabilities expose product version, revision, executable and platform. Five-binary promotion verifies hashes, clean source, Darwin CGO and identity before switching one authority link; previous authority and first-migration files are preserved. | Installed; all five release hashes verified. Factory front door `483b1def` is landed and installed. CLI and full-bundle app authority guards installed; stale-intent and downgrade negative checks pass. Factory 0535927f stamp independently verified at all three targets; schema-v4 publisher source-closure receipt is retained. |
 | Readiness | Admission-only is a valid ready mode; persisted policy, storage, monitor freshness and resident baseline remain explicit gates. | Installed. Current 0535927f normal-state CPU and all resource budgets pass. Earlier CPU failures are preserved; elapsed observation remains pending. |
 | Telemetry | Real product writer and reader; privacy validation, closed fields, failure classes, attempted/written/failed/gap counters and freshness; bounded sharding and full lock-to-append timing. Factory correlation and product-owned registry fragment implemented. | Product and factory integration installed. Historical gaps and factory latency failures remain visible. |
 | Retention | Owned JSONL, writer health, disk maintenance and monitor streams have bounded retention; pruning and append failures are reported. Helper artifacts retain active plus two rollback revisions. | Implemented and tested. Unique legacy install backups are preserved. |
@@ -864,7 +866,7 @@ a new-release failure rate. No history was rebuilt or counters cleared.
 
 | Open gate | Owner and next action | Acceptance evidence |
 | --- | --- | --- |
-| Factory native source closure receipt | All three targets, clean build identity, product stamp 0535927f and artifact audit independently agree. Factory publisher `01a1bc3b`: link the final canonical source-digest/promotion receipt and private native SQLite canaries. | Receipt binds the observed installed hash to its complete clean source closure and native ingest plus matched/unmatched queries. |
+| Forward refusal-contract release | Product publisher Claude `72754fd6` is promoting committed `92eb891`; factory publisher `01a1bc3b` owns its matching native front door. The verified 053 factory source-closure receipt is retained. | Forward product/factory/helper identity agrees, normal resident health recovers, and a distinct post-upgrade observation starts. Do not roll back the typed refusal fix. |
 | Five queued factory deliveries | WORK-41 and delivery owner: keep retained wait; repair only printed producer/host faults, then install landed builder/helper/filter/promotion changes. | Each exact delivery is landed; source identity and installed dogfood checks pass. |
 | Peer Hetzner source | Owner of `HetznerStore.swift`, `Views/HetznerView.swift` and related four tracked app files: publish the preserved hunks with exact ownership. | Guarded commit and combined 12-pane verification; no dropped peer pane or shortcut collision. |
 | Writer reliability and latency | WORK-52/factory telemetry owner: classify each unresolved/error cohort after final native install; measure new attempts/writes/failures and p95 without clearing history. WORK-41 retains standalone latency follow-up. | Zero new unaccounted attempts/errors; factory p95 <=25 ms and standalone p95 <=100 ms over a stated fresh workload. Historical failures stay visible. |
@@ -895,3 +897,19 @@ at 85.594 MiB RSS. First checks are not elapsed acceptance. The live artifact
 read is `artifact status` (singular); an accidental `artifacts` invocation was
 rejected without mutation. The failure response lists the valid singular
 command. This misuse is retained in telemetry and is not a runtime defect.
+
+
+### Concurrent forward release boundary (20:25 UTC)
+
+The publisher linked the 053 schema-v4 receipt above; this closes its installed
+source-closure evidence. A concurrent owner is now publishing committed
+`92eb891`, which adds typed `ndev-work-refused/v1` refusal results and remote
+rejection exit 11. The factory publisher owns the matching native rebuild and
+canonical digest. This is beneficial delivery-plane work and must not be
+replaced with 053 merely to preserve a soak window. The 053 collector is an
+honest current-generation observation, not acceptance of the future release.
+If this upgrade changes CLI revision or resident PID, preserve the failed or
+interrupted 053 JSON. After coherent 92 identities and at least four fresh normal
+samples pass, start a separate unique collector via the same launch-agent
+contract. The runtime owners have this exact handoff on the session board;
+WORK-41 remains open. Do not count the elapsed portions across upgrades.
