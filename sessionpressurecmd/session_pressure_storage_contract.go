@@ -26,6 +26,7 @@ func StorageProviderContracts() []StorageProviderContract {
 		{ID: "docker-reclaim", Classification: string(storageProviderOperator), Conditional: true},
 		{ID: "ios-simulator-runtime", Classification: string(storageProviderReportOnly)},
 		{ID: "go-build-cache", Classification: string(storageProviderOperator), FullWipeRequired: true},
+		{ID: "delivery-go-build-cache", Classification: string(storageProviderReportOnly)},
 		{ID: "yarn-cache", Classification: string(storageProviderOperator)},
 		{ID: "npm-cache", Classification: string(storageProviderOperator)},
 		{ID: "brew-cache", Classification: string(storageProviderOperator)},

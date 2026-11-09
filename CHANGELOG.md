@@ -4,6 +4,15 @@
 
 ### Added
 
+- **`delivery-go-build-cache` storage provider (report-only).** Storage
+  inventory now shows the commit-delivery lane's own Go build cache
+  (`~/.nicos-dev/commit-delivery/v1/go-build-cache`, or under
+  `NDEV_COMMIT_DELIVERY_HOME`), with a measured size and hotness evidence on
+  `plan`. Candidate, verify and hook builds use it instead of
+  `~/Library/Caches/go-build`, so the `go-build-cache` provider never saw it
+  (34 GB on 2026-11-08). It has no mutation, because the delivery worker owns
+  and caps it.
+
 - **Lease CPU: measured cores against the cores a weight reserves.** When a
   leased command exits, its terminal event records its own `wait4` rusage:
   CPU time of the command and every descendant it waited for

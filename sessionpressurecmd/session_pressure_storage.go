@@ -385,7 +385,7 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 	if measure && goBuildCacheReport.HotnessEvidence != nil {
 		goBuildCacheReport.EstimateKind = "measured_age_buckets"
 	}
-	reports = append(reports, goBuildCacheReport)
+	reports = append(reports, goBuildCacheReport, inspectDeliveryGoBuildCacheProvider(home, measure))
 	// Rebuildable developer caches: operator-classified like
 	// go-build-cache (explicit `--provider` apply, excluded from --auto-safe)
 	// so `storage plan`/`providers` is no longer blind to where dev-cache
@@ -1317,4 +1317,43 @@ func skippedProviderIDs(skipped []storageSkippedProvider) []string {
 		ids = append(ids, provider.ProviderID)
 	}
 	return ids
+}
+
+// inspectDeliveryGoBuildCacheProvider reports the commit-delivery lane's own
+// Go build cache. Candidate, verify and hook builds use it instead of
+// ~/Library/Caches/go-build, so the go-build-cache provider never saw it (34
+// GB on 2026-11-08, two days after it was created). It is report-only: the
+// delivery worker caps it (NDEV_COMMIT_DELIVERY_GOCACHE_MAX, default 16 GiB),
+// and a wipe while gates run would break them.
+func inspectDeliveryGoBuildCacheProvider(home string, measure bool) storageProviderReport {
+	stateHome := filepath.Join(home, ".nicos-dev", "commit-delivery", "v1")
+	if override := strings.TrimSpace(os.Getenv("NDEV_COMMIT_DELIVERY_HOME")); override != "" && filepath.IsAbs(override) {
+		stateHome = filepath.Clean(override)
+	}
+	path := filepath.Join(stateHome, "go-build-cache")
+	size, present, err := int64(0), storagePathExists(path), error(nil)
+	if measure {
+		size, present, err = storageDirectoryBytes(path)
+	}
+	report := storageProviderReport{
+		ID:                "delivery-go-build-cache",
+		Classification:    storageProviderReportOnly,
+		Summary:           "Commit-delivery lane Go build cache; the delivery worker caps it",
+		Path:              path,
+		Present:           present,
+		EstimatedBytes:    size,
+		EstimateKind:      "inventory",
+		MutationSupported: false,
+		BlockedReason:     "the commit-delivery worker owns and caps this cache (NDEV_COMMIT_DELIVERY_GOCACHE_MAX); read `ndev-commit-delivery --json delivery doctor`",
+	}
+	if err != nil {
+		report.BlockedReason = err.Error()
+	}
+	if measure && present && err == nil {
+		if evidence, evidenceErr := storageMeasureHotness(path, time.Now().UTC()); evidence != nil && evidenceErr == nil {
+			report.HotnessEvidence = evidence
+			report.EstimateKind = "measured_age_buckets"
+		}
+	}
+	return report
 }
