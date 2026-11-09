@@ -30,6 +30,7 @@ struct HetznerView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 statusCard
+                fleetLiveCard
                 delegateCard
                 jobsCard
                 if hetzner.selectedJobID != nil {
@@ -625,6 +626,245 @@ struct HetznerView: View {
         if job.isSuccess { return .green }
         if job.isSetupFailure { return .orange }
         return .red
+    }
+
+
+    // MARK: Runner fleet (live)
+
+    @ViewBuilder
+    private var fleetLiveCard: some View {
+        if hetzner.livePresent || hetzner.liveError != nil {
+            SectionCard(
+                title: "Runner fleet — live",
+                systemImage: "waveform.path.ecg",
+                trailing: hetzner.liveCheckedAt.map { "read " + PressureFormat.relative($0) }
+            ) {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let error = hetzner.liveError, !hetzner.livePresent {
+                        Label("Live feed read failed: \(error). Showing the delegate ledger and the primary box only.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                    ForEach(hetzner.liveHosts) { host in
+                        liveHostSection(host)
+                        if host.host != hetzner.liveHosts.last?.host {
+                            Divider().opacity(0.4)
+                        }
+                    }
+                    if hetzner.livePresent, hetzner.liveHosts.isEmpty {
+                        Text("The live store is present but reports no hosts yet.")
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Source: ~/.nicos-dev/commit-delivery/v1/runner-live.sqlite — the poller samples each box every 20 seconds; this pane re-reads every 15 seconds. Read-only.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    private func liveHostSection(_ host: LiveHost) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(host.host)
+                    .font(.subheadline.weight(.semibold))
+                if host.feedStale {
+                    chip("FEED STALE", color: .secondary)
+                } else {
+                    chip("LIVE", color: .green)
+                }
+                if host.pollError != nil {
+                    chip("POLL ERROR", color: .orange)
+                }
+                Spacer()
+                Text("polled \(PressureFormat.relative(host.lastPollAt))")
+                    .font(PressureTheme.monoCaption)
+                    .foregroundStyle(.secondary)
+            }
+            if let vitals = liveVitalsLine(host) {
+                Text(vitals)
+                    .font(PressureTheme.monoCaption)
+                    .foregroundStyle(.secondary)
+            }
+            if host.feedStale {
+                Label("Live feed stale — the poller may be down; showing the last samples, not a live fleet.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(PressureTheme.levelColor(.warning))
+            }
+            if let error = host.pollError {
+                Text("Last poll error: \(error)")
+                    .font(PressureTheme.monoCaption)
+                    .foregroundStyle(.orange)
+            }
+            if host.liveJobs.isEmpty {
+                Text(host.feedStale ? "No jobs in the last sample." : "No jobs running.")
+                    .font(PressureTheme.monoCaption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(host.liveJobs) { job in
+                    liveJobRow(job)
+                }
+            }
+            if !host.recentRuns.isEmpty {
+                Text("Recent runs")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+                ForEach(host.recentRuns) { job in
+                    recentRunRow(job)
+                }
+            }
+            if !host.kills.isEmpty {
+                Text("Stall kills")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .padding(.top, 2)
+                ForEach(host.kills) { kill in
+                    killRow(kill)
+                }
+            }
+        }
+    }
+
+    private func liveVitalsLine(_ host: LiveHost) -> String? {
+        var parts: [String] = []
+        if let version = host.runnerVersion { parts.append("runner \(version)") }
+        if let load = host.load1 { parts.append(String(format: "load %.2f", load)) }
+        if let disk = host.diskFreeGB { parts.append(String(format: "disk %.0f GB free", disk)) }
+        if let cache = host.cacheGB { parts.append(String(format: "cache %.0f GB", cache)) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func verdictChip(_ job: LiveJob) -> some View {
+        switch job.verdict {
+        case "HEALTHY": return chip("HEALTHY", color: .green)
+        case "SUSPECT": return chip("SUSPECT", color: .orange)
+        case "STALLED": return chip("STALLED", color: .red)
+        default: return chip(job.phase.uppercased(), color: .secondary)
+        }
+    }
+
+    private func liveJobRow(_ job: LiveJob) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Text(job.repo.isEmpty ? job.jobID : job.repo)
+                    .font(.subheadline.weight(.semibold))
+                if let jobClass = job.jobClass {
+                    chip(jobClass, color: .secondary)
+                }
+                verdictChip(job)
+                Spacer()
+                if let elapsed = job.elapsedS {
+                    Text(PressureFormat.duration(seconds: elapsed))
+                        .font(PressureTheme.monoCaption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text(liveJobMeta(job))
+                .font(PressureTheme.monoCaption)
+                .foregroundStyle(job.isStalled ? .red : .secondary)
+                .lineLimit(2)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func liveJobMeta(_ job: LiveJob) -> String {
+        var parts: [String] = []
+        if let delivery = job.deliveryID {
+            parts.append("delivery \(PressureFormat.shortSession(delivery))")
+        }
+        if job.phase == "queued" {
+            if let wait = job.queueWaitS {
+                parts.append("waiting \(PressureFormat.duration(seconds: wait))")
+            }
+        } else if job.phase == "running" {
+            if let silent = job.lastOutputAgeS {
+                parts.append("silent \(PressureFormat.duration(seconds: silent))")
+            }
+            if let cpu = job.cpuPct {
+                parts.append(String(format: "cpu %.0f%%", cpu))
+            }
+            if let rss = job.rssMB {
+                parts.append(String(format: "rss %.0f MB", rss))
+            }
+        }
+        if let sha = job.sha {
+            parts.append("sha \(String(sha.prefix(8)))")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func recentRunRow(_ job: LiveJob) -> some View {
+        HStack(spacing: 8) {
+            Text(job.repo.isEmpty ? job.jobID : job.repo)
+                .font(PressureTheme.monoCaption)
+            if let jobClass = job.jobClass {
+                chip(jobClass, color: .secondary)
+            }
+            chip(job.state ?? "terminal", color: terminalStateColor(job.state))
+            if let elapsed = job.elapsedS {
+                Text(PressureFormat.duration(seconds: elapsed))
+                    .font(PressureTheme.monoCaption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(PressureFormat.shortTime(job.finishedAt ?? job.updatedAt))
+                .font(PressureTheme.monoCaption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func terminalStateColor(_ state: String?) -> Color {
+        switch state {
+        case "passed": return .green
+        case "failed": return .red
+        case "expired": return .orange
+        default: return .secondary
+        }
+    }
+
+    private func killRow(_ kill: KillEvent) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                chip("STALL-KILLED", color: .red)
+                if let jobClass = kill.jobClass {
+                    chip(jobClass, color: .secondary)
+                }
+                if let delivery = kill.deliveryID {
+                    Text("delivery \(PressureFormat.shortSession(delivery))")
+                        .font(PressureTheme.monoCaption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(PressureFormat.shortTime(kill.at))
+                    .font(PressureTheme.monoCaption)
+                    .foregroundStyle(.secondary)
+            }
+            Text(killMeta(kill))
+                .font(PressureTheme.monoCaption)
+                .foregroundStyle(.secondary)
+            if let detail = kill.detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func killMeta(_ kill: KillEvent) -> String {
+        var parts: [String] = ["job \(kill.jobID)"]
+        if let elapsed = kill.elapsedS {
+            parts.append("elapsed \(PressureFormat.duration(seconds: elapsed))")
+        }
+        if let silent = kill.lastOutputAgeS {
+            parts.append("silent \(PressureFormat.duration(seconds: silent))")
+        }
+        if let cpu = kill.cpuPct {
+            parts.append(String(format: "cpu %.1f%%", cpu))
+        }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: Job log
