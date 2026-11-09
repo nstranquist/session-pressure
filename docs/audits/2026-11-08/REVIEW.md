@@ -6,6 +6,34 @@ This report states the review findings and the remaining acceptance conditions.
 Private receipts are under `~/.nicos-dev/session-pressure/acceptance/2026-11-08/`.
 
 
+Current checkpoint (**2026-11-09 02:00 UTC**, promoter session `01a1bc3b`):
+The browser duplicate-completion repair is now delivery **81f1f8a6**, accepted
+and not installed. It supersedes **a451f1b4** after a test-only correction:
+the subprocess test must re-enable its private benchmark telemetry after the
+shared test bootstrap disables telemetry. Focused Hetzner race tests and vet
+pass; the native Mac subprocess tests also pass. The native test artifact SHA
+is `37f3fcc275301fef81f8ef8784985029013b9768e5001c5393d3851e726b3943`.
+The recovery proof-scan limit **201ed628** remains accepted; its race, vet and
+native recovery checks pass. Final committed factory promotion and installed
+one-completion/browser and writer measurements remain required.
+
+The final **1.4.11 build 19** live trace passes. The earlier 01:45 observer
+cohort overlapped another agent's interactive trace, then lost the app process.
+Its measured CPU exceeded 1%; it is preserved as diagnostic evidence and does
+not establish idle acceptance. No new crash report was found. A fresh parked
+Overview cohort started monitoring at **01:59:12.117473 UTC**, after read warmup:
+100 reads each, no failures, status p95 **70.888 ms**, board **122.154 ms**,
+rich **270.205 ms**. The first eligible resource check is **November 9
+02:29:12 UTC**; the 72-hour check is **November 12 01:59:12 UTC**. Neither has
+passed in advance. Receipt: `app1411-idle-observer-setup.json`; observation:
+`observation-a6cee30-app1411b19-20261109T015839Z.json`.
+
+The 01:49 doctor passes with matching `a6cee30a` artifacts, resident CPU duty
+**0.386%** and RSS **18.484 MiB**. The natural two-hour audit still fails writer
+latency: CLI histogram p95 **100 ms** against **25 ms**, and product p95
+**104.146 ms** against its **100 ms** failure ceiling. Historical rows remain
+intact. Private cohort passes do not turn this production window green.
+
 Current checkpoint (**2026-11-09 01:48 UTC**, promoter session `01a1bc3b`):
 the installed **1.4.11 build 19** disk trace now **passes live** after the
 user completed administrator authentication. The app returned a bounded,
