@@ -11,6 +11,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("PRESSURE_OBSERVATION_TEST_CHILD") == "audit-detector" {
+		_, _ = os.Stdout.WriteString(`{"ok":false,"audit":{"ok":false}}`)
+		os.Exit(1)
+	}
 	if os.Getenv("PRESSURE_OBSERVATION_TEST_CHILD") == "detector" {
 		_, _ = os.Stdout.WriteString(`{"ok":false,"work_evaluation":{"ok":false}}`)
 		os.Exit(1)
@@ -32,6 +36,19 @@ func TestAcceptanceRetainsUnsatisfiedDetectorReport(t *testing.T) {
 	}
 	if _, err := readCLI(os.Args[0], "status"); err == nil {
 		t.Fatal("ordinary endpoint accepted detector exit")
+	}
+}
+
+func TestAcceptanceRetainsFailedAuditReport(t *testing.T) {
+	t.Setenv("PRESSURE_OBSERVATION_TEST_CHILD", "audit-detector")
+	if raw, err := readCLIReport(os.Args[0], true, "audit", "--since", "2h", "--full"); err != nil || !strings.Contains(string(raw), "audit") {
+		t.Fatalf("audit failure evidence discarded: %s %v", raw, err)
+	}
+	if _, err := readCLI(os.Args[0], "audit"); err == nil {
+		t.Fatal("ordinary read accepted failed audit")
+	}
+	if _, err := readCLIReport(os.Args[0], true, "status"); err == nil {
+		t.Fatal("ordinary endpoint accepted audit exit 1")
 	}
 }
 
