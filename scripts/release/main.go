@@ -38,6 +38,9 @@ func main() {
 	}
 }
 func run(args []string) error {
+	if len(args) > 0 && args[0] == "acceptance" {
+		return acceptance(args[1:])
+	}
 	if len(args) > 0 && args[0] == "observe" {
 		return observe(args[1:])
 	}

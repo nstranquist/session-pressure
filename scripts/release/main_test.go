@@ -11,11 +11,25 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("PRESSURE_OBSERVATION_TEST_CHILD") == "detector" {
+		_, _ = os.Stdout.WriteString(`{"ok":false,"work_evaluation":{"ok":false}}`)
+		os.Exit(2)
+	}
 	if os.Getenv("PRESSURE_OBSERVATION_TEST_CHILD") == "overflow" {
 		_, _ = os.Stdout.WriteString(strings.Repeat("x", 3*1024*1024))
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+func TestAcceptanceRetainsUnsatisfiedDetectorReport(t *testing.T) {
+	t.Setenv("PRESSURE_OBSERVATION_TEST_CHILD", "detector")
+	if raw, err := readCLIReport(os.Args[0], true, "work", "evaluate"); err != nil || !strings.Contains(string(raw), "work_evaluation") {
+		t.Fatalf("gate evidence discarded: %s %v", raw, err)
+	}
+	if _, err := readCLI(os.Args[0], "status"); err == nil {
+		t.Fatal("ordinary endpoint accepted detector exit")
+	}
 }
 
 func TestObservationBoundsReadOutput(t *testing.T) {

@@ -63,6 +63,12 @@ type observation struct {
 }
 
 func readCLI(binary string, args ...string) ([]byte, error) {
+	return readCLIReport(binary, false, args...)
+}
+
+// Detectors use exit 2 and ok=false for a successfully emitted unsatisfied
+// gate. Preserve that report; transport, timeout and other exits still fail.
+func readCLIReport(binary string, detector bool, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	prefix := []string{"--json"}
@@ -88,7 +94,10 @@ func readCLI(binary string, args ...string) ([]byte, error) {
 		return nil, errors.New("bounded read failed")
 	}
 	if e = c.Wait(); e != nil {
-		return nil, e
+		var exit interface{ ExitCode() int }
+		if !detector || !errors.As(e, &exit) || exit.ExitCode() != 2 {
+			return nil, e
+		}
 	}
 	var envelope struct {
 		OK bool `json:"ok"`
@@ -96,7 +105,7 @@ func readCLI(binary string, args ...string) ([]byte, error) {
 	if e = json.Unmarshal(raw, &envelope); e != nil {
 		return nil, e
 	}
-	if !envelope.OK {
+	if !detector && !envelope.OK {
 		return nil, errors.New("read reported ok=false")
 	}
 	return raw, nil
