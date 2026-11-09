@@ -310,6 +310,10 @@ func AcquireContext(ctx context.Context, path string, timeout time.Duration) (un
 		released = true
 		queueRel()
 	}
+	// Most writers hold the lock for a few milliseconds. Start with short
+	// sleeps so a brief collision does not add a fixed 50ms to the command.
+	// Back off to the existing cadence for long-running holders.
+	retryInterval := time.Millisecond
 
 	for {
 		if ctx.Err() != nil {
@@ -334,7 +338,8 @@ func AcquireContext(ctx context.Context, path string, timeout time.Duration) (un
 			removeLock(lockFile)
 			continue
 		}
-		if time.Now().After(deadline) {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
 			releaseQueue()
 			return nil, &timeoutError{path: path, timeout: timeout}
 		}
@@ -342,8 +347,9 @@ func AcquireContext(ctx context.Context, path string, timeout time.Duration) (un
 		case <-ctx.Done():
 			releaseQueue()
 			return nil, fmt.Errorf("filelock: ctx canceled while waiting for %s: %w", path, ctx.Err())
-		case <-time.After(pollInterval):
+		case <-time.After(min(retryInterval, remaining)):
 		}
+		retryInterval = min(retryInterval*2, pollInterval)
 	}
 }
 
