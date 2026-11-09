@@ -2,6 +2,7 @@ package sessionpressure
 
 import (
 	"archive/tar"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -176,9 +177,32 @@ func remoteModuleClosure(start string) ([]string, string, error) {
 // remoteSourceLimit bounds one upload; larger closures are rejected.
 const remoteSourceLimit = 512 << 20
 
+// remoteInputScope selects which repository files travel with a remote job.
+type remoteInputScope int
+
+const (
+	// remoteScopeRepository sends every tracked and pending repository file.
+	// Tests may read fixtures outside their module (hooks, docs, configs).
+	remoteScopeRepository remoteInputScope = iota
+	// remoteScopeModules sends only files inside the module closure. The Go
+	// toolchain cannot read outside a module for a build (embed patterns are
+	// module-bounded and the runner sets GOWORK=off), so a nicos-tools
+	// provider build no longer ships ~300 MiB of docs and apps (11-09:
+	// ~200 s per build at the measured 1.5 MB/s, under the host upload lock).
+	remoteScopeModules
+)
+
+// remoteInputScopeFor maps the Go subcommand to its input scope.
+func remoteInputScopeFor(subcommand string) remoteInputScope {
+	if subcommand == "build" {
+		return remoteScopeModules
+	}
+	return remoteScopeRepository
+}
+
 // walkRemoteSources visits each uploadable regular file of the module closure
 // once. Both the pre-upload size check and the upload use this one filter.
-func walkRemoteSources(modules []string, common string, visit func(rel, path string, info os.FileInfo) error) error {
+func walkRemoteSources(modules []string, common string, scope remoteInputScope, visit func(rel, path string, info os.FileInfo) error) error {
 	seen := map[string]bool{}
 	repositories := remoteRepositoryRoots(modules)
 	for _, module := range modules {
@@ -247,6 +271,9 @@ func walkRemoteSources(modules []string, common string, visit func(rel, path str
 				continue
 			}
 			path := filepath.Join(repo, name)
+			if scope == remoteScopeModules && !withinRemoteModule(modules, path) {
+				continue
+			}
 			rel, err := filepath.Rel(common, path)
 			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				return errors.New("repository input escapes source root")
@@ -273,10 +300,21 @@ func walkRemoteSources(modules []string, common string, visit func(rel, path str
 	return nil
 }
 
+// withinRemoteModule reports whether path lies inside one closure module.
+func withinRemoteModule(modules []string, path string) bool {
+	for _, module := range modules {
+		rel, err := filepath.Rel(module, path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
 // remoteSourceSize returns the upload size, or an error once it passes limit.
-func remoteSourceSize(modules []string, common string, limit int64) (int64, error) {
+func remoteSourceSize(modules []string, common string, scope remoteInputScope, limit int64) (int64, error) {
 	var total int64
-	err := walkRemoteSources(modules, common, func(_, _ string, info os.FileInfo) error {
+	err := walkRemoteSources(modules, common, scope, func(_, _ string, info os.FileInfo) error {
 		total += info.Size()
 		if total > limit {
 			return fmt.Errorf("remote source exceeds %dMiB; narrow the module", limit>>20)
@@ -286,11 +324,13 @@ func remoteSourceSize(modules []string, common string, limit int64) (int64, erro
 	return total, err
 }
 
-func writeRemoteSources(out io.Writer, modules []string, common string) error {
-	tw := tar.NewWriter(out)
-	defer tw.Close()
+// writeRemoteSources streams a gzip-compressed tar. Source text compresses
+// several-fold and the Mac-to-box link, not CPU, bounds the upload.
+func writeRemoteSources(out io.Writer, modules []string, common string, scope remoteInputScope) error {
+	zw := gzip.NewWriter(out)
+	tw := tar.NewWriter(zw)
 	var total int64
-	err := walkRemoteSources(modules, common, func(rel, path string, info os.FileInfo) error {
+	err := walkRemoteSources(modules, common, scope, func(rel, path string, info os.FileInfo) error {
 		total += info.Size()
 		if total > remoteSourceLimit {
 			return errors.New("remote source exceeds 512MiB; narrow the module")
@@ -312,9 +352,11 @@ func writeRemoteSources(out io.Writer, modules []string, common string) error {
 		return errors.Join(err, closeErr)
 	})
 	if err != nil {
+		_ = tw.Close()
+		_ = zw.Close()
 		return err
 	}
-	return tw.Close()
+	return errors.Join(tw.Close(), zw.Close())
 }
 
 // TryRemoteWork runs eligible commands on the tailnet runner. A failed route
@@ -356,7 +398,8 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if err != nil {
 		return reject(err.Error())
 	}
-	if _, err = remoteSourceSize(modules, common, remoteSourceLimit); err != nil {
+	scope := remoteInputScopeFor(options.Command[1])
+	if _, err = remoteSourceSize(modules, common, scope, remoteSourceLimit); err != nil {
 		return reject(err.Error())
 	}
 	// Explicit outputs can be returned without guessing package/main names.
@@ -386,7 +429,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	}
 	// Upload/extraction has one bounded host-wide preparation lane, separate
 	// from the scheduler's execution slot. A stalled sender cannot hold it forever.
-	upload := ssh("timeout 600 flock -w 600 /srv/build/input-transfer.lock sh -c " + shellQuote("umask 077; mkdir -p "+shellQuote(remote+"/source")+" && printf '%s\n' "+shellQuote("pressure-"+job)+" > "+shellQuote(remote+".request")+" && tar -xf - -C "+shellQuote(remote+"/source")))
+	upload := ssh("timeout 600 flock -w 600 /srv/build/input-transfer.lock sh -c " + shellQuote("umask 077; mkdir -p "+shellQuote(remote+"/source")+" && printf '%s\n' "+shellQuote("pressure-"+job)+" > "+shellQuote(remote+".request")+" && tar -xzf - -C "+shellQuote(remote+"/source")))
 	pipe, err := upload.StdinPipe()
 	if err != nil {
 		return true, 1, err
@@ -395,7 +438,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if err = upload.Start(); err != nil {
 		return true, 1, err
 	}
-	writeErr := writeRemoteSources(pipe, modules, common)
+	writeErr := writeRemoteSources(pipe, modules, common, scope)
 	_ = pipe.Close()
 	err = upload.Wait()
 	if writeErr != nil || err != nil {

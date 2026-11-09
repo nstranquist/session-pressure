@@ -3,6 +3,7 @@ package sessionpressure
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"io"
 	"os"
 	"path/filepath"
@@ -33,10 +34,24 @@ func TestRemoteModuleClosureAndSourceBoundaries(t *testing.T) {
 		t.Fatal(modules, root, err)
 	}
 	var out bytes.Buffer
-	if err := writeRemoteSources(&out, modules, root); err != nil {
+	if err := writeRemoteSources(&out, modules, root, remoteScopeRepository); err != nil {
 		t.Fatal(err)
 	}
-	tr := tar.NewReader(&out)
+	found := remoteUploadNames(t, &out)
+	if !found["a/main.go"] || !found["b/go.mod"] || found["a/.env"] || found["a/node_modules/ignored.js"] || found["a/.tmp/ignored.go"] {
+		t.Fatal(found)
+	}
+}
+
+// remoteUploadNames decodes the gzip tar stream exactly as the runner's
+// `tar -xzf -` does and returns the member names.
+func remoteUploadNames(t *testing.T, stream io.Reader) map[string]bool {
+	t.Helper()
+	zr, err := gzip.NewReader(stream)
+	if err != nil {
+		t.Fatalf("upload is not gzip: %v", err)
+	}
+	tr := tar.NewReader(zr)
 	found := map[string]bool{}
 	for {
 		h, err := tr.Next()
@@ -48,9 +63,7 @@ func TestRemoteModuleClosureAndSourceBoundaries(t *testing.T) {
 		}
 		found[h.Name] = true
 	}
-	if !found["a/main.go"] || !found["b/go.mod"] || found["a/.env"] || found["a/node_modules/ignored.js"] || found["a/.tmp/ignored.go"] {
-		t.Fatal(found)
-	}
+	return found
 }
 
 func TestAutomatedBrowserRootExcludesPersonalAndChildren(t *testing.T) {
