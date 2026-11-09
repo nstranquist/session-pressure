@@ -29,7 +29,7 @@ type manifest struct {
 	Files      map[string]string `json:"files"`
 }
 
-var names = []string{"session-pressure", "session-pressure-api", "session-pressure-helper", "gocache-lru", "session-pressure-release"}
+var names = []string{"session-pressure", "session-pressure-api", "session-pressure-helper", "gocache-lru", "session-pressure-release", "gaterunner-fleet"}
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {

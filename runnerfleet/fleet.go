@@ -295,7 +295,12 @@ func contains(xs []string, s string) bool {
 
 func readBinding(path string, r Request) (Binding, error) {
 	var b Binding
-	body, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return b, err
+	}
+	defer f.Close()
+	body, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
 	if err != nil {
 		return b, err
 	}
