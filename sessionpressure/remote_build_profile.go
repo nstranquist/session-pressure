@@ -1,6 +1,9 @@
 package sessionpressure
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // The runner's Darwin build profile. A remote `go build` must produce what the
 // Mac would: darwin/arm64, with the Mac's cgo setting. Until 2026-11-08 the
@@ -21,11 +24,10 @@ import "fmt"
 // clang with -B. Probe 2026-11-08: the cgo binary runs on the Mac and keeps
 // its __DWARF segments; no file on the runner changes.
 const (
-	remoteDarwinCC       = "/srv/build/opt/pressure-darwin-clang"
-	remoteDarwinCCSHA256 = "7e85456e9acd3ebddb0289d28078291562534a8bcb3de5ac7e3105406dc81d73"
-	remoteDarwinSDK      = "/srv/build/opt/macos-sdk-cgo"
-	remoteDarwinCFLAGS   = "-O2 -g -Wno-availability -Wno-nullability-completeness"
-	remoteDarwinStrip    = "/usr/lib/llvm-18/bin/llvm-strip"
+	remoteDarwinCC     = "/srv/build/opt/pressure-darwin-clang"
+	remoteDarwinSDK    = "/srv/build/opt/macos-sdk-cgo"
+	remoteDarwinCFLAGS = "-O2 -g -Wno-availability -Wno-nullability-completeness"
+	remoteDarwinStrip  = "/usr/lib/llvm-18/bin/llvm-strip"
 )
 
 // remoteDarwinTools is the job's private tool directory for clang -B.
@@ -70,11 +72,23 @@ func remoteBuildEnvironment(profile, job string) string {
 // runs. A mismatch is a runner fault, not a build failure, so it exits with
 // the policy-denied code and the refusal contract on stderr; callers such as
 // commit delivery then hold instead of blaming the change.
-func remoteBuildPreflight(profile, job string) string {
+func remoteBuildPreflight(profile, host, job string) (string, error) {
 	if profile != remoteProfileDarwinCgo {
-		return ""
+		return "", nil
 	}
-	return remoteToolchainPreflight(remoteDarwinCC, remoteDarwinCCSHA256, remoteDarwinSDK, remoteDarwinStrip, remoteDarwinTools(job))
+	// The enrolled runners have independently reviewed compiler wrappers. Runner
+	// 3 additionally handles Go's two-argument DWARF tool lookup. Bind the pin
+	// to the already selected endpoint; never borrow another host's profile.
+	var digest string
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "gaterunner-2", "gr2", "100.100.223.53":
+		digest = "7e85456e9acd3ebddb0289d28078291562534a8bcb3de5ac7e3105406dc81d73"
+	case "gaterunner-3", "gr3", "100.77.224.103":
+		digest = "d2f4a6fc1a2d831e28cff057bd02190b5e37ef24c4b9ab3344b3f3a42ff04ec8"
+	default:
+		return "", fmt.Errorf("runner %q has no reviewed Darwin compiler pin", host)
+	}
+	return remoteToolchainPreflight(remoteDarwinCC, digest, remoteDarwinSDK, remoteDarwinStrip, remoteDarwinTools(job)), nil
 }
 
 func remoteToolchainPreflight(compiler, digest, sdk, strip, tools string) string {

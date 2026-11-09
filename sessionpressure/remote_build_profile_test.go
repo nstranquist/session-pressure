@@ -36,8 +36,58 @@ func TestRemoteBuildProfileMatchesTheMacCgoSetting(t *testing.T) {
 	if env := remoteBuildEnvironment(remoteProfileDarwinNoCgo, "/j"); !strings.Contains(env, "CGO_ENABLED=0") || strings.Contains(env, "CC=") {
 		t.Errorf("cgo-free environment = %q", env)
 	}
-	if remoteBuildEnvironment(remoteProfileLinuxNative, "/j") != "" || remoteBuildPreflight(remoteProfileLinuxNative, "/j") != "" || remoteBuildPreflight(remoteProfileDarwinNoCgo, "/j") != "" {
+	if remoteBuildEnvironment(remoteProfileLinuxNative, "/j") != "" {
 		t.Error("only the cgo build profile adds environment and a toolchain preflight")
+	}
+	for _, profile := range []string{remoteProfileLinuxNative, remoteProfileDarwinNoCgo} {
+		if preflight, err := remoteBuildPreflight(profile, "unreviewed-host", "/j"); err != nil || preflight != "" {
+			t.Errorf("%s preflight = %q, %v; want none", profile, preflight, err)
+		}
+	}
+}
+
+func TestRemoteBuildPreflightBindsCompilerPinToHost(t *testing.T) {
+	for _, tc := range []struct{ host, digest string }{
+		{"gaterunner-2", "7e85456e9acd3ebddb0289d28078291562534a8bcb3de5ac7e3105406dc81d73"},
+		{"100.100.223.53", "7e85456e9acd3ebddb0289d28078291562534a8bcb3de5ac7e3105406dc81d73"},
+		{"gaterunner-3", "d2f4a6fc1a2d831e28cff057bd02190b5e37ef24c4b9ab3344b3f3a42ff04ec8"},
+		{"100.77.224.103", "d2f4a6fc1a2d831e28cff057bd02190b5e37ef24c4b9ab3344b3f3a42ff04ec8"},
+	} {
+		preflight, err := remoteBuildPreflight(remoteProfileDarwinCgo, tc.host, "/j")
+		if err != nil || !strings.Contains(preflight, shellQuote(tc.digest)) {
+			t.Errorf("%s preflight = %q, %v; want host's reviewed pin", tc.host, preflight, err)
+		}
+	}
+	for _, host := range []string{"", "gaterunner-1", "gaterunner-4"} {
+		if preflight, err := remoteBuildPreflight(remoteProfileDarwinCgo, host, "/j"); err == nil || preflight != "" {
+			t.Errorf("unreviewed host %q preflight = %q, %v; want refusal", host, preflight, err)
+		}
+	}
+}
+
+// Opt-in fleet check: use the production preflight/environment on each enrolled
+// host and retain a Darwin cgo artifact for a separate Mac runtime check.
+func TestRemoteBuildPreflightOnEnrolledRunner(t *testing.T) {
+	host := os.Getenv("NDEV_TEST_ENROLLED_RUNNER")
+	if host == "" {
+		t.Skip("requires an explicit enrolled runner and retained artifact path")
+	}
+	artifact := os.Getenv("NDEV_TEST_DARWIN_ARTIFACT")
+	if artifact == "" || !filepath.IsAbs(artifact) {
+		t.Fatal("NDEV_TEST_DARWIN_ARTIFACT must be absolute")
+	}
+	job := t.TempDir()
+	preflight, err := remoteBuildPreflight(remoteProfileDarwinCgo, host, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(job, "main.go")
+	if err := os.WriteFile(source, []byte("package main\n/*\nint answer(void) { return 42; }\n*/\nimport \"C\"\nimport \"fmt\"\nfunc main() { fmt.Println(C.answer()) }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := preflight + "env GOWORK=off GOFLAGS=" + remoteBuildEnvironment(remoteProfileDarwinCgo, job) + " go build -o " + shellQuote(artifact) + " " + shellQuote(source)
+	if out, err := exec.Command("bash", "-c", command).CombinedOutput(); err != nil {
+		t.Fatalf("%s production Darwin cgo profile: %v\n%s", host, err, out)
 	}
 }
 
