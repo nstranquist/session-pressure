@@ -13,7 +13,7 @@ import (
 func TestMain(m *testing.M) {
 	if os.Getenv("PRESSURE_OBSERVATION_TEST_CHILD") == "detector" {
 		_, _ = os.Stdout.WriteString(`{"ok":false,"work_evaluation":{"ok":false}}`)
-		os.Exit(2)
+		os.Exit(1)
 	}
 	if os.Getenv("PRESSURE_OBSERVATION_TEST_CHILD") == "overflow" {
 		_, _ = os.Stdout.WriteString(strings.Repeat("x", 3*1024*1024))
@@ -26,6 +26,9 @@ func TestAcceptanceRetainsUnsatisfiedDetectorReport(t *testing.T) {
 	t.Setenv("PRESSURE_OBSERVATION_TEST_CHILD", "detector")
 	if raw, err := readCLIReport(os.Args[0], true, "work", "evaluate"); err != nil || !strings.Contains(string(raw), "work_evaluation") {
 		t.Fatalf("gate evidence discarded: %s %v", raw, err)
+	}
+	if _, err := readCLIReport(os.Args[0], true, "status"); err == nil {
+		t.Fatal("ordinary endpoint accepted work-evaluate exit 1")
 	}
 	if _, err := readCLI(os.Args[0], "status"); err == nil {
 		t.Fatal("ordinary endpoint accepted detector exit")

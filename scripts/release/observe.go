@@ -66,8 +66,8 @@ func readCLI(binary string, args ...string) ([]byte, error) {
 	return readCLIReport(binary, false, args...)
 }
 
-// Detectors use exit 2 and ok=false for a successfully emitted unsatisfied
-// gate. Preserve that report; transport, timeout and other exits still fail.
+// Detectors can emit an unsatisfied gate with a nonzero exit. Preserve only
+// their documented exits; transport, timeout and other exits still fail.
 func readCLIReport(binary string, detector bool, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -95,7 +95,8 @@ func readCLIReport(binary string, detector bool, args ...string) ([]byte, error)
 	}
 	if e = c.Wait(); e != nil {
 		var exit interface{ ExitCode() int }
-		if !detector || !errors.As(e, &exit) || exit.ExitCode() != 2 {
+		validDetectorExit := errors.As(e, &exit) && (exit.ExitCode() == 2 || (exit.ExitCode() == 1 && len(args) == 2 && args[0] == "work" && args[1] == "evaluate"))
+		if !detector || !validDetectorExit {
 			return nil, e
 		}
 	}
