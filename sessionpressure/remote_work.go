@@ -384,7 +384,9 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	ssh := func(command string) *exec.Cmd {
 		return exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "builder@100.106.202.89", command)
 	}
-	upload := ssh("umask 077; mkdir -p " + shellQuote(remote+"/source") + " && tar -xf - -C " + shellQuote(remote+"/source"))
+	// Upload/extraction has one bounded host-wide preparation lane, separate
+	// from the scheduler's execution slot. A stalled sender cannot hold it forever.
+	upload := ssh("timeout 600 flock -w 600 /srv/build/input-transfer.lock sh -c " + shellQuote("umask 077; mkdir -p "+shellQuote(remote+"/source")+" && tar -xf - -C "+shellQuote(remote+"/source")))
 	pipe, err := upload.StdinPipe()
 	if err != nil {
 		return true, 1, err
