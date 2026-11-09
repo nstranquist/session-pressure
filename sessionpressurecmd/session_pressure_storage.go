@@ -1212,11 +1212,15 @@ func gradleProcessActive() (bool, error) {
 	return false, fmt.Errorf("inspect active Gradle owners: %w", err)
 }
 
+// Match the executing program, not a quoted command inside ssh or a shell.
+// Remote Go builds do not own the Mac cache. go run also writes this cache.
+const storageGoOwnerPattern = `^([^[:space:]]*/)?go[[:space:]].*(build|clean|generate|install|list|run|test|tool|vet)([[:space:]]|$)|^([^[:space:]]*/)?(asm|compile|link)([[:space:]]|$)`
+
 func rebuildableCacheProcessActive(providerID string) (bool, error) {
 	pattern := ""
 	switch providerID {
 	case "go-build-cache":
-		pattern = `(^|/)go( |$).*(build|clean|generate|install|list|test|tool|vet)( |$)|(^|/)(asm|compile|link)( |$)`
+		pattern = storageGoOwnerPattern
 	case "yarn-cache":
 		pattern = `(^|/)(yarn|yarnpkg)( |$)`
 	case "npm-cache":
