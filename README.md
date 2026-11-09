@@ -6,6 +6,9 @@ Local host admission and work coordination for many concurrent coding agents on 
 
 This is the extracted open-core product. `ndev session pressure` in nicos-tools is a compatibility wrapper around this CLI.
 
+See [repository ownership and delivery](docs/repository-boundaries.md) before
+changing the product or its factory integration.
+
 ## What it does
 
 - Samples host CPU, memory, swap use, live swap-out rate, and fail-open thermal or low-power signals.
