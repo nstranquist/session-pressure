@@ -36,10 +36,9 @@ func TestFactoryWALHealthAfterWriterCloses(t *testing.T) {
 	if err := os.Chmod(path, 0600); err != nil {
 		t.Fatal(err)
 	}
-	// sqlite closes its last connection and removes the WAL coordination files.
-	if _, err := os.Stat(path + "-wal"); !os.IsNotExist(err) {
-		t.Fatalf("fixture WAL still present: %v", err)
-	}
+	// The writer has closed. Whether its -wal file is removed on close depends
+	// on the platform sqlite build (Apple's client can keep it), so the reader
+	// must work in both states; this test does not assume either.
 	snapshot := loadFactorySnapshot(dir)
 	if !snapshot.known || len(snapshot.buckets) != 1 || snapshot.buckets[0].Real.Written != 1 {
 		t.Fatalf("closed-writer health: %+v", snapshot)
