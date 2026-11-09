@@ -327,7 +327,9 @@ final class PressureStore: ObservableObject {
     }
 
     func setApplicationActive(_ active: Bool) {
+        guard applicationActive != active else { return }
         applicationActive = active
+        schedulePoll(immediate: active && windowVisible)
         if active && selectedSection == .work {
             scheduleWorkFocusPoll(immediate: true)
         }
@@ -337,7 +339,9 @@ final class PressureStore: ObservableObject {
     }
 
     func setWindowVisible(_ visible: Bool) {
+        guard windowVisible != visible else { return }
         windowVisible = visible
+        schedulePoll(immediate: visible && applicationActive)
         if visible && selectedSection == .work {
             scheduleWorkFocusPoll(immediate: true)
         }
@@ -368,7 +372,9 @@ final class PressureStore: ObservableObject {
     /// Cadence for the whole-board poll. Windowed use follows the pressure
     /// ladder; menu-bar-only use backs off hard.
     var boardPollInterval: TimeInterval {
-        windowOpen ? PressureFormat.pollInterval(for: board.level) : PressureFormat.menuBarOnlyPollInterval
+        windowOpen && interfaceAllowsFocusedRefresh
+            ? PressureFormat.pollInterval(for: board.level)
+            : PressureFormat.menuBarOnlyPollInterval
     }
 
     func start() {
@@ -409,7 +415,7 @@ final class PressureStore: ObservableObject {
             guard !Task.isCancelled, gen == self.generation else { return }
             // With no window open only the menu-bar grid is rendering, so take
             // the compact path: host status, work, and admission.
-            await self.refresh(live: false, light: !self.windowOpen)
+            await self.refresh(live: false, light: !self.windowOpen || !self.interfaceAllowsFocusedRefresh)
             guard !Task.isCancelled, gen == self.generation else { return }
             self.schedulePoll(immediate: false)
         }

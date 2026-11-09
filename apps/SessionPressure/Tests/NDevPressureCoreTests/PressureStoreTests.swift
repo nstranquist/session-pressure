@@ -6,6 +6,22 @@ import Testing
 @Suite("Pressure store work lifecycle")
 @MainActor
 struct PressureStoreTests {
+    @Test("background and minimized windows use the menu bar board cadence")
+    func boardPollingRespectsVisibility() {
+        let store = PressureStore()
+        #expect(store.boardPollInterval == PressureFormat.pollInterval(for: store.board.level))
+        store.setApplicationActive(false)
+        #expect(store.boardPollInterval == 60)
+        store.setApplicationActive(true)
+        #expect(store.boardPollInterval == PressureFormat.pollInterval(for: store.board.level))
+        store.setWindowVisible(false)
+        #expect(store.boardPollInterval == 60)
+        store.setWindowOpen(false)
+        store.setApplicationActive(true)
+        #expect(store.boardPollInterval == 60)
+        store.stop()
+    }
+
     @Test("focus polling is inactive when the app or window is inactive")
     func focusPollingRespectsVisibility() {
         let store = PressureStore()
