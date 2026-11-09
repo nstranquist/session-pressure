@@ -57,6 +57,36 @@ ms** and short-lock handoff **52.523 to 4.202 ms/op**. These bounded cohorts
 are separate from the natural two-hour audit window; installed paired
 measurements remain the promoter's responsibility.
 
+A later independent audit at **00:33:52 UTC** improves to **WARN / ok true**
+(`review-post-s55-repair-audit-0034.json`) after the telemetry owner repairs
+s55/7943 from exact primary proof. Recent factory writes are **1,639/1,639**,
+with zero failed writes or gaps; product writes are **8,076/8,076**, also with
+zero failures or gaps. The **120 historical factory gaps** remain visible.
+This repair does not establish installation or effectiveness of the queued
+recovery source. Factory/product recent writer p95 is **100/59.035 ms**, so
+performance acceptance still fails. At 00:33:29 the new app sample is **1.367%
+CPU over 368.713 seconds**, with seven successful health checks, zero failures
+and peak RSS 55.266 MiB. This is over target but not yet a 30-minute verdict.
+The early lower CPU sample is retained above, rather than substituted for it.
+
+At **00:40 UTC**, the installed a6 CLI and its Unix API passed the real Swift
+integration test (`review-a6-installed-swift-contract-0032.log`, one test,
+1.970 seconds). The earlier admission wait is retained in that log.
+
+The operator explicitly approved a real privileged trace at 00:35–00:36.
+The app stopped before authorization and incorrectly reported a missing
+helper. Both embedded files and the strict app signature were present.
+`SMAppService.notFound` was being treated as proof of missing bundle files.
+Commit **8e72d11** checks the files separately, attempts normal registration
+once, preserves framework error domain/code, and still requires macOS
+approval. Six registration tests (eight argument cases) pass. Full combined
+app validation reports **84 tests in 12 suites**. Review also found that a
+nonzero tracer exit with diagnostic output could become an empty success;
+**4091c6b** makes every nonzero exit fail. The signed combined release and
+real authorization/trace proof are still pending at this checkpoint.
+The interactive UI interval starts at 00:35, so the existing observation
+must not be described as uninterrupted minimized-app idle evidence.
+
 Three owned factory deliveries are landed; four remain nonterminal at 00:32:
 accepted **9de03888-f6d9-452d-ba3f-47903e2b7166**, **b20237d3-8823-4e62-a034-9dd63b815231**,
 **196ac71c-82d8-4e09-83b8-0f890c054fbe**, and held
@@ -76,8 +106,8 @@ four owned paths in `review-export-race-0021.json`. The fix is captured in 9de.
 Peer commits **d6d1a1c/a6cee30** reduce short-lock handoff delays and automatic
 app refresh layout work. Source review preserves durable terminal writes,
 private refresh serialization and manual progress. Installed latency and CPU
-acceptance must use the new artifact pair. The final real installed Swift/Unix
-API contract is queued behind host CPU admission; no bypass or pass is claimed.
+acceptance must use the new artifact pair. The installed Swift/Unix API contract passes as recorded above; no admission
+bypass was used.
 
 WORK-41 remains in progress until writer completion/latency, factory delivery,
 app resources, sufficient scheduler evidence, a real administrator-authorized
