@@ -154,7 +154,9 @@ func EvaluateWorkSystem(policy Policy) WorkEvaluationReport {
 		{OperationID: firstID, Weight: limits.BrowserWeight, QueuedAt: queuedAt},
 		{OperationID: secondID, Weight: limits.TestWeight, QueuedAt: queuedAt.Add(time.Second)},
 	}
-	overrideDrain, overrideFound := selectOverriddenWorkWaiter(overrideWaiters, limits.Capacity-limits.BrowserWeight, limits.Capacity, secondID)
+	// Leave one unit less than the selected waiter's weight available. Browser
+	// and test weights may be equal, so browser weight cannot model this drain.
+	overrideDrain, overrideFound := selectOverriddenWorkWaiter(overrideWaiters, limits.Capacity-limits.TestWeight+1, limits.Capacity, secondID)
 	overrideSelected, selectedFound := selectOverriddenWorkWaiter(overrideWaiters, 0, limits.Capacity, secondID)
 	add("operator-override-safety", overrideFound && selectedFound && overrideDrain.SelectedOperationID == "" && overrideDrain.ProtectedOperationID == secondID && overrideDrain.DecisionReason == "priority_override_bounded_drain" && overrideSelected.SelectedOperationID == secondID,
 		fmt.Sprintf("drain=%s protected=%s selected_after_release=%s", overrideDrain.DecisionReason, overrideDrain.ProtectedOperationID, overrideSelected.SelectedOperationID))
@@ -254,6 +256,7 @@ func EvaluateWorkSystem(policy Policy) WorkEvaluationReport {
 			report.Passed++
 		} else {
 			report.Failed++
+			report.ReviewSignals = append(report.ReviewSignals, fmt.Sprintf("%s: %s", scenario.ID, scenario.Detail))
 		}
 	}
 	report.ScenarioCount = len(report.Scenarios)
