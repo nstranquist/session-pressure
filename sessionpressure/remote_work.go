@@ -479,12 +479,18 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if reason := remoteWorkIneligibleReason(options.Command, os.Getenv); reason != "" {
 		return reject(reason)
 	}
+	started := time.Now()
+	timingMS := map[string]int64{}
+	stageStarted, stage := started, "preparation_ms"
+	finishStage := func() { timingMS[stage] += time.Since(stageStarted).Milliseconds() }
+	nextStage := func(name string) { finishStage(); stage, stageStarted = name, time.Now() }
 	modules, common, err := remoteModuleClosure(cwd)
 	if err != nil {
 		return reject(err.Error())
 	}
 	scope := remoteInputScopeFor(options.Command[1])
-	if _, err = remoteSourceSize(modules, common, scope, remoteSourceLimit); err != nil {
+	sourceBytes, err := remoteSourceSize(modules, common, scope, remoteSourceLimit)
+	if err != nil {
 		return reject(err.Error())
 	}
 	// Explicit outputs can be returned without guessing package/main names.
@@ -510,9 +516,9 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		}
 		policy.Host, policy.User = binding.Host.Name, binding.Host.User
 	}
-	started := time.Now()
 	defer func() {
-		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "operation": options.Command[1], "profile": profile, "runner_host": policy.Host, "runner_user": policy.User, "request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0})
+		finishStage()
+		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "timing_ms": timingMS, "source_bytes": sourceBytes, "delivery_id": os.Getenv("NDEV_COMMIT_DELIVERY_ID"), "operation": options.Command[1], "profile": profile, "runner_host": policy.Host, "runner_user": policy.User, "request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0})
 	}()
 	remote := "/srv/build/candidates/pressure-" + job
 	for i := range argv {
@@ -535,6 +541,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	// Upload/extraction has one bounded host-wide preparation lane, separate
 	// from the scheduler's execution slot. A stalled sender cannot hold it forever.
 	upload := ssh("timeout 600 flock -w 600 /srv/build/input-transfer.lock sh -c " + shellQuote("umask 077; mkdir -p "+shellQuote(remote+"/source")+" && printf '%s\n' "+shellQuote("pressure-"+job)+" > "+shellQuote(remote+".request")+" && tar -xzf - -C "+shellQuote(remote+"/source")))
+	nextStage("source_upload_ms")
 	pipe, err := upload.StdinPipe()
 	if err != nil {
 		return true, 1, err
@@ -551,6 +558,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	}
 	cleanupSafe := false
 	defer func() {
+		nextStage("cleanup_ms")
 		if !cleanupSafe {
 			fmt.Fprintf(streams.Stderr, "session-pressure: retained remote inputs/artifacts at %s; request key pressure-%s (completion not confirmed)\n", remote, job)
 			return
@@ -578,6 +586,9 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if streams.Stderr != nil {
 		fmt.Fprintln(streams.Stderr, "session-pressure: routing Go work to "+policy.Host+" ("+profile+", durable runner queue, "+lane+" lane, parallelism "+parallel+")")
 	}
+	// Admission and execution are combined here. The runner receipt separates
+	// capacity wait and command duration; source transfer is outside this stage.
+	nextStage("runner_wait_and_run_ms")
 	cleanupSafe, err = runRunnerSubscriber(ctx, func() *exec.Cmd { return ssh(command) }, streams.Stdout, streams.Stderr)
 	if err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
@@ -589,6 +600,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		// Keep the artifact on a fetch failure so the same finished job can be
 		// recovered. Publish locally only after checking its retained manifest.
 		cleanupSafe = false
+		nextStage("artifact_download_ms")
 		manifest, manifestErr := ssh("cat " + shellQuote(remote+"/artifact.sha256")).Output()
 		fields := strings.Fields(string(manifest))
 		if manifestErr != nil || len(fields) != 2 || len(fields[0]) != 64 || fields[1] != remote+"/artifact" {
