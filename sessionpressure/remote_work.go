@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -20,30 +21,65 @@ import (
 )
 
 type RemoteWorkPolicy struct {
-	Enabled bool `json:"enabled"`
+	Enabled bool   `json:"enabled"`
+	Host    string `json:"host,omitempty"`
+	User    string `json:"user,omitempty"`
 }
 
 func SetRemoteWork(dir string, enabled bool) error {
+	policy, err := RemoteWorkConfig(dir)
+	if err != nil {
+		return err
+	}
+	return ConfigureRemoteWork(dir, enabled, policy.Host, policy.User)
+}
+
+func ConfigureRemoteWork(dir string, enabled bool, host, user string) error {
+	policy := RemoteWorkPolicy{Enabled: enabled, Host: host, User: user}
+	if err := policy.validate(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	body, _ := json.Marshal(RemoteWorkPolicy{Enabled: enabled})
+	body, _ := json.Marshal(policy)
 	return atomicWrite(filepath.Join(dir, "remote-work.json"), append(body, '\n'), 0600)
 }
 
 func RemoteWorkEnabled(dir string) (bool, error) {
+	policy, err := RemoteWorkConfig(dir)
+	return policy.Enabled, err
+}
+
+func (p *RemoteWorkPolicy) validate() error {
+	if p.Host == "" {
+		p.Host = "gaterunner-1"
+	}
+	if p.User == "" {
+		p.User = "builder"
+	}
+	if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*$`).MatchString(p.Host) || !regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_-]*$`).MatchString(p.User) {
+		return errors.New("invalid remote runner host or user")
+	}
+	return nil
+}
+
+// Read once per operation: configuration changes cannot move an accepted job.
+func RemoteWorkConfig(dir string) (RemoteWorkPolicy, error) {
+	policy := RemoteWorkPolicy{}
 	body, err := os.ReadFile(filepath.Join(dir, "remote-work.json"))
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		err = policy.validate()
+		return policy, err
 	}
 	if err != nil {
-		return false, err
+		return policy, err
 	}
-	var policy RemoteWorkPolicy
 	if err = json.Unmarshal(body, &policy); err != nil {
-		return false, err
+		return policy, err
 	}
-	return policy.Enabled, nil
+	err = policy.validate()
+	return policy, err
 }
 
 // RemoteGoCommand only delegates direct, finite Go operations. Shell scripts,
@@ -379,11 +415,11 @@ func writeRemoteSources(out io.Writer, modules []string, common string, scope re
 // never silently falls back onto the overloaded Mac. The remote lock is shared
 // by all these jobs; Go workers and compiler parallelism are bounded to two.
 func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (handled bool, exitCode int, resultErr error) {
-	enabled, err := RemoteWorkEnabled(dir)
+	policy, err := RemoteWorkConfig(dir)
 	if err != nil {
 		return true, 1, err
 	}
-	if !enabled || runtime.GOOS != "darwin" || !RemoteGoCommand(options.Command) {
+	if !policy.Enabled || runtime.GOOS != "darwin" || !RemoteGoCommand(options.Command) {
 		return false, 0, nil
 	}
 	if streams.Stdin == nil {
@@ -432,7 +468,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	profile := remoteBuildProfile(argv[1], os.Getenv("CGO_ENABLED"))
 	started := time.Now()
 	defer func() {
-		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "operation": options.Command[1], "profile": profile, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0})
+		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "operation": options.Command[1], "profile": profile, "runner_host": policy.Host, "runner_user": policy.User, "request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0})
 	}()
 	remote := "/srv/build/candidates/pressure-" + job
 	for i := range argv {
@@ -441,7 +477,16 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour+32*time.Minute)
 	defer cancel()
 	ssh := func(command string) *exec.Cmd {
-		return exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "builder@100.106.202.89", command)
+		return exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", policy.User+"@"+policy.Host, command)
+	}
+	// Keep the endpoint with the request key even after an ambiguous disconnect.
+	requestDir := filepath.Join(dir, "remote-requests")
+	if err := os.MkdirAll(requestDir, 0700); err != nil {
+		return true, 1, err
+	}
+	request, _ := json.Marshal(map[string]any{"host": policy.Host, "user": policy.User, "request_key": "pressure-" + job, "profile": profile, "remote_path": remote, "started_at": started.UTC()})
+	if err := atomicWrite(filepath.Join(requestDir, job+".json"), append(request, '\n'), 0600); err != nil {
+		return true, 1, err
 	}
 	// Upload/extraction has one bounded host-wide preparation lane, separate
 	// from the scheduler's execution slot. A stalled sender cannot hold it forever.
@@ -468,7 +513,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = exec.CommandContext(cleanupCtx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "builder@100.106.202.89", "rm -rf -- "+shellQuote(remote)+" "+shellQuote(remote+".request")).Run()
+		_ = exec.CommandContext(cleanupCtx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", policy.User+"@"+policy.Host, "rm -rf -- "+shellQuote(remote)+" "+shellQuote(remote+".request")).Run()
 	}()
 	rel, _ := filepath.Rel(common, cwd)
 	// A focused package test asks for the runner's light lane (1 CPU, 1 GiB,
@@ -487,7 +532,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	command = "env NCD_RUNNER_FRAMED=1 NCD_RUNNER_CLASS=" + lane + " NCD_RUNNER_KEY=" + shellQuote("pressure-"+job) + " /srv/build/run-job.sh session-pressure " + shellQuote("session-pressure:"+job) + " --candidate-dir " + shellQuote(remote+"/source") + " --timeout 1800 --shell " + shellQuote(command)
 	command = "if test -x /srv/build/gaterunner && /srv/build/gaterunner inspect --key " + shellQuote("pressure-"+job) + " >/dev/null 2>&1; then exec env NCD_RUNNER_FRAMED=1 /srv/build/gaterunner wait --key " + shellQuote("pressure-"+job) + "; else exec " + command + "; fi"
 	if streams.Stderr != nil {
-		fmt.Fprintln(streams.Stderr, "session-pressure: routing Go work to gaterunner-1 ("+profile+", durable runner queue, "+lane+" lane, parallelism "+parallel+")")
+		fmt.Fprintln(streams.Stderr, "session-pressure: routing Go work to "+policy.Host+" ("+profile+", durable runner queue, "+lane+" lane, parallelism "+parallel+")")
 	}
 	cleanupSafe, err = runRunnerSubscriber(ctx, func() *exec.Cmd { return ssh(command) }, streams.Stdout, streams.Stderr)
 	if err != nil {

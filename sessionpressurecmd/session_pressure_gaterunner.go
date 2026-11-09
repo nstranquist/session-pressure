@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/nstranquist/session-pressure/internal/gaterunner"
+	"github.com/nstranquist/session-pressure/sessionpressure"
 )
 
 func cmdSessionPressureGaterunner(g *Flags, args []string) int {
@@ -16,6 +17,36 @@ func cmdSessionPressureGaterunner(g *Flags, args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 14*time.Second)
 	defer cancel()
+	dir, err := sessionpressure.DataDir()
+	if err != nil {
+		return sessionPressureError(err.Error(), 1)
+	}
+	policy, err := sessionpressure.RemoteWorkConfig(dir)
+	if err != nil {
+		return sessionPressureError(err.Error(), 1)
+	}
+	// An explicit endpoint permits reading retained jobs after primary cutover.
+	filtered := []string{args[0]}
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--host" || args[i] == "--user" {
+			if i+1 >= len(args) {
+				return sessionPressureError("--host and --user require values", 2)
+			}
+			if args[i] == "--host" {
+				policy.Host = args[i+1]
+			} else {
+				policy.User = args[i+1]
+			}
+			i++
+		} else {
+			filtered = append(filtered, args[i])
+		}
+	}
+	args = filtered
+	ctx, err = gaterunner.WithTarget(ctx, policy.Host, policy.User)
+	if err != nil {
+		return sessionPressureError(err.Error(), 1)
+	}
 	switch args[0] {
 	case "inspect":
 		box := true

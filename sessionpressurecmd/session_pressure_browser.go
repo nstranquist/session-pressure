@@ -51,13 +51,32 @@ func cmdSessionPressureRemote(g *Flags, args []string) int {
 	if err != nil {
 		return sessionPressureError(err.Error(), 1)
 	}
+	policy, err := sessionpressure.RemoteWorkConfig(dir)
+	if err != nil {
+		return sessionPressureError(err.Error(), 1)
+	}
 	if len(args) > 1 {
-		return sessionPressureError("remote accepts status, enable, or disable", 2)
+		if args[0] != "enable" {
+			return sessionPressureError("remote enable accepts --host HOST and --user USER", 2)
+		}
+		for i := 1; i < len(args); i += 2 {
+			if i+1 >= len(args) {
+				return sessionPressureError("remote enable requires a value after --host or --user", 2)
+			}
+			switch args[i] {
+			case "--host":
+				policy.Host = args[i+1]
+			case "--user":
+				policy.User = args[i+1]
+			default:
+				return sessionPressureError("remote enable accepts --host HOST and --user USER", 2)
+			}
+		}
 	}
 	if len(args) == 1 && args[0] != "status" {
 		switch args[0] {
 		case "enable":
-			err = sessionpressure.SetRemoteWork(dir, true)
+			err = sessionpressure.ConfigureRemoteWork(dir, true, policy.Host, policy.User)
 		case "disable":
 			err = sessionpressure.SetRemoteWork(dir, false)
 		default:
@@ -67,9 +86,9 @@ func cmdSessionPressureRemote(g *Flags, args []string) int {
 	if err != nil {
 		return sessionPressureError(err.Error(), 1)
 	}
-	enabled, err := sessionpressure.RemoteWorkEnabled(dir)
+	policy, err = sessionpressure.RemoteWorkConfig(dir)
 	if err != nil {
 		return sessionPressureError(err.Error(), 1)
 	}
-	return emitPressure(g, map[string]any{"ok": true, "remote": map[string]any{"enabled": enabled, "host": "gaterunner-1", "parallelism": 2}}, fmt.Sprintf("Automatic Hetzner Go routing: %t\n", enabled), 0)
+	return emitPressure(g, map[string]any{"ok": true, "remote": map[string]any{"enabled": policy.Enabled, "host": policy.Host, "user": policy.User, "parallelism": 2}}, fmt.Sprintf("Automatic Hetzner Go routing: %t (%s@%s)\n", policy.Enabled, policy.User, policy.Host), 0)
 }

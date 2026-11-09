@@ -85,6 +85,7 @@ type Job struct {
 	Command         string     `json:"command"`
 }
 type Inspection struct {
+	Host             string    `json:"host"`
 	SchemaVersion    int       `json:"schema_version"`
 	CapturedAt       time.Time `json:"captured_at"`
 	Runs             []Run     `json:"runs"`
@@ -112,6 +113,7 @@ func Inspect(ctx context.Context, home string, includeBox bool) Inspection {
 // desktop. Configuration and remote health still refresh independently.
 func InspectSince(ctx context.Context, home string, includeBox bool, known string) Inspection {
 	s := Inspection{SchemaVersion: 1, CapturedAt: time.Now().UTC(), Runs: []Run{}, Jobs: []Job{}, BoxRequested: includeBox}
+	s.Host = runnerTarget(ctx)
 	dir := filepath.Join(home, ".nicos-dev", "commit-delivery", "v1")
 	runs, present, truncated, malformed, signature, unchanged, err := readLedgerSince(filepath.Join(dir, "gate-delegate", "runs.jsonl"), known)
 	s.LedgerPresent, s.HistoryTruncated, s.MalformedRows = present, truncated, malformed
@@ -349,7 +351,7 @@ func (b *boundedCapture) Write(p []byte) (int, error) {
 func runSSH(parent context.Context, remote string, limit int) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(parent, 12*time.Second)
 	defer cancel()
-	cmd := processtree.CommandContext(ctx, "/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=3", "-o", "ServerAliveCountMax=2", "builder@100.106.202.89", remote)
+	cmd := processtree.CommandContext(ctx, "/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=3", "-o", "ServerAliveCountMax=2", runnerTarget(ctx), remote)
 	out := &boundedCapture{limit: limit}
 	stderr := &boundedCapture{limit: 4096}
 	cmd.Stdout = out
@@ -358,6 +360,23 @@ func runSSH(parent context.Context, remote string, limit int) ([]byte, error) {
 		return nil, e
 	}
 	return out.Bytes(), nil
+}
+
+type targetKey struct{}
+
+// WithTarget binds every read in one inspection to its validated endpoint.
+func WithTarget(ctx context.Context, host, user string) (context.Context, error) {
+	if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*$`).MatchString(host) || !regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_-]*$`).MatchString(user) {
+		return nil, errors.New("invalid runner inspection host or user")
+	}
+	return context.WithValue(ctx, targetKey{}, user+"@"+host), nil
+}
+
+func runnerTarget(ctx context.Context) string {
+	if target, ok := ctx.Value(targetKey{}).(string); ok {
+		return target
+	}
+	return "builder@gaterunner-1"
 }
 func ParseJob(line string) (Job, bool) {
 	head, command, _ := strings.Cut(line, " cmd=")
