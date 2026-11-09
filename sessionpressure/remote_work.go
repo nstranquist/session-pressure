@@ -3,6 +3,7 @@ package sessionpressure
 import (
 	"archive/tar"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -378,7 +379,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	for i := range argv {
 		argv[i] = strings.ReplaceAll(argv[i], "/srv/build/candidates/OUTPUT", remote+"/artifact")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour+32*time.Minute)
 	defer cancel()
 	ssh := func(command string) *exec.Cmd {
 		return exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "builder@100.106.202.89", command)
@@ -398,33 +399,46 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if writeErr != nil || err != nil {
 		return true, 1, fmt.Errorf("remote source upload failed: %w", errors.Join(writeErr, err))
 	}
+	cleanupSafe := false
 	defer func() {
+		if !cleanupSafe {
+			fmt.Fprintf(streams.Stderr, "session-pressure: retained remote inputs/artifacts at %s; request key pressure-%s (completion not confirmed)\n", remote, job)
+			return
+		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = exec.CommandContext(cleanupCtx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "builder@100.106.202.89", "rm -rf -- "+shellQuote(remote)).Run()
 	}()
 	rel, _ := filepath.Rel(common, cwd)
-	command := remoteRunnerPrelude() + remoteBuildPreflight(profile, remote) + "cd " + shellQuote("./"+filepath.ToSlash(rel)) + " && exec env GOWORK=off GOMAXPROCS=2 GOMEMLIMIT=3GiB GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p=2")) + remoteBuildEnvironment(profile, remote)
+	command := remoteRunnerPrelude() + remoteBuildPreflight(profile, remote) + "cd " + shellQuote("./"+filepath.ToSlash(rel)) + " && env GOWORK=off GOMAXPROCS=2 GOMEMLIMIT=3GiB GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p=2")) + remoteBuildEnvironment(profile, remote)
 	for _, arg := range argv {
 		command += " " + shellQuote(arg)
 	}
+	if output != "" && output != "/dev/null" {
+		command += " && sha256sum " + shellQuote(remote+"/artifact") + " > " + shellQuote(remote+"/artifact.sha256")
+	}
 	// The canonical runner retains source inputs before durable submission.
 	// The command starts at the retained common root, preserving replacements.
-	command = "env NCD_RUNNER_KEY=" + shellQuote("pressure-"+job) + " /srv/build/run-job.sh session-pressure " + shellQuote("session-pressure:"+job) + " --candidate-dir " + shellQuote(remote+"/source") + " --timeout 1800 --shell " + shellQuote(command)
+	command = "env NCD_RUNNER_FRAMED=1 NCD_RUNNER_KEY=" + shellQuote("pressure-"+job) + " /srv/build/run-job.sh session-pressure " + shellQuote("session-pressure:"+job) + " --candidate-dir " + shellQuote(remote+"/source") + " --timeout 1800 --shell " + shellQuote(command)
 	if streams.Stderr != nil {
 		fmt.Fprintln(streams.Stderr, "session-pressure: routing Go work to gaterunner-1 ("+profile+", durable runner queue, parallelism 2)")
 	}
-	child := ssh(command)
-	child.Stdin = streams.Stdin
-	child.Stdout = streams.Stdout
-	child.Stderr = streams.Stderr
-	if err = child.Run(); err != nil {
+	cleanupSafe, err = runRunnerSubscriber(ctx, func() *exec.Cmd { return ssh(command) }, streams.Stdout, streams.Stderr)
+	if err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
 			return true, exit.ExitCode(), nil
 		}
 		return true, 1, err
 	}
 	if output != "" && output != "/dev/null" {
+		// Keep the artifact on a fetch failure so the same finished job can be
+		// recovered. Publish locally only after checking its retained manifest.
+		cleanupSafe = false
+		manifest, manifestErr := ssh("cat " + shellQuote(remote+"/artifact.sha256")).Output()
+		fields := strings.Fields(string(manifest))
+		if manifestErr != nil || len(fields) != 2 || len(fields[0]) != 64 || fields[1] != remote+"/artifact" {
+			return true, 1, fmt.Errorf("remote artifact manifest unavailable or invalid: %w", manifestErr)
+		}
 		if !filepath.IsAbs(output) {
 			output = filepath.Join(cwd, output)
 		}
@@ -437,12 +451,16 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		}
 		defer os.Remove(f.Name())
 		fetch := ssh("cat " + shellQuote(remote+"/artifact"))
-		fetch.Stdout = f
+		digest := sha256.New()
+		fetch.Stdout = io.MultiWriter(f, digest)
 		fetch.Stderr = streams.Stderr
 		err = fetch.Run()
 		closeErr := f.Close()
 		if err != nil || closeErr != nil {
 			return true, 1, errors.Join(err, closeErr)
+		}
+		if fmt.Sprintf("%x", digest.Sum(nil)) != fields[0] {
+			return true, 1, errors.New("remote artifact checksum mismatch")
 		}
 		if err = os.Chmod(f.Name(), 0755); err != nil {
 			return true, 1, err
@@ -450,6 +468,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		if err = os.Rename(f.Name(), output); err != nil {
 			return true, 1, err
 		}
+		cleanupSafe = true
 	}
 	return true, 0, nil
 }
