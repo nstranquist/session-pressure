@@ -95,7 +95,8 @@ func readCLIReport(binary string, detector bool, args ...string) ([]byte, error)
 	}
 	if e = c.Wait(); e != nil {
 		var exit interface{ ExitCode() int }
-		validDetectorExit := errors.As(e, &exit) && (exit.ExitCode() == 2 || (exit.ExitCode() == 1 && len(args) == 2 && args[0] == "work" && args[1] == "evaluate"))
+		documentedFailureReport := (len(args) == 2 && args[0] == "work" && args[1] == "evaluate") || (len(args) > 0 && args[0] == "audit")
+		validDetectorExit := errors.As(e, &exit) && (exit.ExitCode() == 2 || (exit.ExitCode() == 1 && documentedFailureReport))
 		if !detector || !validDetectorExit {
 			return nil, e
 		}
