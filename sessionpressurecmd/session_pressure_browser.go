@@ -44,6 +44,11 @@ func cmdSessionPressureBrowser(g *Flags, args []string) int {
 }
 
 func cmdSessionPressureRemote(g *Flags, args []string) int {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" || arg == "help" {
+			return emitPressure(g, map[string]any{"ok": true}, "Usage: session-pressure remote status|enable [--host HOST] [--user USER]|disable\n", 0)
+		}
+	}
 	if len(args) > 0 && (args[0] == "inspect" || args[0] == "job-log") {
 		return cmdSessionPressureGaterunner(g, args)
 	}
@@ -73,7 +78,7 @@ func cmdSessionPressureRemote(g *Flags, args []string) int {
 			}
 		}
 	}
-	if len(args) == 1 && args[0] != "status" {
+	if len(args) > 0 && args[0] != "status" {
 		switch args[0] {
 		case "enable":
 			err = sessionpressure.ConfigureRemoteWork(dir, true, policy.Host, policy.User)
