@@ -38,12 +38,21 @@ completion regression fix. Current audit writer p95 is 100 ms factory and
 (100 attempted/written, zero failed, p95 25.310 ms) remains a separate cohort.
 Installed closed-outcome/privacy and automatic remote Git checks pass.
 
-Three owned factory deliveries are landed; four remain nonterminal. Parent
-64c635e4 has one recovery queued, child 2aca8f87 is held, and b20237d3/196ac71c
-are accepted. Keep the retained waiter and preserve the busy worker. A further
-native-export review correction makes receipt digests select the export's
-platform, CGO and build tags through a host helper. Its exact-source regression
-suite is queued on Hetzner; passing tests and publication are not yet claimed.
+At 00:22 UTC, three owned factory deliveries are landed; four remain
+nonterminal. Accepted replacement 9de03888-f6d9-452d-ba3f-47903e2b7166 supersedes
+paused parent 64c635e4 and includes held child 2aca8f87's edit. The child remains
+held; b20237d3/196ac71c remain accepted. Keep the retained waiter and preserve
+the busy worker. The native-export correction makes receipt digests select
+the export's platform, CGO and build tags through a host helper. The full
+builder race suite passes on Hetzner job 20261109T001559Z-2250586 (14 seconds,
+exit 0); review-export-race-0021.json binds the exact four owned files.
+Regression cases mutate host-only, target-only, CGO and tagged files.
+Accepted publication is not landed or installed proof.
+
+Peer source d6d1a1c/a6cee30 improves writer handoff and app refresh layout.
+Independent review preserves durable terminal writes and private refresh
+serialization. These changes are not yet covered by the installed evidence
+above; their latency and CPU outcomes remain unproved.
 
 WORK-41 remains in progress until writer, delivery, resource, scheduler,
 administrator trace and actual elapsed acceptance are proved.
