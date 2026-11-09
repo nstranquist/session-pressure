@@ -613,7 +613,7 @@ final class PressureStore: ObservableObject {
         defer { isAdvisorRefreshing = false }
         let now = Date()
         let today = Self.chicagoDay(now)
-        if advisorBrief?.day != today {
+        if let brief = advisorBrief, brief.day != today {
             advisorBrief = nil
         }
         if !force,

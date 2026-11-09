@@ -15,7 +15,9 @@ struct OverviewView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            // Resident updates should lay out the visible cards, not every
+            // process, coverage, and queue preview below the viewport.
+            LazyVStack(alignment: .leading, spacing: 16) {
                 header
                 storageCTA
                 doctorStrip
