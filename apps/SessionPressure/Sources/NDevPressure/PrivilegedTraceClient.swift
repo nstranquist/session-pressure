@@ -36,6 +36,9 @@ final class PrivilegedTraceClient {
     func trace(pid: Int, processStartIdentity: String, durationSeconds: Int) async throws -> DiskPathTraceResult {
         try await ensureRegistered()
         let authorization = try authorizationExternalForm()
+        // External forms refer to live authorization state. Keep our reference
+        // until the helper replies (or the bounded connection attempt ends).
+        defer { AuthorizationFree(authorization.reference, []) }
         let connection = NSXPCConnection(
             machServiceName: NDevPressureTraceContract.helperLabel,
             options: .privileged
@@ -64,7 +67,7 @@ final class PrivilegedTraceClient {
                 pid: NSNumber(value: pid),
                 processStartIdentity: processStartIdentity as NSString,
                 durationSeconds: NSNumber(value: min(max(durationSeconds, 5), 30)),
-                authorizationExternalForm: authorization as NSData
+                authorizationExternalForm: authorization.data as NSData
             ) { paths, truncated, error in
                 if let error {
                     completion.fail(PrivilegedTraceError.connection(error as String))
@@ -104,14 +107,16 @@ final class PrivilegedTraceClient {
         UserDefaults.standard.set(build, forKey: registrationKey)
     }
 
-    private func authorizationExternalForm() throws -> Data {
+    private func authorizationExternalForm() throws -> (data: Data, reference: AuthorizationRef) {
         var authorization: AuthorizationRef?
         let create = AuthorizationCreate(nil, nil, [], &authorization)
         guard create == errAuthorizationSuccess, let authorization else {
             throw PrivilegedTraceError.authorization(create)
         }
-        // Release the reference even when the user cancels the rights prompt.
-        defer { AuthorizationFree(authorization, []) }
+        // Failed or cancelled requests still release their reference here.
+        // A successful request transfers ownership to trace's defer.
+        var transferred = false
+        defer { if !transferred { AuthorizationFree(authorization, []) } }
         let status = kAuthorizationRightExecute.withCString { rightName -> OSStatus in
             var item = AuthorizationItem(name: rightName, valueLength: 0, value: nil, flags: 0)
             return withUnsafeMutablePointer(to: &item) { pointer -> OSStatus in
@@ -128,7 +133,9 @@ final class PrivilegedTraceClient {
         guard externalStatus == errAuthorizationSuccess else {
             throw PrivilegedTraceError.authorization(externalStatus)
         }
-        return withUnsafeBytes(of: external) { Data($0) }
+        let data = withUnsafeBytes(of: external) { Data($0) }
+        transferred = true
+        return (data, authorization)
     }
 }
 
@@ -150,6 +157,11 @@ enum TraceHelperRegistration {
         guard status == .enabled, registeredBuild != installedBuild else { return }
         do {
             try await unregister()
+            // Service Management can finish bootout before its registration
+            // state is ready. Apple's DTS recommends a main-run-loop turn.
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { continuation.resume() }
+            }
         } catch {
             let detail = error as NSError
             throw PrivilegedTraceError.helperRegistration(
