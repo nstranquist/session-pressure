@@ -587,10 +587,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	// 300 s) so it never queues behind a suite. The runner reruns it heavy if
 	// it outgrows the lane, so a wrong guess costs time, never a verdict.
 	lane, procs, memlimit, parallel := remoteLane(options)
-	command := remoteRunnerPrelude() + preflight + "cd " + shellQuote("./"+filepath.ToSlash(rel)) + " && env GOWORK=off GOMAXPROCS=" + procs + " GOMEMLIMIT=" + memlimit + " GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p="+parallel)) + remoteBuildEnvironment(profile, remote)
-	for _, arg := range argv {
-		command += " " + shellQuote(arg)
-	}
+	command := remoteRunnerPrelude() + preflight + "cd " + shellQuote("./"+filepath.ToSlash(rel)) + " && " + remoteGoInvocation(lane, procs, memlimit, parallel, os.Getenv("GOFLAGS"), remoteBuildEnvironment(profile, remote), argv)
 	if output != "" && output != "/dev/null" {
 		command += remoteBuildArtifactSeal(remote, output)
 	}
@@ -680,4 +677,23 @@ func remoteLane(options WorkRunOptions) (lane, procs, memlimit, parallel string)
 		return "light", "1", "768MiB", "1"
 	}
 	return "heavy", "2", "3GiB", "2"
+}
+
+// remoteGoInvocation is the remote Go command with its CPU limits. A heavy
+// job on a runner under elastic CPU shares (the scheduler sets
+// NCD_CPU_MODE=elastic; KEP fleet-elastic-throughput S2) takes GOMAXPROCS
+// and -p from its unit's CPU quota, which Go 1.25+ reads from cpu.max and
+// follows; pinning 2 would cap it at 2 CPUs on a 16-thread host. Fixed-mode
+// runners and the light lane keep the explicit pins.
+func remoteGoInvocation(lane, procs, memlimit, parallel, goflags, buildEnv string, argv []string) string {
+	args := ""
+	for _, arg := range argv {
+		args += " " + shellQuote(arg)
+	}
+	pinned := "env GOWORK=off GOMAXPROCS=" + procs + " GOMEMLIMIT=" + memlimit + " GOFLAGS=" + shellQuote(strings.TrimSpace(goflags+" -p="+parallel)) + buildEnv + args
+	if lane != "heavy" {
+		return pinned
+	}
+	elastic := "env -u GOMAXPROCS GOWORK=off GOMEMLIMIT=" + memlimit + " GOFLAGS=" + shellQuote(strings.TrimSpace(goflags)) + buildEnv + args
+	return "if [ \"${NCD_CPU_MODE:-fixed}\" = elastic ]; then " + elastic + "; else " + pinned + "; fi"
 }
