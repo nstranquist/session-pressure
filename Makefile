@@ -28,6 +28,7 @@ build:
 	$(GO) build -o $(PREFIX)/session-pressure-api ./cmd/session-pressure-api
 	$(GO) build -o $(PREFIX)/session-pressure-helper ./cmd/session-pressure-helper
 	$(GO) build -o $(PREFIX)/gocache-lru ./cmd/gocache-lru
+	$(GO) build -o $(PREFIX)/gaterunner-fleet ./cmd/gaterunner-fleet
 	$(GO) build -o $(PREFIX)/session-pressure-release ./scripts/release
 	$(GO) build -o $(PREFIX)/session-pressure-release-cc ./scripts/release-cc
 

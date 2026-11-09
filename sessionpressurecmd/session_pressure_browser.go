@@ -62,26 +62,30 @@ func cmdSessionPressureRemote(g *Flags, args []string) int {
 	}
 	if len(args) > 1 {
 		if args[0] != "enable" {
-			return sessionPressureError("remote enable accepts --host HOST and --user USER", 2)
+			return sessionPressureError("remote enable accepts --host HOST, --user USER, or --fleet PATH", 2)
 		}
 		for i := 1; i < len(args); i += 2 {
 			if i+1 >= len(args) {
-				return sessionPressureError("remote enable requires a value after --host or --user", 2)
+				return sessionPressureError("remote enable requires a value after --host, --user, or --fleet", 2)
 			}
 			switch args[i] {
 			case "--host":
 				policy.Host = args[i+1]
+				policy.Fleet = ""
 			case "--user":
 				policy.User = args[i+1]
+			case "--fleet":
+				policy.Fleet = args[i+1]
 			default:
-				return sessionPressureError("remote enable accepts --host HOST and --user USER", 2)
+				return sessionPressureError("remote enable accepts --host HOST, --user USER, or --fleet PATH", 2)
 			}
 		}
 	}
 	if len(args) > 0 && args[0] != "status" {
 		switch args[0] {
 		case "enable":
-			err = sessionpressure.ConfigureRemoteWork(dir, true, policy.Host, policy.User)
+			policy.Enabled = true
+			err = sessionpressure.SaveRemoteWorkPolicy(dir, policy)
 		case "disable":
 			err = sessionpressure.SetRemoteWork(dir, false)
 		default:
@@ -95,5 +99,5 @@ func cmdSessionPressureRemote(g *Flags, args []string) int {
 	if err != nil {
 		return sessionPressureError(err.Error(), 1)
 	}
-	return emitPressure(g, map[string]any{"ok": true, "remote": map[string]any{"enabled": policy.Enabled, "host": policy.Host, "user": policy.User, "parallelism": 2}}, fmt.Sprintf("Automatic Hetzner Go routing: %t (%s@%s)\n", policy.Enabled, policy.User, policy.Host), 0)
+	return emitPressure(g, map[string]any{"ok": true, "remote": map[string]any{"enabled": policy.Enabled, "host": policy.Host, "user": policy.User, "fleet": policy.Fleet, "parallelism": 2}}, fmt.Sprintf("Automatic Hetzner Go routing: %t (%s@%s, fleet=%s)\n", policy.Enabled, policy.User, policy.Host, policy.Fleet), 0)
 }
