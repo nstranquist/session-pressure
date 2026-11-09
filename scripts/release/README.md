@@ -119,6 +119,13 @@ in the factory binary despite passing a version probe. Do not use that profile
 for `ndev` or a delivery producer. Native acceptance must exercise filtered
 SQLite queries and ingestion when a binary includes that dependency.
 
+Compile the release driver for the Linux host before applying the target
+compiler environment. For example, use `CGO_ENABLED=0 GOFLAGS= go build -o
+/absolute/release-builder ./scripts/release`, then run that driver with the
+Darwin `CC` and `GOFLAGS` above. Applying the Darwin compiler to `go run`
+can make the host build select Linux C sources with a macOS SDK. The same
+separation applies to the factory export driver.
+
 
 The factory compatibility target uses the same installer contract. After building
 the native product bundle on the gate runner, invoke it with the current revision
