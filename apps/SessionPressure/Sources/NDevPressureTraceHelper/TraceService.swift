@@ -187,7 +187,9 @@ final class TraceService: NSObject, NDevPressureTraceXPC {
             }
         }
         process.waitUntilExit()
-        if process.terminationStatus != 0 && capture.isEmpty {
+        // A tracer error can include diagnostic output. It must not become an
+        // empty successful trace merely because stderr was nonempty.
+        if process.terminationStatus != 0 {
             throw TraceError.tracerFailed(process.terminationStatus)
         }
 
