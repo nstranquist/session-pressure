@@ -49,13 +49,27 @@ fix. Factory/product writer p95 is **100/56.985 ms** in that audit, above the
 25 ms target. The earlier diagnostic 100/100 writes with p95 25.310 ms remains
 valid only for its own bounded cohort.
 
-Three owned factory deliveries are landed; parent `64c635e4` is paused with its
-existing recovery queued, child `2aca8f87` is held and `b20237d3`/`196ac71c` are
-accepted. Retain one waiter and do not duplicate recovery. Native export review
-also found that receipts selected host files instead of export-platform files.
-The owned correction selects GOOS, GOARCH, CGO and build tags through a host
-helper. Exact-source platform/CGO/tag mutation tests are queued on Hetzner;
-publication and passing verification are not yet claimed.
+At 00:22 UTC, three owned factory deliveries are landed. Replacement
+`9de03888-f6d9-452d-ba3f-47903e2b7166` is accepted and supersedes paused parent
+`64c635e4`; child `2aca8f87` remains held, while `b20237d3`/`196ac71c` remain
+accepted. The replacement includes the child's source-digest edit. Retain one
+waiter; the worker follows the replacement without recapturing the child.
+
+Native export review found that receipts selected host files instead of
+export-platform files. The correction runs the host digest helper under the
+export's GOOS, GOARCH, CGO and build tags. Regression tests change host-only,
+target-only, CGO and tagged files independently. The complete builder race
+suite passes on Hetzner job `20261109T001559Z-2250586` (14 seconds, exit 0),
+bound to the exact four owned files in `review-export-race-0021.json`.
+Publication is accepted; landing and installed behavior remain unproved.
+A preceding empty-candidate setup failure is retained separately and did not
+run Go tests. The corrected candidate was validated before submission.
+
+Peer commits `d6d1a1c` and `a6cee30` reduce short-lock handoff delays and app
+refresh layout work. Source review confirms that terminal writer durability,
+private refresh serialization and manual progress remain in place. These
+commits are newer than the installed CLI/app evidence above; no installed
+latency or CPU gain is claimed for them yet.
 
 WORK-41 remains in progress. Writer completion and latency, queue delivery,
 scheduler evidence, a real administrator-authorized trace and actual elapsed
@@ -208,6 +222,15 @@ remains in progress. The final outcome and timed re-check instructions are in
 Scratchpad Agents note `01M6YN14GE6XF01K51JDR6SPMA`, read back successfully.
 
 ## Self-review
+
+The export regression test found a receipt-authority defect that ordinary
+Linux-only tests could miss. Build provenance must select the target source
+closure even when the helper runs on another host. Target-file mutation tests
+now check that boundary. The review also caused avoidable invalid command
+calls by guessing positional arguments and time formats. Read command help
+and resolve paths before invoking diagnostics; retain those failures in the
+telemetry rather than deleting them.
+
 
 The final gate review also found that root Make targets and CI used fixed
 package lists. Those lists omitted the release observer, compiler adapter,
