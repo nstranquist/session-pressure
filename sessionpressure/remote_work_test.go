@@ -125,3 +125,20 @@ func TestNormalizeRemoteBuildArgv(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoteDeliveryLineageForwardsOnlyValidIDs(t *testing.T) {
+	env := map[string]string{
+		"NDEV_COMMIT_DELIVERY_ID":     "35513d6a-fb2a-45cf-a3dd-e87fbbc389cd",
+		"NDEV_COMMIT_DELIVERY_RUN_ID": "2e500cbf-02d5-442f-a7a3-740659369d57",
+	}
+	got := remoteDeliveryLineage(func(k string) string { return env[k] })
+	want := " NCD_DELIVERY_ID=35513d6a-fb2a-45cf-a3dd-e87fbbc389cd NCD_RUN_ID=2e500cbf-02d5-442f-a7a3-740659369d57"
+	if got != want {
+		t.Fatalf("lineage = %q, want %q", got, want)
+	}
+	env["NDEV_COMMIT_DELIVERY_ID"] = "x; rm -rf /"
+	env["NDEV_COMMIT_DELIVERY_RUN_ID"] = ""
+	if got := remoteDeliveryLineage(func(k string) string { return env[k] }); got != "" {
+		t.Fatalf("invalid IDs forwarded: %q", got)
+	}
+}

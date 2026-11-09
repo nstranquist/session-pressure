@@ -210,6 +210,27 @@ func remoteModuleClosure(start string) ([]string, string, error) {
 	return modules, common, nil
 }
 
+// remoteDeliveryLineage tags a job with the commit delivery that spawned it.
+// The worker exports its delivery and run IDs to derived-output generators;
+// without the tag their child builds queued at background priority behind
+// recurring diagnostics while the delivery itself held urgent priority
+// (2026-11-09, delivery 35513d6a). The runner derives the child's priority
+// from the delivery's marks; the IDs alone grant nothing.
+func remoteDeliveryLineage(getenv func(string) string) string {
+	out := ""
+	for _, pair := range [][2]string{
+		{"NDEV_COMMIT_DELIVERY_ID", "NCD_DELIVERY_ID"},
+		{"NDEV_COMMIT_DELIVERY_RUN_ID", "NCD_RUN_ID"},
+	} {
+		if value := getenv(pair[0]); remoteLineageID.MatchString(value) {
+			out += " " + pair[1] + "=" + value
+		}
+	}
+	return out
+}
+
+var remoteLineageID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
 // remoteEnumerateTimeout bounds one repository input scan.
 const remoteEnumerateTimeout = 60 * time.Second
 
@@ -529,7 +550,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	}
 	// The canonical runner retains source inputs before durable submission.
 	// The command starts at the retained common root, preserving replacements.
-	command = "env NCD_RUNNER_FRAMED=1 NCD_RUNNER_CLASS=" + lane + " NCD_RUNNER_KEY=" + shellQuote("pressure-"+job) + " /srv/build/run-job.sh session-pressure " + shellQuote("session-pressure:"+job) + " --candidate-dir " + shellQuote(remote+"/source") + " --timeout 1800 --shell " + shellQuote(command)
+	command = "env NCD_RUNNER_FRAMED=1 NCD_RUNNER_CLASS=" + lane + remoteDeliveryLineage(os.Getenv) + " NCD_RUNNER_KEY=" + shellQuote("pressure-"+job) + " /srv/build/run-job.sh session-pressure " + shellQuote("session-pressure:"+job) + " --candidate-dir " + shellQuote(remote+"/source") + " --timeout 1800 --shell " + shellQuote(command)
 	command = "if test -x /srv/build/gaterunner && /srv/build/gaterunner inspect --key " + shellQuote("pressure-"+job) + " >/dev/null 2>&1; then exec env NCD_RUNNER_FRAMED=1 /srv/build/gaterunner wait --key " + shellQuote("pressure-"+job) + "; else exec " + command + "; fi"
 	if streams.Stderr != nil {
 		fmt.Fprintln(streams.Stderr, "session-pressure: routing Go work to "+policy.Host+" ("+profile+", durable runner queue, "+lane+" lane, parallelism "+parallel+")")
