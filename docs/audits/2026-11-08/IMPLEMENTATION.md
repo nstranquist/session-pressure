@@ -37,10 +37,11 @@ controlled observation is required after stable recovery. The earlier passed
 performance gate despite passing 22 deterministic scenarios and safety gates.
 
 Collector source `7d8ddcf` retains valid unhealthy audit payloads with documented
-exit 1, while strict reads still reject command failures. Remote race/vet/native
-build job `a31b483c-9959-4a29-88cd-a8310711236a` is queued; the previously tested
-`67d7a147` helper remains installed until that job passes. Collection remains
-fail-closed. Factory benchmark delivery `b244072a-2230-4fa3-b791-2a9b06d2efed`
+exit 1, while strict reads still reject command failures. Remote race tests and
+vet passed in job `a31b483c-9959-4a29-88cd-a8310711236a`. The native helper was
+verified clean at that exact revision and installed with SHA-256
+`72ebbe14474bf64dbd3b500c5ced776c24268a572b1174481214b61727bb5a5c`.
+The hourly schedule is unchanged and collection remains fail-closed. Factory benchmark delivery `b244072a-2230-4fa3-b791-2a9b06d2efed`
 is accepted, not yet landed. Queue delay and sustained/replay/72-hour acceptance
 remain open; healthy installation alone does not prove them resolved.
 
