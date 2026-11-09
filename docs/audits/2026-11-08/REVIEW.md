@@ -6,6 +6,52 @@ This report states the review findings and the remaining acceptance conditions.
 Private receipts are under `~/.nicos-dev/session-pressure/acceptance/2026-11-08/`.
 
 
+Current checkpoint (**2026-11-09 04:04 UTC**, session `01a1bc3b`):
+The installed product remains **631f374**; its continuous observer is preserved.
+An independent, hourly combined collector now checks exact installed identities,
+72-hour stability, both two-hour writer authorities, and all live replay gates.
+It never promotes a release or changes policy. Collection failures clear any
+previous pass. Remote race tests and vet pass; live scheduled collection retains
+both the audit and the unsatisfied `work evaluate` report (documented exit 1).
+Helper source: `249e616` plus `67d7a147`; installed immutable
+helper SHA-256 `b4ecc4cd21b0d894565f17138acf2430af1302bc869c18aa2cff82e985ae6cf1`.
+Receipts: `combined-collector-install.json`, `combined-acceptance-current.json`,
+and `combined-acceptance-live-fix-build.log`.
+
+Safe typed cleanup reclaimed approximately **7.3 GiB** from pnpm and npm caches,
+raising available storage from about **46.4 GiB** to **53.3 GiB**. Go now uses
+`GOCACHEPROG=~/.local/bin/gocache-lru -max 8GiB`; this is an LRU target, with
+active client pins allowed to exceed it temporarily. The old approximately
+20.5 GiB cache remains separate. Nico explicitly accepted its rebuild cost;
+retirement waits for an idle build window and retains provider ownership checks.
+No Trash, archives, module caches, or simulator data were deleted.
+Live diagnosis also found a false owner: the unanchored process pattern matches
+a remote Go command inside an SSH argument. A narrow executable-anchored repair
+adds go-run coverage and regression cases for real local commands and SSH.
+The repair is committed at `901efec`, with remote race validation and a native
+one-operation CLI build queued. The installed631f374 check remains
+conservative until a future product release. No ownership guard was bypassed.
+
+New target-filesystem benchmarks separate authority, append, and close costs.
+All measured cohorts pass integrity checks. Factory p95 was **12.592, 10.118,
+and 7.437 ms**; standalone product p95 remained **28.753, 43.013, and 34.169 ms**
+after the first cleanup. The natural two-hour audit still exceeds the 25 ms
+target for both writers, with **zero failed or missing events**. Sustained
+performance is not accepted; no durability barrier, threshold, or history was
+removed. Benchmark source is committed at `19b4f8b`; factory benchmark delivery
+`b244072a-2230-4fa3-b791-2a9b06d2efed` is accepted, not yet landed.
+
+The delivery worker is now installed at **a3f271b8**, SHA-256 `333c23ec…`, version
+2.35.0: healthy, configuration current, no restart required. This includes
+batching and dependency-input producer cache keys. Scheduler runtime is
+**bd1ed75** and retains its separate 24-hour observation. The latest canonical
+helper race job passed, but a delivery backlog remains; installation alone does
+not prove queue-delay recovery. The live replay passes all 22 deterministic
+scenarios and safety/calibration/selector gates; its **performance gate remains
+false**. Pending class samples are a separate condition, not the sole blocker.
+The combined collector preserves both conditions. The 72-hour deadline remains
+**November 12 03:20:57 UTC** (November 11, 9:20:57 PM Central).
+
 Current checkpoint (**2026-11-09 03:22 UTC**, promoter session `01a1bc3b`):
 Product **631f37441fc04659f4749e26e66067014c7377ed** is installed in the CLI,
 API, helper and all three factory front doors. The factory cutoff remains
