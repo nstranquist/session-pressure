@@ -176,10 +176,13 @@ public struct GateRunnerInspection: Decodable, Sendable {
     public let boxError: String?
     public let jobs: [BoxJob]
     public let health: BoxHealth?
+    /// Runner-live fleet section; nil until the poller store exists on
+    /// this Mac (the key is then absent from the inspection JSON).
+    public let live: LiveSection?
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case capturedAt = "captured_at"
-        case runs, config, jobs, health
+        case runs, config, jobs, health, live
         case ledgerSignature = "ledger_signature"
         case ledgerUnchanged = "ledger_unchanged"
         case ledgerPresent = "ledger_present"
@@ -190,4 +193,127 @@ public struct GateRunnerInspection: Decodable, Sendable {
         case boxReachable = "box_reachable"
         case boxError = "box_error"
     }
+}
+
+
+// MARK: - Runner-live fleet (runner-live.sqlite, RUNNER-LIVENESS-DESIGN §3)
+//
+// The Mac poller keeps one SQLite store of per-host liveness: latest
+// heartbeat per job plus its evaluated verdict, host vitals, and poll
+// health. The inspection carries it as an optional section — when the
+// store does not exist yet the key is absent and the tab renders its
+// legacy ledger + primary-box view unchanged.
+
+/// One job's latest live record on a host. Terminal rows surface under
+/// recent runs (or kills, when the runner stall-killed the job).
+public struct LiveJob: Decodable, Identifiable, Sendable {
+    public let jobID: String
+    public let deliveryID: String?
+    public let repo: String
+    public let sha: String?
+    public let jobClass: String?
+    public let phase: String
+    public let state: String?
+    public let verdict: String
+    public let enqueuedAt: Date?
+    public let startedAt: Date?
+    public let finishedAt: Date?
+    public let updatedAt: Date?
+    public let elapsedS: Int64?
+    public let queueWaitS: Int64?
+    public let lastOutputAgeS: Int64?
+    public let cpuPct: Double?
+    public let rssMB: Double?
+    public let exitCode: Int64?
+    public let detail: String?
+
+    public var id: String { jobID }
+    public var isStalled: Bool { verdict == "STALLED" }
+
+    enum CodingKeys: String, CodingKey {
+        case jobID = "job_id"
+        case deliveryID = "delivery_id"
+        case repo, sha
+        case jobClass = "class"
+        case phase, state, verdict
+        case enqueuedAt = "enqueued_at"
+        case startedAt = "started_at"
+        case finishedAt = "finished_at"
+        case updatedAt = "updated_at"
+        case elapsedS = "elapsed_s"
+        case queueWaitS = "queue_wait_s"
+        case lastOutputAgeS = "last_output_age_s"
+        case cpuPct = "cpu_pct"
+        case rssMB = "rss_mb"
+        case exitCode = "exit_code"
+        case detail
+    }
+}
+
+/// A stall auto-kill receipt (design §5): the runner stopped the job for
+/// silence + idle CPU + elapsed beyond its class bound. Surfaced
+/// distinctly from ordinary failures — a kill is the system working as
+/// configured, and the first-week kill report audits exactly these rows.
+public struct KillEvent: Decodable, Identifiable, Sendable {
+    public let jobID: String
+    public let deliveryID: String?
+    public let jobClass: String?
+    public let at: Date?
+    public let elapsedS: Int64?
+    public let lastOutputAgeS: Int64?
+    public let cpuPct: Double?
+    public let detail: String?
+
+    public var id: String { jobID }
+
+    enum CodingKeys: String, CodingKey {
+        case jobID = "job_id"
+        case deliveryID = "delivery_id"
+        case jobClass = "class"
+        case at
+        case elapsedS = "elapsed_s"
+        case lastOutputAgeS = "last_output_age_s"
+        case cpuPct = "cpu_pct"
+        case detail
+    }
+}
+
+/// Per-host liveness: vitals and poll health from runner_hosts, the
+/// in-flight jobs, the newest terminal receipts, and stall kills.
+/// feedStale means the poller itself has gone quiet (>60 s) — the host
+/// renders grey, never as an idle fleet.
+public struct LiveHost: Decodable, Identifiable, Sendable {
+    public let host: String
+    public let runnerVersion: String?
+    public let load1: Double?
+    public let diskFreeGB: Double?
+    public let cacheGB: Double?
+    public let lastPollAt: Date?
+    public let pollError: String?
+    public let feedStale: Bool
+    public let liveJobs: [LiveJob]
+    public let recentRuns: [LiveJob]
+    public let kills: [KillEvent]
+
+    public var id: String { host }
+
+    enum CodingKeys: String, CodingKey {
+        case host
+        case runnerVersion = "runner_version"
+        case load1
+        case diskFreeGB = "disk_free_gb"
+        case cacheGB = "cache_gb"
+        case lastPollAt = "last_poll_at"
+        case pollError = "poll_error"
+        case feedStale = "feed_stale"
+        case liveJobs = "live_jobs"
+        case recentRuns = "recent_runs"
+        case kills
+    }
+}
+
+public struct LiveSection: Decodable, Sendable {
+    public let present: Bool
+    public let error: String?
+    public let hosts: [LiveHost]
 }

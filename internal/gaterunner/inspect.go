@@ -85,22 +85,23 @@ type Job struct {
 	Command         string     `json:"command"`
 }
 type Inspection struct {
-	Host             string    `json:"host"`
-	SchemaVersion    int       `json:"schema_version"`
-	CapturedAt       time.Time `json:"captured_at"`
-	Runs             []Run     `json:"runs"`
-	Config           *Config   `json:"config"`
-	LedgerSignature  string    `json:"ledger_signature"`
-	LedgerUnchanged  bool      `json:"ledger_unchanged"`
-	LedgerPresent    bool      `json:"ledger_present"`
-	HistoryTruncated bool      `json:"history_truncated"`
-	MalformedRows    int       `json:"malformed_rows"`
-	LocalError       string    `json:"local_error,omitempty"`
-	BoxRequested     bool      `json:"box_requested"`
-	BoxReachable     bool      `json:"box_reachable"`
-	BoxError         string    `json:"box_error,omitempty"`
-	Jobs             []Job     `json:"jobs"`
-	Health           *Health   `json:"health"`
+	Host             string       `json:"host"`
+	SchemaVersion    int          `json:"schema_version"`
+	CapturedAt       time.Time    `json:"captured_at"`
+	Runs             []Run        `json:"runs"`
+	Config           *Config      `json:"config"`
+	LedgerSignature  string       `json:"ledger_signature"`
+	LedgerUnchanged  bool         `json:"ledger_unchanged"`
+	LedgerPresent    bool         `json:"ledger_present"`
+	HistoryTruncated bool         `json:"history_truncated"`
+	MalformedRows    int          `json:"malformed_rows"`
+	LocalError       string       `json:"local_error,omitempty"`
+	BoxRequested     bool         `json:"box_requested"`
+	BoxReachable     bool         `json:"box_reachable"`
+	BoxError         string       `json:"box_error,omitempty"`
+	Jobs             []Job        `json:"jobs"`
+	Health           *Health      `json:"health"`
+	Live             *LiveSection `json:"live,omitempty"`
 }
 
 // Inspect retains errors in its contract rather than inventing an empty,
@@ -123,6 +124,10 @@ func InspectSince(ctx context.Context, home string, includeBox bool, known strin
 	} else {
 		s.Runs = runs
 	}
+	// The runner-live store is read on every inspection (local, bounded,
+	// query-only); an absent store leaves Live nil and clients render the
+	// legacy ledger + primary-box view unchanged.
+	s.Live = readLiveSection(ctx, filepath.Join(dir, liveStoreName), s.CapturedAt)
 	config, err := readConfig(filepath.Join(dir, "gate-delegate.json"))
 	if err != nil {
 		s.LocalError = strings.TrimSpace(s.LocalError + " delegate_config_read_failed")

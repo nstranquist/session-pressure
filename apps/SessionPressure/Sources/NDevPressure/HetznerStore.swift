@@ -69,6 +69,10 @@ final class HetznerStore: ObservableObject {
     @Published private(set) var boxFetchedAt: Date?
     @Published private(set) var boxReachable = false
     @Published private(set) var boxError: String?
+    @Published private(set) var liveHosts: [LiveHost] = []
+    @Published private(set) var livePresent = false
+    @Published private(set) var liveError: String?
+    @Published private(set) var liveCheckedAt: Date?
     @Published private(set) var refreshing = false
     @Published var selectedJobID: String?
     @Published private(set) var jobLog: String?
@@ -157,6 +161,20 @@ final class HetznerStore: ObservableObject {
                     self.delegateConfig = s.config
                     self.ledgerPresent = s.ledgerPresent
                     self.ledgerCheckedAt = s.capturedAt
+                }
+                if let live = s.live {
+                    self.liveError = live.error
+                    self.livePresent = live.present
+                    if live.present {
+                        self.liveHosts = live.hosts
+                        self.liveCheckedAt = s.capturedAt
+                    }
+                } else {
+                    // No runner-live store on this Mac yet: the tab keeps
+                    // its legacy ledger + primary-box rendering.
+                    self.livePresent = false
+                    self.liveError = nil
+                    self.liveHosts = []
                 }
                 if s.boxRequested {
                     self.boxReachable = s.boxReachable
