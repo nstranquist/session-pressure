@@ -522,12 +522,18 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		}
 		policy.Host, policy.User = binding.Host.Name, binding.Host.User
 	}
+	var sourceUploadMode string
+	var sourceFilesSent int
+	var sourceBytesSent int64
 	defer func() {
 		finishStage()
 		event := map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "timing_ms": timingMS, "source_bytes": sourceBytes, "delivery_id": os.Getenv("NDEV_COMMIT_DELIVERY_ID"), "operation": options.Command[1], "profile": profile, "runner_host": policy.Host, "runner_user": policy.User, "request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0}
 		// The shared SQLite telemetry projection retains scalar attributes.
 		for stage, ms := range timingMS {
 			event[stage] = ms
+		}
+		if sourceUploadMode != "" {
+			event["source_upload_mode"], event["source_files_sent"], event["source_bytes_sent"] = sourceUploadMode, sourceFilesSent, sourceBytesSent
 		}
 		recordControlEvent(dir, event)
 	}()
@@ -555,22 +561,33 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	}
 	// Upload/extraction has one bounded host-wide preparation lane, separate
 	// from the scheduler's execution slot. A stalled sender cannot hold it forever.
-	upload := ssh("timeout 600 flock -w 600 /srv/build/input-transfer.lock sh -c " + shellQuote("umask 077; mkdir -p "+shellQuote(remote+"/source")+" && printf '%s\n' "+shellQuote("pressure-"+job)+" > "+shellQuote(remote+".request")+" && tar -xzf - -C "+shellQuote(remote+"/source")))
 	nextStage("source_upload_ms")
-	pipe, err := upload.StdinPipe()
-	if err != nil {
-		return true, 1, err
+	uploadMode, uploadFiles, uploadBytes := remoteUploadFull, 0, int64(0)
+	if remoteSourceDeltaEnabled() {
+		up, deltaErr := uploadRemoteSourcesDelta(ssh, streams.Stderr, dir, policy.Host, remote, "pressure-"+job, common, modules, scope)
+		if deltaErr != nil {
+			return true, 1, fmt.Errorf("remote source upload failed (%s): %w", up.mode, deltaErr)
+		}
+		uploadMode, uploadFiles, uploadBytes = up.mode, up.files, up.bytes
+	} else {
+		upload := ssh("timeout 600 flock -w 600 /srv/build/input-transfer.lock sh -c " + shellQuote("umask 077; mkdir -p "+shellQuote(remote+"/source")+" && printf '%s\n' "+shellQuote("pressure-"+job)+" > "+shellQuote(remote+".request")+" && tar -xzf - -C "+shellQuote(remote+"/source")))
+		pipe, err := upload.StdinPipe()
+		if err != nil {
+			return true, 1, err
+		}
+		upload.Stderr = streams.Stderr
+		if err = upload.Start(); err != nil {
+			return true, 1, err
+		}
+		writeErr := writeRemoteSources(pipe, modules, common, scope)
+		_ = pipe.Close()
+		err = upload.Wait()
+		if writeErr != nil || err != nil {
+			return true, 1, fmt.Errorf("remote source upload failed: %w", errors.Join(writeErr, err))
+		}
+		uploadBytes = sourceBytes
 	}
-	upload.Stderr = streams.Stderr
-	if err = upload.Start(); err != nil {
-		return true, 1, err
-	}
-	writeErr := writeRemoteSources(pipe, modules, common, scope)
-	_ = pipe.Close()
-	err = upload.Wait()
-	if writeErr != nil || err != nil {
-		return true, 1, fmt.Errorf("remote source upload failed: %w", errors.Join(writeErr, err))
-	}
+	sourceUploadMode, sourceFilesSent, sourceBytesSent = uploadMode, uploadFiles, uploadBytes
 	cleanupSafe := false
 	defer func() {
 		nextStage("cleanup_ms")
