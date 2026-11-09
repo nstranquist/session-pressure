@@ -76,8 +76,8 @@ run: install
 	@open -na "$(INSTALLED_APP)"
 
 verify-signing:
-	@codesign --verify --deep --strict "$(APP_DIR)"
-	@codesign --verify --strict "$(APP_DIR)/Contents/Library/LaunchServices/$(TRACE_HELPER)"
+	@codesign --verify --deep --strict -R='anchor apple generic' "$(APP_DIR)"
+	@codesign --verify --strict -R='anchor apple generic' "$(APP_DIR)/Contents/Library/LaunchServices/$(TRACE_HELPER)"
 	@app_team="$$(codesign -dv --verbose=4 "$(APP_DIR)" 2>&1 | sed -n 's/^TeamIdentifier=//p')"; \
 	  helper_team="$$(codesign -dv --verbose=4 "$(APP_DIR)/Contents/Library/LaunchServices/$(TRACE_HELPER)" 2>&1 | sed -n 's/^TeamIdentifier=//p')"; \
 	  if [ -z "$$app_team" ] || [ "$$app_team" = not\ set ] || [ "$$app_team" != "$$helper_team" ]; then \
