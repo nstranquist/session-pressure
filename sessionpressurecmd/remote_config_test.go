@@ -40,9 +40,9 @@ func TestRemoteHelpDoesNotChangeEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"--help"}, {"enable", "--help"}, {"help"}} {
+	for _, args := range [][]string{{"--help"}, {"enable", "--help"}, {"inspect", "--help"}, {"job-log", "--help"}, {"help"}} {
 		rc, out, errOut := captureMainOutput(t, func() int { return cmdSessionPressureRemote(&Flags{}, args) })
-		if rc != 0 || !strings.Contains(out, "--host HOST") || errOut != "" {
+		if rc != 0 || !strings.Contains(out, "--host HOST") || !strings.Contains(out, "--known-ledger SHA256") || !strings.Contains(out, "--id JOB") || errOut != "" {
 			t.Fatalf("help: rc=%d stdout=%q stderr=%q", rc, out, errOut)
 		}
 	}
