@@ -269,11 +269,13 @@ struct ControlPlaneSettingsSection: View {
         }
 
         Section("Local API") {
-            LabeledContent("Transport") {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Transport")
                 Text(NDevPressureAPIClient.transport(environment: ClientFactory.environment()).summary)
                     .font(PressureTheme.monoCaption)
+                    .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .help(PressureHelp.apiTransport)
             PathOverrideRow(title: "Socket", key: AppPreferenceKey.apiSocketOverride, resolved: nil, source: nil,
@@ -452,7 +454,7 @@ struct GuardConfigurationSection: View {
             LabeledContent("Disk-trace helper", value: PrivilegedTraceClient.helperStatusLabel)
 
             if let at = store.board.sectionRefreshedAt["policy"] {
-                LabeledContent("Read", value: PressureFormat.relative(at))
+                LabeledContent("Read") { ReadAgeView(date: at) }
             }
             if let error = store.board.sectionErrors["policy"] ?? store.board.sectionErrors["monitor"] {
                 Text(error).font(.caption).foregroundStyle(.red)
