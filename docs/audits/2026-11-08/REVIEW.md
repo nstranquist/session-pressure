@@ -6,6 +6,49 @@ This report states the review findings and the remaining acceptance conditions.
 Private receipts are under `~/.nicos-dev/session-pressure/acceptance/2026-11-08/`.
 
 
+Current checkpoint (**2026-11-09 03:22 UTC**, promoter session `01a1bc3b`):
+Product **631f37441fc04659f4749e26e66067014c7377ed** is installed in the CLI,
+API, helper and all three factory front doors. The factory cutoff remains
+`9c9a19991f50b110437a9a456b28479fd7d31ff0`; its signed installed SHA-256 is
+`0a6c61f31b267fedeeaeb026a800af9387e0d24e7ca298b3e784866f0b719c54`.
+This release includes the previous recovery/evaluator/browser fixes plus
+`cfdf3fc` and `631f374`: the shared upload/extraction lane is bounded to 600
+seconds, and its private retention marker stays outside the source tree.
+The pinned release passed full race tests, vet, native sampling, manifest
+hash checks, and native SQLite tests before and after publication. Receipts:
+`review-final-remote-0310.log`, `final631-artifacts.json`, and
+`final631-sqlite-{prepublish,installed}.log`.
+
+The installed doctor is healthy with no warnings, normal host pressure, no
+queued local work, and matching revisions. Browser mode is Auto with a
+120-second bound. The latest inventory is empty; a peer's temporary proof
+session ended during closeout. The final non-actuating policy fixture records
+exactly one `policy_block` / `policy_denied` completion and opens no browser.
+All **22 deterministic evaluator scenarios pass**; historical replay still
+withholds promotion because some classes lack enough terminal-runtime samples.
+
+The exact installed 100-call writer cohort records 100 attempted, 100 written,
+zero failures, p95 histogram upper bound **25 ms**, maximum **29.166 ms**.
+Prior 10 ms and 50 ms cohorts remain in the record. The natural two-hour audit
+still warns about writer latency, so sustained performance is **not accepted**.
+Durability, thresholds and historical rows remain unchanged. The telemetry
+diff retains the baseline and reports no dropped sources; mixed agent traffic
+prevents a causal performance claim.
+
+App **1.4.11 build 19** is unchanged. Its live privileged trace, 94 tests and
+30-minute idle acceptance remain valid. The old CLI observer was stopped and
+preserved before promotion. The fresh immutable observer passed 100 reads per
+surface with no failures: status p95 **73.244 ms**, board **57.016 ms**, rich
+**193.591 ms**. Continuous monitoring began **November 9 03:20:57 UTC**;
+the 72-hour deadline is **November 12 03:20:57 UTC**. See
+`product631f-observer-setup.json` and its linked observation. The observer is
+running with explicit benchmark provenance. Elapsed-time acceptance is pending.
+
+Remaining acceptance is limited to sustained writer latency, the exact cohort's
+continuous 72-hour observation, and sufficient historical replay samples.
+Shared Hetzner queue delay is measured separately from test execution time;
+parallel scheduler/delivery changes retain their existing owners.
+
 Current checkpoint (**2026-11-09 03:00 UTC**, promoter session `01a1bc3b`):
 The recovery scan bound **201ed628 / fe1b11e** and single browser completion
 **81f1f8a6 / 9c9a199** are landed and installed in all three factory front doors.
