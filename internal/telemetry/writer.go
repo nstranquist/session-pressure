@@ -287,9 +287,14 @@ func RecordCommandResult(action string, started time.Time, exit int, gateNotSati
 	}
 	if b.Attempted == 1 || state.MaintenanceError {
 		maintenanceErr := pruneCommandStreams(dir, now.Add(-35*24*time.Hour))
-		state.MaintenanceError = maintenanceErr != nil
-		if err := writeState(health, state); err != nil {
-			return err
+		// The terminal state is already durable. Only persist again when
+		// maintenance changes its error flag; successful cleanup normally
+		// leaves it unchanged and needs no fourth fsync.
+		if maintenanceFailed := maintenanceErr != nil; state.MaintenanceError != maintenanceFailed {
+			state.MaintenanceError = maintenanceFailed
+			if err := writeState(health, state); err != nil {
+				return err
+			}
 		}
 		return maintenanceErr
 	}
