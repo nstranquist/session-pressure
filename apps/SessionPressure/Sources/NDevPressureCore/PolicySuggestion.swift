@@ -5,6 +5,9 @@ import Foundation
 public struct WorkReviewSignals: Codable, Sendable, Hashable {
     public var cancelledOperations: Int?
     public var wrapperInterruptOperations: Int?
+    public var signalCancelOperations: Int?
+    public var waitTimeoutOperations: Int?
+    public var legacyInterruptOperations: Int?
     public var longWaitOperations: Int?
     public var reservationDeferrals: Int?
     public var singleflightWaits: Int?
@@ -13,6 +16,9 @@ public struct WorkReviewSignals: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case cancelledOperations = "cancelled_operations"
         case wrapperInterruptOperations = "wrapper_interrupt_operations"
+        case signalCancelOperations = "signal_cancel_operations"
+        case waitTimeoutOperations = "wait_timeout_operations"
+        case legacyInterruptOperations = "legacy_interrupt_operations"
         case longWaitOperations = "long_wait_operations"
         case reservationDeferrals = "reservation_deferrals"
         case singleflightWaits = "singleflight_waits"
@@ -22,6 +28,9 @@ public struct WorkReviewSignals: Codable, Sendable, Hashable {
     public init(
         cancelledOperations: Int? = nil,
         wrapperInterruptOperations: Int? = nil,
+        signalCancelOperations: Int? = nil,
+        waitTimeoutOperations: Int? = nil,
+        legacyInterruptOperations: Int? = nil,
         longWaitOperations: Int? = nil,
         reservationDeferrals: Int? = nil,
         singleflightWaits: Int? = nil,
@@ -29,6 +38,9 @@ public struct WorkReviewSignals: Codable, Sendable, Hashable {
     ) {
         self.cancelledOperations = cancelledOperations
         self.wrapperInterruptOperations = wrapperInterruptOperations
+        self.signalCancelOperations = signalCancelOperations
+        self.waitTimeoutOperations = waitTimeoutOperations
+        self.legacyInterruptOperations = legacyInterruptOperations
         self.longWaitOperations = longWaitOperations
         self.reservationDeferrals = reservationDeferrals
         self.singleflightWaits = singleflightWaits

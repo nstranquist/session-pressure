@@ -7,18 +7,9 @@ struct TelemetryView: View {
     private var events: [TelemetryEvent] { store.board.telemetryEvents }
     private var actions: [PressureAction] { store.board.reliefActions }
 
-    /// Latest non-zero interrupt projection from heartbeat summaries or board calibration.
-    private var interruptForensics: (count: Int, rate: Double?) {
-        if let cal = store.board.calibration, cal.interruptCount > 0 {
-            let rate = cal.interruptProjection?.wrapperInterruptRatePerHour
-            return (cal.interruptCount, rate)
-        }
-        for event in events.reversed() {
-            if let n = event.summary?.wrapperInterruptOperations, n > 0 {
-                return (n, event.summary?.wrapperInterruptRatePerHour)
-            }
-        }
-        return (store.board.wrapperInterruptOperations, store.board.calibration?.interruptProjection?.wrapperInterruptRatePerHour)
+    private var interruptForensics: WorkCancellationTelemetry? {
+        guard store.board.sectionErrors["calibration"] == nil else { return nil }
+        return WorkCancellationTelemetry(calibration: store.board.calibration)
     }
 
     var body: some View {
@@ -67,29 +58,34 @@ struct TelemetryView: View {
         .background(PressureTheme.bg)
     }
 
-    @ViewBuilder
     private var interruptChipCard: some View {
-        let forensics = interruptForensics
         SectionCard(
-            title: "Wrapper interrupt forensics",
-            systemImage: "exclamationmark.shield",
-            trailing: forensics.count > 0 ? "\(forensics.count)" : "0"
+            title: "Interruptions & wait timeouts",
+            systemImage: "clock.arrow.circlepath",
+            trailing: "Last 24 hours"
         ) {
-            if forensics.count > 0 {
-                HStack(spacing: 10) {
-                    StatusChip(label: "wrapper interrupts \(forensics.count)", ok: false)
-                    if let rate = forensics.rate {
-                        Text(String(format: "%.2f / hour", rate))
-                            .font(PressureTheme.monoCaption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
+            if let counts = interruptForensics {
+                HStack(spacing: 16) {
+                    Text("Signal cancellations: \(counts.signalCancellations)")
+                    Text("Wait timeouts: \(counts.waitTimeouts)")
                 }
-                Text("Counts only — closed cancel outcomes (wrapper_interrupt / signal_interrupt). No argv.")
+                .font(PressureTheme.monoCaption)
+                if counts.unspecifiedInterruptions > 0 {
+                    Text("Unspecified interruptions: \(counts.unspecifiedInterruptions)")
+                        .font(PressureTheme.monoCaption)
+                    Text(PressureHelp.legacyInterruptions)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if counts.total == 0 {
+                    Text("No interruptions or wait timeouts in the last 24 hours.")
+                        .foregroundStyle(.secondary)
+                }
+                Text(PressureHelp.workCancellationHistory)
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
             } else {
-                Text("No wrapper-interrupt signals in the 24h work/telemetry window.")
+                Text("Current interruption counts unavailable. Refresh to retry.")
                     .foregroundStyle(.secondary)
             }
         }
@@ -113,7 +109,7 @@ struct TelemetryView: View {
                         .font(PressureTheme.monoCaption)
                         .foregroundStyle(.secondary)
                     if let n = summary.wrapperInterruptOperations, n > 0 {
-                        Text("wrapper interrupts \(n)\(summary.wrapperInterruptRatePerHour.map { String(format: " · %.2f/h", $0) } ?? "")")
+                        Text("Interrupt/cancel count \(n)\(summary.wrapperInterruptRatePerHour.map { String(format: " · %.2f/h", $0) } ?? "")")
                             .font(PressureTheme.monoCaption)
                             .foregroundStyle(.orange)
                     }

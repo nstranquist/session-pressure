@@ -553,7 +553,7 @@ final class PressureStore: ObservableObject {
                     includePolicy: board.policy == nil || selectedSection == .policy,
                     includeMonitor: board.launchd == nil || selectedSection == .monitor,
                     includeDoctor: selectedSection == .overview || selectedSection == .monitor,
-                    includeCalibration: selectedSection == .overview || selectedSection == .work,
+                    includeCalibration: selectedSection == .overview || selectedSection == .work || selectedSection == .telemetry,
                     previous: board
                 )
             }
