@@ -379,6 +379,8 @@ type WorkEventFilter struct {
 type WorkEventStore struct {
 	Dir string
 	Now func() time.Time
+	// scanOnly bypasses the SQLite read index (benchmarks and parity tests).
+	scanOnly bool
 }
 
 func NewWorkEventStore(dir string) *WorkEventStore {
@@ -438,14 +440,25 @@ func (store *WorkEventStore) AppendDurable(event WorkEvent) error {
 		return fmt.Errorf("lock work event ledger: %w", err)
 	}
 	defer unlock()
-	exists, err := workEventIDExists(path, event.EventID)
-	if err != nil {
-		return err
+	exists, indexErr := store.indexedWorkEventExists(path, event.EventID)
+	if indexErr != nil {
+		// The read index is an accelerator; the JSONL ledger stays authoritative.
+		exists, err = workEventIDExists(path, event.EventID)
+		if err != nil {
+			return err
+		}
 	}
 	if exists {
 		return nil
 	}
-	return jsonl.AppendLineDurable(path, body, 0o600)
+	if err := jsonl.AppendLineDurable(path, body, 0o600); err != nil {
+		return err
+	}
+	if indexErr == nil {
+		// Best effort: a failed import is retried by the next sync.
+		_ = store.indexAppendedWorkEvent(path)
+	}
+	return nil
 }
 
 func workEventIDExists(path, eventID string) (exists bool, resultErr error) {
@@ -474,6 +487,9 @@ func workEventIDExists(path, eventID string) (exists bool, resultErr error) {
 }
 
 func (store *WorkEventStore) operationHasTerminal(operationID string) (bool, error) {
+	if found, err := store.indexedOperationHasTerminal(operationID); err == nil {
+		return found, nil
+	}
 	paths, err := filepath.Glob(filepath.Join(store.Dir, "work-events-*.jsonl"))
 	if err != nil {
 		return false, err
@@ -529,34 +545,67 @@ func (store *WorkEventStore) readAll(filter WorkEventFilter) ([]WorkEvent, WorkE
 	if filter.OperationID != "" && !validPrivateID(filter.OperationID) {
 		return nil, WorkEventDiagnostics{}, errors.New("work event operation_id must be a 32-character lowercase hex identity")
 	}
-	paths, err := filepath.Glob(filepath.Join(store.Dir, "work-events-*.jsonl"))
-	if err != nil {
-		return nil, WorkEventDiagnostics{}, err
-	}
-	sort.Strings(paths)
-	rows := make([]WorkEvent, 0)
-	seen := map[string]struct{}{}
 	now := time.Now
 	if store.Now != nil {
 		now = store.Now
 	}
 	maximumTimestamp := now().UTC().Add(maximumWorkClockSkew)
+	rows, indexErr := store.indexedWorkEventRows(filter, maximumTimestamp)
+	if indexErr != nil && isWorkEventLedgerFault(indexErr) {
+		return nil, WorkEventDiagnostics{}, indexErr
+	}
+	if indexErr != nil {
+		var err error
+		rows, err = store.scanWorkEventRows(maximumTimestamp)
+		if err != nil {
+			return nil, WorkEventDiagnostics{}, err
+		}
+	}
+	return finishWorkEventRead(rows, filter)
+}
+
+// isWorkEventLedgerFault separates a structural fault in the ledger itself
+// (which the full scan would report identically) from an index problem
+// (which falls back to the scan).
+func isWorkEventLedgerFault(err error) bool {
+	message := err.Error()
+	return strings.Contains(message, "duplicate work event_id") ||
+		strings.Contains(message, "beyond allowed clock skew") ||
+		strings.Contains(message, "decode work event") ||
+		strings.Contains(message, "validate work event")
+}
+
+// scanWorkEventRows is the index-free full scan of every shard.
+func (store *WorkEventStore) scanWorkEventRows(maximumTimestamp time.Time) ([]WorkEvent, error) {
+	paths, err := filepath.Glob(filepath.Join(store.Dir, "work-events-*.jsonl"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(paths)
+	rows := make([]WorkEvent, 0)
+	seen := map[string]struct{}{}
 	for _, path := range paths {
 		fileRows, readErr := readWorkEventRows(path, WorkEventFilter{})
 		if readErr != nil {
-			return nil, WorkEventDiagnostics{}, readErr
+			return nil, readErr
 		}
 		for _, event := range fileRows {
 			if event.Timestamp.After(maximumTimestamp) {
-				return nil, WorkEventDiagnostics{}, fmt.Errorf("work event %s timestamp %s is beyond allowed clock skew", event.EventID, event.Timestamp.Format(time.RFC3339Nano))
+				return nil, fmt.Errorf("work event %s timestamp %s is beyond allowed clock skew", event.EventID, event.Timestamp.Format(time.RFC3339Nano))
 			}
 			if _, duplicate := seen[event.EventID]; duplicate {
-				return nil, WorkEventDiagnostics{}, fmt.Errorf("duplicate work event_id %s", event.EventID)
+				return nil, fmt.Errorf("duplicate work event_id %s", event.EventID)
 			}
 			seen[event.EventID] = struct{}{}
 			rows = append(rows, event)
 		}
 	}
+	return rows, nil
+}
+
+// finishWorkEventRead orders rows, drops operations whose lifecycle does not
+// validate, and applies the filter.
+func finishWorkEventRead(rows []WorkEvent, filter WorkEventFilter) ([]WorkEvent, WorkEventDiagnostics, error) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].Timestamp.Equal(rows[j].Timestamp) {
 			if rows[i].OperationID == rows[j].OperationID {
@@ -1005,6 +1054,8 @@ func (store *WorkEventStore) Prune(retentionDays int) error {
 			}
 		}
 	}
+	// Best effort: the next sync drops rows of removed shards anyway.
+	_ = store.pruneWorkEventIndex()
 	return nil
 }
 
