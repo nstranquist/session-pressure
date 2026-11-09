@@ -44,6 +44,12 @@ the 72-hour deadline is **November 12 03:20:57 UTC**. See
 `product631f-observer-setup.json` and its linked observation. The observer is
 running with explicit benchmark provenance. Elapsed-time acceptance is pending.
 
+The final exact installed automatic route also passed a real Linux test through
+canonical Hetzner admission: job `ee1bfd02-0415-4285-a7f8-982370744015`,
+receipt `final631-automatic-remote.log`. No local fallback occurred. Thirteen
+inactive superseded observer launch files were archived with their receipts
+preserved; only the current observer remains scheduled.
+
 Remaining acceptance is limited to sustained writer latency, the exact cohort's
 continuous 72-hour observation, and sufficient historical replay samples.
 Shared Hetzner queue delay is measured separately from test execution time;
