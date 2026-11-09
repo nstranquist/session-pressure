@@ -186,18 +186,23 @@ public struct NDevPressureClient: Sendable {
         return result
     }
 
-    public func gateRunnerInspection(includeBox: Bool = true, knownLedger: String? = nil) async throws -> GateRunnerEnvelope {
+    public func gateRunnerInspection(includeBox: Bool = true, knownLedger: String? = nil, host: String? = nil, user: String? = nil) async throws -> GateRunnerEnvelope {
         var args = ["--json", "session", "pressure", "remote", "inspect"]
+        if let host { args += ["--host", host] }
+        if let user { args += ["--user", user] }
         if !includeBox { args.append("--no-box") }
         if let knownLedger, !knownLedger.isEmpty { args += ["--known-ledger", knownLedger] }
         return try await runJSON(GateRunnerEnvelope.self, arguments: args,
                                  maximumResponseBytes: 2 * 1024 * 1024, timeoutSeconds: 16)
     }
 
-    public func gateRunnerJobLog(id: String) async throws -> String {
+    public func gateRunnerJobLog(id: String, host: String? = nil, user: String? = nil) async throws -> String {
         struct Envelope: Decodable { let ok: Bool; let log: String }
+        var args = ["--json", "session", "pressure", "remote", "job-log", "--id", id]
+        if let host { args += ["--host", host] }
+        if let user { args += ["--user", user] }
         let result = try await runJSON(Envelope.self,
-            arguments: ["--json", "session", "pressure", "remote", "job-log", "--id", id],
+            arguments: args,
             maximumResponseBytes: 1024 * 1024, timeoutSeconds: 16)
         guard result.ok else { throw NDevPressureClientError.emptyResponse }
         return result.log

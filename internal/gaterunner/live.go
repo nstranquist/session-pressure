@@ -19,7 +19,7 @@ import (
 // evaluated liveness verdict), runner_samples (raw history, not read
 // here). This reader is query-only and bounded like every other read in
 // the package, and it never invents data: an absent store omits the live
-// section entirely so clients render their legacy view, and a failed read
+// section entirely so clients can show availability explicitly, and a failed read
 // surfaces a stable error token instead of an empty fleet.
 
 const liveStoreName = "runner-live.sqlite"
@@ -94,15 +94,29 @@ func readLiveSection(ctx context.Context, path string, now time.Time) *LiveSecti
 		return &LiveSection{Present: false, Error: "runner_live_store_invalid", Hosts: []LiveHost{}}
 	}
 	section := &LiveSection{Present: true, Hosts: []LiveHost{}}
-	hostRows, err := queryRunnerLive(ctx, path,
-		"SELECT host, runner_version, load1, disk_free_gb, cache_gb, last_poll_at, poll_error FROM runner_hosts ORDER BY host;")
+	// Read one bounded snapshot with the poller's actual schema. Its state is
+	// authoritative; the desktop must not reevaluate the liveness policy.
+	rows, err := queryRunnerLive(ctx, path, liveSnapshotSQL)
 	if err != nil {
 		return &LiveSection{Present: false, Error: "runner_live_read_failed", Hosts: []LiveHost{}}
 	}
-	jobRows, err := queryRunnerLive(ctx, path,
-		"SELECT host, job_id, delivery_id, repo, sha, class, phase, state, verdict, enqueued_at, started_at, finished_at, updated_at, elapsed_s, queue_wait_s, last_output_age_s, cpu_pct, rss_mb, exit_code, detail FROM runner_jobs_current ORDER BY host, COALESCE(finished_at, updated_at) DESC LIMIT 900;")
-	if err != nil {
-		return &LiveSection{Present: false, Error: "runner_live_read_failed", Hosts: []LiveHost{}}
+	var hostRows, jobRows, runRows, killRows []map[string]any
+	for _, row := range rows {
+		raw, _ := liveStr(row, "payload")
+		var value map[string]any
+		if err := json.Unmarshal([]byte(raw), &value); err != nil {
+			return &LiveSection{Present: false, Error: "runner_live_read_failed", Hosts: []LiveHost{}}
+		}
+		switch row["kind"] {
+		case "host":
+			hostRows = append(hostRows, value)
+		case "job":
+			jobRows = append(jobRows, value)
+		case "run":
+			runRows = append(runRows, value)
+		case "kill":
+			killRows = append(killRows, value)
+		}
 	}
 	byHost := map[string]int{}
 	for _, row := range hostRows {
@@ -136,29 +150,28 @@ func readLiveSection(ctx context.Context, path string, now time.Time) *LiveSecti
 		}
 		h := &section.Hosts[idx]
 		job := liveJobFromRow(row)
-		if job.Phase != "terminal" {
-			if job.Verdict == "" && job.Phase == "running" {
-				job.Verdict = evaluateVerdict(job)
-			}
-			if len(h.LiveJobs) < maxLiveRowsPerHost {
-				h.LiveJobs = append(h.LiveJobs, job)
-			}
-			continue
-		}
-		if job.State != nil && *job.State == "stalled" {
-			if len(h.Kills) < maxKillRowsPerHost {
-				h.Kills = append(h.Kills, KillEvent{
-					JobID: job.JobID, DeliveryID: job.DeliveryID, Class: job.Class,
-					At: firstTime(job.FinishedAt, job.UpdatedAt), ElapsedS: job.ElapsedS,
-					LastOutputAgeS: job.LastOutputAgeS, CPUPct: job.CPUPct, Detail: job.Detail,
-				})
-			}
-			continue
-		}
-		if len(h.RecentRuns) < maxRecentRowsPerHost {
-			h.RecentRuns = append(h.RecentRuns, job)
+		if job.Phase != "terminal" && len(h.LiveJobs) < maxLiveRowsPerHost {
+			h.LiveJobs = append(h.LiveJobs, job)
 		}
 	}
+	for _, row := range runRows {
+		host, _ := liveStr(row, "host")
+		if idx, ok := byHost[host]; ok {
+			section.Hosts[idx].RecentRuns = append(section.Hosts[idx].RecentRuns, liveJobFromRow(row))
+		}
+	}
+	for _, row := range killRows {
+		host, _ := liveStr(row, "host")
+		if idx, ok := byHost[host]; ok {
+			job := liveJobFromRow(row)
+			section.Hosts[idx].Kills = append(section.Hosts[idx].Kills, KillEvent{
+				JobID: job.JobID, DeliveryID: job.DeliveryID, Class: job.Class,
+				At: job.FinishedAt, ElapsedS: job.ElapsedS,
+				LastOutputAgeS: job.LastOutputAgeS, CPUPct: job.CPUPct, Detail: job.Detail,
+			})
+		}
+	}
+
 	for i := range section.Hosts {
 		jobs := section.Hosts[i].LiveJobs
 		sort.SliceStable(jobs, func(a, b int) bool {
@@ -215,46 +228,6 @@ func verdictRank(verdict string) int {
 	return 3
 }
 
-// Liveness rule table, RUNNER-LIVENESS-DESIGN §4 (thresholds_rev 1). The
-// poller normally stores its verdict; this evaluation is the fallback for
-// rows that carry raw samples only, so the surfaces agree either way.
-type classBounds struct {
-	p99          int64
-	stallElapsed int64
-}
-
-var verdictBounds = map[string]classBounds{
-	"pure":   {p99: 339, stallElapsed: 678},
-	"native": {p99: 122, stallElapsed: 300},
-	"heavy":  {p99: 71, stallElapsed: 600},
-}
-
-func evaluateVerdict(job LiveJob) string {
-	class := ""
-	if job.Class != nil {
-		class = *job.Class
-	}
-	b, ok := verdictBounds[class]
-	if !ok {
-		b = verdictBounds["pure"] // unknown class: most conservative elapsed bound
-	}
-	elapsed := int64Or(job.ElapsedS, 0)
-	silent := int64Or(job.LastOutputAgeS, 0)
-	cpu := 0.0
-	if job.CPUPct != nil {
-		cpu = *job.CPUPct
-	}
-	// Silence alone never condemns, and neither does elapsed alone: STALLED
-	// needs silence, an idle CPU, and elapsed beyond the class bound.
-	if silent >= 300 && cpu < 5 && elapsed >= b.stallElapsed {
-		return "STALLED"
-	}
-	if (silent >= 120 && cpu < 10) || elapsed > b.p99 {
-		return "SUSPECT"
-	}
-	return "HEALTHY"
-}
-
 func liveJobFromRow(row map[string]any) LiveJob {
 	job := LiveJob{}
 	job.JobID, _ = liveStr(row, "job_id")
@@ -296,7 +269,7 @@ func liveJobFromRow(row map[string]any) LiveJob {
 func queryRunnerLive(parent context.Context, path string, query string) ([]map[string]any, error) {
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
-	cmd := processtree.CommandContext(ctx, "/usr/bin/sqlite3", "-bail", "-cmd", ".timeout 100", "-cmd", "PRAGMA query_only=ON;", "-json", path, query)
+	cmd := processtree.CommandContext(ctx, "/usr/bin/sqlite3", "-readonly", "-bail", "-cmd", ".timeout 100", "-cmd", "PRAGMA query_only=ON;", "-json", path, query)
 	out := &boundedCapture{limit: 2 << 20}
 	stderr := &boundedCapture{limit: 4096}
 	cmd.Stdout = out
@@ -311,7 +284,7 @@ func queryRunnerLive(parent context.Context, path string, query string) ([]map[s
 	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
 		return nil, err
 	}
-	if len(rows) > 1000 {
+	if len(rows) > 6000 {
 		return nil, errors.New("runner-live result exceeds bound")
 	}
 	return rows, nil
@@ -340,7 +313,7 @@ func liveNumPtr(row map[string]any, key string) *float64 {
 
 func liveIntPtr(row map[string]any, key string) *int64 {
 	v, ok := row[key].(float64)
-	if !ok || v < 0 || v > float64(math.MaxInt64/2) || math.Trunc(v) != v {
+	if !ok || v < 0 || v > float64(math.MaxInt64/2) || math.IsNaN(v) || math.IsInf(v, 0) {
 		return nil
 	}
 	n := int64(v)

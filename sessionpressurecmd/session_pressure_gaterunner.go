@@ -43,6 +43,7 @@ func cmdSessionPressureGaterunner(g *Flags, args []string) int {
 		}
 	}
 	args = filtered
+	ctx = gaterunner.WithFleet(ctx, policy.Fleet)
 	ctx, err = gaterunner.WithTarget(ctx, policy.Host, policy.User)
 	if err != nil {
 		return sessionPressureError(err.Error(), 1)

@@ -54,8 +54,8 @@ struct DelegateStats: Sendable {
 // The Go CLI owns all file and SSH reads. This store only keeps view state.
 @MainActor
 final class HetznerStore: ObservableObject {
-    typealias Inspect = @Sendable (Bool, String?) async throws -> GateRunnerEnvelope
-    typealias ReadLog = @Sendable (String) async throws -> String
+    typealias Inspect = @Sendable (Bool, String?, String?, String?) async throws -> GateRunnerEnvelope
+    typealias ReadLog = @Sendable (String, String?, String?) async throws -> String
     @Published private(set) var delegateRuns: [DelegateRun] = []
     @Published private(set) var delegateStats = DelegateStats()
     @Published private(set) var delegateConfig: DelegateConfig?
@@ -70,6 +70,10 @@ final class HetznerStore: ObservableObject {
     @Published private(set) var boxReachable = false
     @Published private(set) var boxError: String?
     @Published private(set) var liveHosts: [LiveHost] = []
+    @Published private(set) var fleet: RunnerFleet?
+    @Published private(set) var fleetError: String?
+    @Published private(set) var observations: [String: RunnerObservation] = [:]
+    @Published private(set) var selectedHost: String?
     @Published private(set) var livePresent = false
     @Published private(set) var liveError: String?
     @Published private(set) var liveCheckedAt: Date?
@@ -87,10 +91,10 @@ final class HetznerStore: ObservableObject {
     private var refreshIncludesBox = false
     private var ledgerSignature: String?
 
-    init(inspect: @escaping Inspect = { includeBox, known in
-        try await NDevPressureClient().gateRunnerInspection(includeBox: includeBox, knownLedger: known)
-    }, readLog: @escaping ReadLog = { id in
-        try await NDevPressureClient().gateRunnerJobLog(id: id)
+    init(inspect: @escaping Inspect = { includeBox, known, host, user in
+        try await NDevPressureClient().gateRunnerInspection(includeBox: includeBox, knownLedger: known, host: host, user: user)
+    }, readLog: @escaping ReadLog = { id, host, user in
+        try await NDevPressureClient().gateRunnerJobLog(id: id, host: host, user: user)
     }) {
         self.inspect = inspect
         self.readLog = readLog
@@ -135,10 +139,12 @@ final class HetznerStore: ObservableObject {
         refreshIncludesBox = includeBox
         let inspect = self.inspect
         let signature = ledgerSignature
+        let host = selectedHost
+        let user = fleet?.hosts.first(where: { $0.name == host })?.user
         refreshing = true
         let task = Task { [weak self] in
             do {
-                let envelope = try await inspect(includeBox, signature)
+                let envelope = try await inspect(includeBox, signature, host, user)
                 guard !Task.isCancelled, let self, self.generation == token else { return }
                 guard envelope.ok, envelope.inspection.schemaVersion == 1 else {
                     self.localError = "Unsupported gate-runner response"
@@ -149,6 +155,26 @@ final class HetznerStore: ObservableObject {
                     return
                 }
                 let s = envelope.inspection
+                if let endpoint = s.host {
+                    let actual = String(endpoint.split(separator: "@").last ?? Substring(endpoint))
+                    guard host == nil || host == actual else {
+                        self.boxError = "Response belongs to a different runner"
+                        self.boxReachable = false
+                        return
+                    }
+                    self.selectedHost = actual
+                }
+                if let fleet = s.fleet {
+                    self.fleetError = fleet.error
+                    if fleet.error == nil {
+                        self.fleet = fleet
+                        if let observations = fleet.observations {
+                            self.observations = Dictionary(uniqueKeysWithValues: observations.map { ($0.host.name, $0) })
+                        }
+                    }
+                } else {
+                    self.fleetError = "Runner inventory unavailable; update the CLI or install a fleet inventory."
+                }
                 self.localError = s.localError
                 if s.localError == nil {
                     if !s.ledgerUnchanged {
@@ -165,16 +191,13 @@ final class HetznerStore: ObservableObject {
                 if let live = s.live {
                     self.liveError = live.error
                     self.livePresent = live.present
-                    if live.present {
+                    if live.present && live.error == nil {
                         self.liveHosts = live.hosts
                         self.liveCheckedAt = s.capturedAt
                     }
                 } else {
-                    // No runner-live store on this Mac yet: the tab keeps
-                    // its legacy ledger + primary-box rendering.
                     self.livePresent = false
-                    self.liveError = nil
-                    self.liveHosts = []
+                    self.liveError = "Live store unavailable; showing any last successful samples."
                 }
                 if s.boxRequested {
                     self.boxReachable = s.boxReachable
@@ -188,6 +211,8 @@ final class HetznerStore: ObservableObject {
             } catch {
                 guard !Task.isCancelled, let self, self.generation == token else { return }
                 self.localError = error.localizedDescription
+                self.liveError = error.localizedDescription
+                self.fleetError = error.localizedDescription
                 if includeBox {
                     self.boxReachable = false
                     self.boxError = error.localizedDescription
@@ -199,6 +224,22 @@ final class HetznerStore: ObservableObject {
         guard generation == token else { return }
         refreshTask = nil
         refreshing = false
+    }
+
+    func selectHost(_ host: String) async {
+        guard host != selectedHost, fleet?.hosts.contains(where: { $0.name == host }) == true else { return }
+        let wasPolling = loopTask != nil
+        stop()
+        selectedHost = host
+        jobs = []
+        boxHealth = nil
+        boxFetchedAt = nil
+        boxReachable = false
+        boxError = nil
+        selectedJobID = nil
+        jobLog = nil
+        jobLogError = nil
+        if wasPolling { start() } else { await refreshNow() }
     }
 
     func selectJob(_ job: BoxJob) {
@@ -213,10 +254,12 @@ final class HetznerStore: ObservableObject {
         selectedJobID = job.id
         jobLogLoading = true
         let readLog = self.readLog
+        let host = selectedHost
+        let user = fleet?.hosts.first(where: { $0.name == host })?.user
         let token = generation
         logTask = Task { [weak self] in
             do {
-                let result = try await readLog(job.id)
+                let result = try await readLog(job.id, host, user)
                 guard let self, !Task.isCancelled, self.generation == token, self.selectedJobID == job.id else { return }
                 self.jobLog = result
                 self.jobLogLoading = false
