@@ -6,6 +6,39 @@ import Testing
 @Suite("Privileged trace service registration")
 @MainActor
 struct PrivilegedTraceRegistrationTests {
+    @Test("updated enabled helper is unregistered before registration", arguments: [Optional<String>.none, "14"])
+    func refreshesUpdatedHelper(previous: String?) async throws {
+        var unregistrations = 0
+        try await TraceHelperRegistration.refreshIfNeeded(
+            helperIsEmbedded: true, status: .enabled,
+            installedBuild: "15", registeredBuild: previous
+        ) { unregistrations += 1 }
+        #expect(unregistrations == 1)
+    }
+
+    @Test("current or unapproved helper is not unregistered", arguments: [SMAppService.Status.enabled, .requiresApproval, .notRegistered, .notFound])
+    func preservesCurrentOrUnapprovedHelper(status: SMAppService.Status) async throws {
+        var unregistrations = 0
+        try await TraceHelperRegistration.refreshIfNeeded(
+            helperIsEmbedded: true, status: status,
+            installedBuild: "15", registeredBuild: status == .enabled ? "15" : "14"
+        ) { unregistrations += 1 }
+        #expect(unregistrations == 0)
+    }
+
+    @Test("failed helper refresh retains the underlying error")
+    func refreshFailureIsActionable() async {
+        do {
+            try await TraceHelperRegistration.refreshIfNeeded(
+                helperIsEmbedded: true, status: .enabled,
+                installedBuild: "15", registeredBuild: "14"
+            ) { throw NSError(domain: "RefreshTest", code: 42) }
+            Issue.record("Failed unregister must stop registration")
+        } catch {
+            #expect(error.localizedDescription.contains("RefreshTest:42"))
+        }
+    }
+
     @Test("embedded services register after a lookup failure", arguments: [SMAppService.Status.notFound, .notRegistered])
     func registersEmbeddedService(initial: SMAppService.Status) throws {
         var current = initial

@@ -34,7 +34,7 @@ final class PrivilegedTraceClient {
     private let service = SMAppService.daemon(plistName: NDevPressureTraceContract.helperPlist)
 
     func trace(pid: Int, processStartIdentity: String, durationSeconds: Int) async throws -> DiskPathTraceResult {
-        try ensureRegistered()
+        try await ensureRegistered()
         let authorization = try authorizationExternalForm()
         let connection = NSXPCConnection(
             machServiceName: NDevPressureTraceContract.helperLabel,
@@ -46,19 +46,15 @@ final class PrivilegedTraceClient {
 
         return try await withCheckedThrowingContinuation { continuation in
             let completion = TraceCompletion(continuation)
-            connection.interruptionHandler = {
+            connection.interruptionHandler = { @Sendable in
                 completion.fail(PrivilegedTraceError.connection("helper connection interrupted"))
             }
-            connection.invalidationHandler = {
+            connection.invalidationHandler = { @Sendable in
                 completion.fail(PrivilegedTraceError.connection("helper connection invalidated"))
             }
-            let deadline = DispatchWorkItem {
-                completion.fail(PrivilegedTraceError.connection("bounded trace deadline exceeded"))
-                connection.invalidate()
-            }
-            completion.setDeadline(deadline)
+            let deadline = completion.makeDeadline()
             DispatchQueue.global().asyncAfter(deadline: .now() + Double(min(max(durationSeconds, 5), 30) + 10), execute: deadline)
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable error in
                 completion.fail(PrivilegedTraceError.connection(error.localizedDescription))
             }) as? NDevPressureTraceXPC else {
                 completion.fail(PrivilegedTraceError.invalidReply)
@@ -82,16 +78,30 @@ final class PrivilegedTraceClient {
         }
     }
 
-    private func ensureRegistered() throws {
+    private func ensureRegistered() async throws {
         let contents = Bundle.main.bundleURL.appendingPathComponent("Contents/Library")
         let helper = contents.appendingPathComponent("LaunchServices/NDevPressureTraceHelper")
         let plist = contents.appendingPathComponent("LaunchDaemons/\(NDevPressureTraceContract.helperPlist)")
+        let embedded = FileManager.default.isExecutableFile(atPath: helper.path)
+            && FileManager.default.fileExists(atPath: plist.path)
+        guard let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+              !build.isEmpty else {
+            throw PrivilegedTraceError.helperRegistration("app build identity is missing")
+        }
+        let registrationKey = "traceHelperRegisteredBuild"
+        try await TraceHelperRegistration.refreshIfNeeded(
+            helperIsEmbedded: embedded,
+            status: service.status,
+            installedBuild: build,
+            registeredBuild: UserDefaults.standard.string(forKey: registrationKey),
+            unregister: { try await self.service.unregister() }
+        )
         try TraceHelperRegistration.ensureRegistered(
-            helperIsEmbedded: FileManager.default.isExecutableFile(atPath: helper.path)
-                && FileManager.default.fileExists(atPath: plist.path),
+            helperIsEmbedded: embedded,
             status: { self.service.status },
             register: { try self.service.register() }
         )
+        UserDefaults.standard.set(build, forKey: registrationKey)
     }
 
     private func authorizationExternalForm() throws -> Data {
@@ -126,6 +136,28 @@ final class PrivilegedTraceClient {
 /// Try normal registration once, then require an enabled service or user approval.
 @MainActor
 enum TraceHelperRegistration {
+    /// Updated executables must be re-registered. Wait for the old service to
+    /// stop before registering the current bundle. Only an explicit trace calls
+    /// this path; a service awaiting user approval is never unregistered.
+    static func refreshIfNeeded(
+        helperIsEmbedded: Bool,
+        status: SMAppService.Status,
+        installedBuild: String,
+        registeredBuild: String?,
+        unregister: () async throws -> Void
+    ) async throws {
+        guard helperIsEmbedded else { throw PrivilegedTraceError.helperMissing }
+        guard status == .enabled, registeredBuild != installedBuild else { return }
+        do {
+            try await unregister()
+        } catch {
+            let detail = error as NSError
+            throw PrivilegedTraceError.helperRegistration(
+                "could not refresh the previous helper: \(detail.localizedDescription) [\(detail.domain):\(detail.code)]"
+            )
+        }
+    }
+
     static func ensureRegistered(
         helperIsEmbedded: Bool,
         status: () -> SMAppService.Status,
@@ -163,10 +195,20 @@ enum TraceHelperRegistration {
 
 /// NSXPC can race an interruption with a reply. Resume the Swift continuation
 /// exactly once without retaining the connection beyond the explicit request.
-private final class TraceCompletion: @unchecked Sendable {
+final class TraceCompletion: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<DiskPathTraceResult, Error>?
     private var deadline: DispatchWorkItem?
+
+    // Construct the dispatch callback outside MainActor isolation. Dispatch
+    // executes it on a background queue; an inherited actor check traps there.
+    func makeDeadline() -> DispatchWorkItem {
+        let item = DispatchWorkItem { [self] in
+            fail(PrivilegedTraceError.connection("bounded trace deadline exceeded"))
+        }
+        setDeadline(item)
+        return item
+    }
 
     func setDeadline(_ item: DispatchWorkItem) {
         lock.lock(); defer { lock.unlock() }
