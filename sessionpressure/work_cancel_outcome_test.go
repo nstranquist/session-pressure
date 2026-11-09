@@ -20,7 +20,7 @@ func TestWorkCancelOutcomeClosedEnums(t *testing.T) {
 	if got := workCancelOutcome(context.Canceled, 0); got != "wrapper_interrupt" {
 		t.Fatalf("canceled=%q", got)
 	}
-	if got := workCancelOutcome(context.DeadlineExceeded, 0); got != "interrupted" {
+	if got := workCancelOutcome(context.DeadlineExceeded, 0); got != "wait_timeout" {
 		t.Fatalf("deadline=%q", got)
 	}
 	if got := workCancelOutcome(errors.New("other"), 0); got != "interrupted" {

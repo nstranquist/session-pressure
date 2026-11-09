@@ -1048,8 +1048,11 @@ type WorkReviewSignals struct {
 	ReconciliationRaceRecoveries       int `json:"reconciliation_race_recoveries"`
 	CancelledOperations                int `json:"cancelled_operations"`
 	// WrapperInterruptOperations counts cancelled work with a closed interrupt
-	// outcome/reason (agent-killed wrappers). Privacy-safe; never argv-based.
+	// outcome/reason, including ambiguous legacy interruptions. Never argv-based.
 	WrapperInterruptOperations int `json:"wrapper_interrupt_operations"`
+	SignalCancelOperations     int `json:"signal_cancel_operations"`
+	WaitTimeoutOperations      int `json:"wait_timeout_operations"`
+	LegacyInterruptOperations  int `json:"legacy_interrupt_operations"`
 	BypassedAdmissions         int `json:"bypassed_admissions"`
 	ProtectedAcquisitions      int `json:"protected_acquisitions"`
 	ReservationDeferrals       int `json:"reservation_deferrals"`
@@ -1116,6 +1119,27 @@ func IsWrapperInterruptEvent(event WorkEvent) bool {
 		}
 	}
 	return false
+}
+
+// cancellationKind preserves uncertainty in old "interrupted" records. Wait
+// duration and CPU pressure alone cannot prove which cancellation cause won.
+func cancellationKind(event WorkEvent) string {
+	if event.Event != WorkEventCancelled {
+		return ""
+	}
+	for _, field := range []string{event.Outcome, event.DecisionReason, event.PressureReason} {
+		token := strings.ToLower(strings.TrimSpace(field))
+		if token == "wait_timeout" {
+			return "wait_timeout"
+		}
+		if _, ok := wrapperInterruptOutcomes[token]; ok {
+			if token == "interrupted" {
+				return "legacy"
+			}
+			return "signal"
+		}
+	}
+	return ""
 }
 
 const (
@@ -1517,6 +1541,14 @@ func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkS
 				if !state.wrapperInterruptSignal && IsWrapperInterruptEvent(event) {
 					signals.WrapperInterruptOperations++
 					state.wrapperInterruptSignal = true
+				}
+				switch cancellationKind(event) {
+				case "signal":
+					signals.SignalCancelOperations++
+				case "wait_timeout":
+					signals.WaitTimeoutOperations++
+				case "legacy":
+					signals.LegacyInterruptOperations++
 				}
 				state.terminal = true
 				runtimes[event.Class] = append(runtimes[event.Class], event.RuntimeMillis)

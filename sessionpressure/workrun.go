@@ -1798,9 +1798,8 @@ func workCancelOutcome(err error, signal syscall.Signal) string {
 	}
 	if err != nil && errors.Is(err, context.DeadlineExceeded) {
 		// Wait deadline is not an agent kill — keep distinct closed token so
-		// forensics can separate timeouts from interrupts without counting as
-		// wrapper-kill pressure unless explicitly cancelled.
-		return "interrupted"
+		// forensics can separate timeouts from interrupts.
+		return "wait_timeout"
 	}
 	return "interrupted"
 }

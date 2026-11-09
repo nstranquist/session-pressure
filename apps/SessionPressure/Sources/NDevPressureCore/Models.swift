@@ -1593,7 +1593,7 @@ public struct WorkCalibration: Codable, Sendable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion)
         operationCount = try c.decodeIfPresent(Int.self, forKey: .operationCount)
-        wrapperInterruptOperations = try c.decodeIfPresent(Int.self, forKey: .wrapperInterruptOperations) ?? 0
+        wrapperInterruptOperations = try c.decodeIfPresent(Int.self, forKey: .wrapperInterruptOperations)
         suggestedPolicyProfile = try c.decodeIfPresent(String.self, forKey: .suggestedPolicyProfile)
         suggestedPolicyProfileReason = try c.decodeIfPresent(String.self, forKey: .suggestedPolicyProfileReason)
         suggestedPolicyProfileFlags = try c.decodeIfPresent([String].self, forKey: .suggestedPolicyProfileFlags)

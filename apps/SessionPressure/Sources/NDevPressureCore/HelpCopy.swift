@@ -123,6 +123,10 @@ public enum PressureHelp {
         "Whole-host RSS and CPU grouped by a bounded executable basename. CPU is derived from native cumulative-time deltas; unavailable evidence is shown as sampling. This projection contains no PID, path, arguments, environment, or prompt text; agent-owned process counts are marked separately."
     public static let coverage =
         "Machine-readable truth about which paths are enforced, coordinated, merely observed, or need attention. Direct external launches are visible but are not globally intercepted, and automatic relief remains agent-tree-only."
+    public static let workCancellationHistory =
+        "Historical outcomes, not active jobs. Each event leaves this count after 24 hours. Signal cancellations include stop signals and cancelled caller contexts. Counts contain no commands."
+    public static let legacyInterruptions =
+        "Older records do not distinguish wait timeouts from other interruptions. Their cause is unspecified; new wait timeouts are recorded separately."
     public static let telemetry =
         "Bounded sparse telemetry: state transitions and five-minute heartbeats. Full commands are never stored."
     public static let guardBudget =
