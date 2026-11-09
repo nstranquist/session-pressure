@@ -5,51 +5,50 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
-Current review checkpoint (22:35 UTC): native product **0.7.0 / d56f7cf3**
-is installed at both managed prefixes. All five binary hashes independently match
-each release manifest. CLI and helper identity agree; doctor reports no warning
-or artifact drift. The resident is PID 9392, with 16.125 MiB RSS, 0.144% normal
-CPU duty, sample CPU p95 49.895 ms and projected telemetry 528,384 bytes/day.
-The factory's delegated capabilities reach this standalone product, but that
-request does not establish a new embedded factory source stamp or installation.
+Current review checkpoint (**2026-11-09 00:16 UTC**): native product
+**0.7.0 / d56f7cf3** remains installed at both managed prefixes. The final factory
+**a39854ab** is also installed: all three front door paths independently match
+its schema-4 receipt, SHA-256 `7ec3c96ce83772f63c988f844b9d11835898e6da6a92373904deb280853f9a45`.
+The receipt does not cover queued changes. Private proof:
+`review-resume-factory-installed-0016.json`.
 
-The signed native app **1.4.2 build 10 is installed**, with full-bundle authority
-`0b92fbfd67424e0b9651bf81a6b5fc8aa843c09f2a90e0a925052591d18b086a`.
-The guarded installer preserved the previous bundle. All twelve installed panes
-were reviewed, including Hetzner divergence, recorded agreement and a real test
-log. All 75 Swift tests, signed release build and strict signature verification
-pass. The installed d56 CLI/Unix API contract passes again after promotion.
+The signed app **1.4.3 build 11 / 8c4734d2** is installed, authority
+`ee522429b208ea70aa5cd03c82de1eeba157a8f72de5f356461d78a831466b7f`.
+The sole promoter reports 76 Swift tests and strict signature verification
+passing. Independent review confirms 60-second compact polling while inactive
+or minimized and immediate activation refresh. The earlier twelve-pane live
+review belongs to 1.4.2. That version later failed its CPU gate at 1.063% against
+1%; its evidence is preserved.
 
-The installed telemetry correction now passes actual success, invalid-input and
-completed-audit-finding checks, with closed outcome/reason fields and no raw
-argument leakage. A wrapper call emits no duplicate event. The exact six-path
-race receipt is retained; the final promoter reports full race, vet and native
-build success. Installed automatic remote routing also passes the previously
-failing Git regression. Make and both CI platforms now cover the complete Go
-module, and publication requires full race tests. A GitHub CI run is not claimed.
+The new immutable observer starts its elapsed clock at
+**2026-11-09T00:04:29.616413Z**. Its 300 warm reads pass: status p95 112.329/250 ms,
+board 114.817/500 ms and full board 655.103/1,000 ms. At 00:12:32 it has nine
+successful health checks, zero failures/restarts and passing continuity. App CPU
+is 1.1047% over 483.375 seconds, above budget, with peak RSS 118.719 MiB and zero
+sample failures. No app resource or elapsed pass is claimed. Its first eligible
+30-minute, 24-hour and 72-hour checks are November 9 00:34:29, November 10
+00:04:29 and November 12 00:04:29 UTC. The output is
+`observation-d56f7cf3-app143b11-20261109T000337Z.json`. No old time transfers.
 
-A fresh 100-call installed writer diagnostic records 100 attempted / 100 written /
-zero failed, with writer p95 25.310 ms and process-completion p95 38.275 ms. This
-improves on the historical audit window directionally, but remains above the
-25 ms writer target. It is not a replacement for the natural two-hour window.
-The historical missing factory receipt and old failures remain preserved; strict
-telemetry coverage passes. Scheduler evidence still does not justify capacity
-promotion. Worker 2.34.0 is healthy; the parent recovery remains queued with one
-retained waiter. Three owned factory deliveries are landed and four remain
-nonterminal. The separate final factory promotion also waits for its exact queue
-and browser dependencies. Do not duplicate recovery requests or stop the worker.
+The current audit **fails**. Midnight factory writer s20 sequence 8008 has a
+primary event but no completion record; cause unknown. Preserve the event,
+pending row and counters. The live telemetry owner is implementing the
+completion regression fix. Current audit writer p95 is 100 ms factory and
+56.985 ms product, above the 25 ms target. The earlier 100-write diagnostic
+(100 attempted/written, zero failed, p95 25.310 ms) remains a separate cohort.
+Installed closed-outcome/privacy and automatic remote Git checks pass.
 
-A new immutable **CLI/app diagnostic cohort** started after read warmup at
-**2026-11-08T22:29:45.525347Z**. All 300 reads succeed: status p95 137.073/250 ms,
-board 78.694/500 ms and full board 285.710/1,000 ms pass. At 22:34:46 it has six
-successful health checks, zero failures or restarts, 301 seconds of app observation,
-0.899% app CPU and peak RSS 86.828 MiB. This is not the 30-minute resource verdict.
-The 30-minute gate is first eligible at 22:59:45 UTC; 24-hour and 72-hour gates
-are first eligible on November 9 and 11 at 22:29:45 UTC. This cohort binds CLI,
-app and resident continuity; **factory acceptance remains separate and pending**.
-No elapsed time transfers from the stopped old cohort. WORK-41 remains in progress.
-[REVIEW.md](REVIEW.md) records the current evidence and remaining conditions;
-historical checkpoints below retain their original artifact identities and times.
+Three owned factory deliveries are landed; four remain nonterminal. Parent
+64c635e4 has one recovery queued, child 2aca8f87 is held, and b20237d3/196ac71c
+are accepted. Keep the retained waiter and preserve the busy worker. A further
+native-export review correction makes receipt digests select the export's
+platform, CGO and build tags through a host helper. Its exact-source regression
+suite is queued on Hetzner; passing tests and publication are not yet claimed.
+
+WORK-41 remains in progress until writer, delivery, resource, scheduler,
+administrator trace and actual elapsed acceptance are proved.
+[REVIEW.md](REVIEW.md) records the current findings and acceptance conditions.
+Historical checkpoints below retain their original identities and times.
 
 Historical checkpoint (20:59 UTC): product release `0535927f` is installed at
 both CLI prefixes. Its exact committed full race suite and Darwin native build
@@ -117,12 +116,12 @@ Remote work uses existing Hetzner jobs and receipts. This program does not add a
 
 | Area | Implemented result | Acceptance state |
 | --- | --- | --- |
-| Installation identity | Capabilities expose product version, revision, executable and platform. Five-binary promotion verifies hashes, clean source, Darwin CGO and identity before switching one authority link; previous authority and first-migration files are preserved. | Installed; all five release hashes verified. Factory front door `483b1def` is landed and installed. CLI and full-bundle app authority guards installed; stale-intent and downgrade negative checks pass. Both managed product prefixes now verify d56f7cf3 and all five release hashes. The older factory stamp and schema-v4 source-closure receipt remain historical evidence; final factory promotion is pending. |
+| Installation identity | Capabilities expose product version, revision, executable and platform. Five-binary promotion verifies hashes, clean source, Darwin CGO and identity before switching one authority link; previous authority and first-migration files are preserved. | Installed; all five release hashes verified. Factory front door `483b1def` is landed and installed. CLI and full-bundle app authority guards installed; stale-intent and downgrade negative checks pass. Both managed product prefixes now verify d56f7cf3 and all five release hashes. Factory a39854ab is now installed with independent three-target hash proof. Queued changes remain separate. |
 | Readiness | Admission-only is a valid ready mode; persisted policy, storage, monitor freshness and resident baseline remain explicit gates. | Installed d56f7cf3 normal-state resource checks pass. Earlier failures remain preserved; the new artifact-bound 30-minute and 24/72-hour observations are pending. |
-| Telemetry | Real product writer and reader; privacy validation, closed fields, failure classes, attempted/written/failed/gap counters and freshness; bounded sharding and full lock-to-append timing. Factory correlation and product-owned registry fragment implemented. | Product and factory integration installed. Historical gaps and factory latency failures remain visible. |
+| Telemetry | Real product writer and reader; privacy validation, closed fields, failure classes, attempted/written/failed/gap counters and freshness; bounded sharding and full lock-to-append timing. Factory correlation and product-owned registry fragment implemented. | Product and factory integration installed. Current midnight completion gap makes audit fail; writer latency also exceeds target. Original evidence is retained. |
 | Retention | Owned JSONL, writer health, disk maintenance and monitor streams have bounded retention; pruning and append failures are reported. Helper artifacts retain active plus two rollback revisions. | Implemented and tested. Unique legacy install backups are preserved. |
 | Work coordinator | Private host identity and OS/architecture/CPU/revision cohorts, explicit legacy counts and reuse miss reasons. Mixed-cohort retunes fail closed. Current CPU/fairness/capacity gates remain in force. | Installed. Replay promotion and live slowdown SLO still fail; no unsupported weight increase applied. |
-| Native desktop | Twelve sections, including Day Gate and concurrent Process Incidents and Hetzner, refresh on entry; requests coalesce and have time/output bounds; per-section age/errors retain prior results. Settings show executing identity. SMART age and native write-window units are correct. | All 75 Swift tests and signed verification pass. Twelve-pane 1.4.2 build 10 is installed and live reviewed; installed d56 CLI/Unix API contract passes. New diagnostic observation is active. |
+| Native desktop | Twelve sections, including Day Gate and concurrent Process Incidents and Hetzner, refresh on entry; requests coalesce and have time/output bounds; per-section age/errors retain prior results. Settings show executing identity. SMART age and native write-window units are correct. | App 1.4.3 build 11 installed; promoter reports 76 Swift tests and strict signature pass. Twelve-pane review belongs to 1.4.2. New observation is active; app CPU and elapsed gates are pending. |
 | GPUI preview | Executable validation, bounded stdout/stderr, nonblocking reads, process-group cleanup, timeouts and explicit failed envelopes; supported-operation matrix documented. | Ten core tests and full Rust build pass; remains a preview. |
 | Policy | Exact legacy defaults migrate idempotently; custom settings stay intact. Admission and storage enforcement enabled, automatic shedding disabled. Cleanup remains confirmed and manual. | Installed and live policy audit passes. |
 | Go cache helper | Immutable content-addressed objects, cross-process pinning until close, crash recovery, strict sizes and bounded streaming/journal/maintenance. Pinned objects can temporarily exceed the soft limit. | Race tests and real Go cache integration pass on runner. Live reuse history still reports zero hits and concrete miss reasons. |
