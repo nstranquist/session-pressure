@@ -6,6 +6,36 @@ This report states the review findings and the remaining acceptance conditions.
 Private receipts are under `~/.nicos-dev/session-pressure/acceptance/2026-11-08/`.
 
 
+Current checkpoint (**2026-11-09 01:48 UTC**, promoter session `01a1bc3b`):
+the installed **1.4.11 build 19** disk trace now **passes live** after the
+user completed administrator authentication. The app returned a bounded,
+truncated trace result and remained responsive. Private paths are not copied
+into the acceptance receipt. The app is parked on Overview. A fresh immutable
+observer started monitoring at **01:45:58.511178 UTC**; the eligible 30-minute
+resource check is **November 9 02:15:58 UTC**, and the 72-hour check is
+**November 12 01:45:58 UTC**. Warmup passed 100 reads per surface: status p95
+89.104 ms, board 96.854 ms, rich snapshot 507.965 ms. These read checks do not
+establish elapsed acceptance. Receipt: `app1411-observer-setup.json`; observation:
+`observation-a6cee30-app1411b19-20261109T014514Z.json`.
+
+The delivery worker is now **installed and healthy/current** at **50d238e**,
+CGO-enabled artifact SHA
+`db596ab36b3eac7316b81ccea49ac8315fe6d9cf05604578e541964abfb54b11`,
+with the matching preflight artifact. This supersedes the withheld CGO-disabled
+artifact below. A library SQLite probe is separate from production writer
+integration; this cutoff has no generic CLI invocation writer wrapper. Normal
+production runtime evidence remains owned by the delivery runtime agent.
+
+A non-actuating installed browser policy fixture found **two CLI completion
+rows for one invocation**: the handler's correct `policy_block` and the outer
+wrapper's misleading `command_failure`. No browser was started. The repair
+replaces the admission wrapper process, so only the admitted handler records
+the CLI outcome while `work-run` keeps admission, cleanup, and exit handling.
+Delivery **a451f1b4** is accepted; remote/native verification and installation
+remain pending. The independent recovery scan limit **201ed628** is still
+accepted. Neither queued change is called installed. Existing natural writer
+latency failures remain preserved; private cohorts do not erase them.
+
 Current checkpoint (**2026-11-09 01:39 UTC**, promoter session `01a1bc3b`):
 app **1.4.11 build 19**, committed source **d463ed8** including asynchronous
 authorization repair **97d703f**, is installed and running. All **94 tests in
