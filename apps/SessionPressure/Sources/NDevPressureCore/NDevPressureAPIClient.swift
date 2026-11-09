@@ -49,21 +49,26 @@ public struct NDevPressureAPIClient: Sendable {
         }
     }
 
+    /// The only accepted API URL shape: http(s) on loopback, with no
+    /// credentials, query or fragment. Settings validates with this same rule.
+    public static func isAllowedURL(_ raw: String) -> Bool {
+        guard let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = url.host?.lowercased(),
+              ["localhost", "127.0.0.1", "::1"].contains(host),
+              url.user == nil, url.password == nil,
+              url.query == nil, url.fragment == nil else { return false }
+        return true
+    }
+
     public static func transport(environment: [String: String] = ProcessInfo.processInfo.environment) -> Transport {
         let configuredURL = environment["NDEV_PRESSURE_API_URL"]
         let home = environment["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
         let state = environment["NDEV_SESSION_PRESSURE_HOME"] ?? environment["SESSION_PRESSURE_HOME"] ?? "\(home)/.nicos-dev/session-pressure"
         let socket = environment["NDEV_PRESSURE_API_SOCKET"] ?? "\(state)/api/session-pressure.sock"
         if let configuredURL {
-            guard let url = URL(string: configuredURL),
-                  let scheme = url.scheme?.lowercased(),
-                  scheme == "http" || scheme == "https",
-                  let host = url.host?.lowercased(),
-                  ["localhost", "127.0.0.1", "::1"].contains(host),
-                  url.user == nil,
-                  url.password == nil,
-                  url.query == nil,
-                  url.fragment == nil else {
+            guard isAllowedURL(configuredURL) else {
                 return .cliFallback(reason: "API URL is not a plain loopback http(s) URL")
             }
             return .url(configuredURL)

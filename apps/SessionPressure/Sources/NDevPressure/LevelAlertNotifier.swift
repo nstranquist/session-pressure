@@ -71,8 +71,17 @@ final class LevelAlertNotifier: NSObject, ObservableObject {
         content.sound = .default
         content.userInfo = ["url": "ndev-pressure://overview"]
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
-        center.add(request)
-        lastAlertAt = Date()
+        // Record an alert only when macOS will actually show it, so "Last
+        // alert" never claims a delivery that permission denied.
+        Task { @MainActor in
+            let status = await center.notificationSettings().authorizationStatus
+            authorization = status
+            guard status == .authorized || status == .provisional else { return }
+            do {
+                try await center.add(request)
+                lastAlertAt = Date()
+            } catch {}
+        }
     }
 
     static func openNotificationSettings() {
