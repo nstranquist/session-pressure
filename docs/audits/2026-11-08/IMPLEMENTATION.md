@@ -5,7 +5,59 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
-Current review checkpoint (**2026-11-09 00:33 UTC**): native product
+Latest closeout (**2026-11-09 00:58 UTC**): the operator requested that
+queue and elapsed-test waits stop. The active producers remain running; no
+queue, worker, approval or test gate is bypassed. The approved real trace found
+and caused repairs for registration, signing, trace error handling, authorization
+cleanup, background callback isolation and stale helper registration. It has
+**not yet completed successfully**.
+
+Installed app **1.4.7 build 15** now independently passes strict app/helper
+signature checks with the real Developer ID authority and matching Team ID
+**C82D23RNQ9** (`review-app147-signing-0054.json`). Its real trace crashed on
+its 25-second deadline: crash `C66B12E4` identifies a MainActor assertion on a
+background dispatch queue (`review-trace-crash-0054.txt`). launchd also retained
+the old build-14 helper registration and reported `EX_CONFIG`; the private
+launch log records the failed executable lookup. Source **a9f9905** fixes both:
+explicitly Sendable callbacks and a nonisolated timeout factory, plus supported
+asynchronous unregister/re-register once per updated app build on an explicit
+trace. Successful registration alone is cached. An unapproved service remains
+subject to user approval. **11 targeted tests pass**, including actual background
+deadline execution and competing callbacks, in
+`review-trace-callback-swift-0058.log`. The sole promoter owns combined validation,
+version **1.4.8**, installation and the final immutable observer. No trace result
+or resource acceptance is inferred from these source tests.
+
+Earlier trace review (**2026-11-09 00:52 UTC**): the installed app **1.4.6
+build 14** and embedded helper have **ad hoc signatures and no Team ID**
+(`review-app146-signing-0052.json`). Earlier strict signature checks establish
+bundle integrity only; references below to a signed or Developer ID package do
+not establish the installed Team ID. The helper correctly rejects clients
+without a matching real Team ID. Source `2d14f66` now selects an installed
+Developer ID identity and requires matching nonempty app/helper Team IDs after
+the recursive build in both installation targets. The sole promoter is
+preparing **1.4.7 build 15** with the available Developer ID certificate.
+No privileged trace success is claimed yet.
+
+The operator approved the NDev Pressure background item in macOS System
+Settings; its switch is visibly on. The preceding real attempt failed with
+`SMAppServiceErrorDomain:1`, preserved in the private system log
+`review-trace-system-log-0047.json`. The app fixes registration after a framework
+lookup failure (`8e72d11`), rejects nonzero trace exits even with diagnostic
+output (`4091c6b`), and frees authorization references after denied requests
+(`141d6a5`). Six registration tests with eight cases pass; the final changed
+client compiles and passes its targeted tests in
+`review-trace-final-swift-0044.log`. Full combined Swift evidence is 84 tests in
+12 suites. Actual helper authorization and bounded trace completion remain open.
+
+The 1.4.4/1.4.5 observers are stopped and preserved. Their elapsed time cannot
+transfer to the final app; no final immutable idle cohort is active while the
+operator trace is in progress. A fresh installed product writer cohort reports
+**100/100 writes, p95 15.608 ms**, below the 25 ms target. This bounded cohort
+does not replace the natural two-hour audit warning or historical 120 gaps.
+
+
+Earlier review checkpoint (**2026-11-09 00:33 UTC**): native product
 **0.7.0 / a6cee30a** is installed at both managed prefixes. Independent checks
 match all ten installed files to the five-binary Darwin CGO release manifest
 (`review-a6-installed-manifests-0028.json`). The signed app is **1.4.4 build 12**,
