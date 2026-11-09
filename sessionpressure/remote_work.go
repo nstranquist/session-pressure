@@ -93,7 +93,7 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\'
 // system Git is too old for merge-file --diff-algorithm. Missing pinned tools
 // must refuse the job rather than silently select a different toolchain.
 func remoteRunnerPrelude() string {
-	return "{ test -x /srv/build/bin/git && test -x /usr/local/go/bin/go; } || { printf '%s\\n' " +
+	return "{ test -x /srv/build/bin/git && test -x /usr/local/go/bin/go; } || { printf '%s\n' " +
 		shellQuote(WorkRefusalMarker+" kind="+WorkRefusalRemoteProfile+": pinned runner Git or Go is missing; local fallback is disabled") +
 		fmt.Sprintf(" >&2; exit %d; }; ", workExitPolicyDenied) +
 		"export PATH=/srv/build/bin:/usr/local/go/bin:\"$PATH\" " +
@@ -386,7 +386,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	}
 	// Upload/extraction has one bounded host-wide preparation lane, separate
 	// from the scheduler's execution slot. A stalled sender cannot hold it forever.
-	upload := ssh("timeout 600 flock -w 600 /srv/build/input-transfer.lock sh -c " + shellQuote("umask 077; mkdir -p "+shellQuote(remote+"/source")+" && tar -xf - -C "+shellQuote(remote+"/source")))
+	upload := ssh("timeout 600 flock -w 600 /srv/build/input-transfer.lock sh -c " + shellQuote("umask 077; mkdir -p "+shellQuote(remote+"/source")+" && printf '%s\n' "+shellQuote("pressure-"+job)+" > "+shellQuote(remote+".request")+" && tar -xf - -C "+shellQuote(remote+"/source")))
 	pipe, err := upload.StdinPipe()
 	if err != nil {
 		return true, 1, err
@@ -409,7 +409,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = exec.CommandContext(cleanupCtx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "builder@100.106.202.89", "rm -rf -- "+shellQuote(remote)).Run()
+		_ = exec.CommandContext(cleanupCtx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "builder@100.106.202.89", "rm -rf -- "+shellQuote(remote)+" "+shellQuote(remote+".request")).Run()
 	}()
 	rel, _ := filepath.Rel(common, cwd)
 	command := remoteRunnerPrelude() + remoteBuildPreflight(profile, remote) + "cd " + shellQuote("./"+filepath.ToSlash(rel)) + " && env GOWORK=off GOMAXPROCS=2 GOMEMLIMIT=3GiB GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p=2")) + remoteBuildEnvironment(profile, remote)
