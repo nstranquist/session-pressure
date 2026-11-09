@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRemoteSourceManifestRoundTrip(t *testing.T) {
@@ -161,6 +162,9 @@ func TestRemoteSourceDeltaEndToEnd(t *testing.T) {
 	if up := upload("second", state); up.mode != remoteUploadDeltaKnown || up.files != 2 {
 		t.Fatalf("second upload = %+v, want a 2-file known delta", up)
 	}
+	// An earlier stage is a hard-link snapshot; later base changes must not
+	// reach it.
+	secondStage := treeFiles(t, filepath.Join(jobs, "second", "source"))
 	if _, err := os.Stat(filepath.Join(remoteSourceBaseRoot)); err != nil {
 		t.Fatal(err)
 	}
@@ -176,6 +180,7 @@ func TestRemoteSourceDeltaEndToEnd(t *testing.T) {
 	if up := upload("third", state); up.mode != remoteUploadDeltaListed || up.files != 1 {
 		t.Fatalf("stale caller upload = %+v, want a 1-file listed delta", up)
 	}
+	sameTree(t, "second stage after later uploads", treeFiles(t, filepath.Join(jobs, "second", "source")), secondStage)
 
 	// A corrupted base fails verification, is dropped, and the upload
 	// reseeds instead of building a stage from bad bytes.
@@ -219,4 +224,42 @@ func TestRemoteSourceDeltaKeepsFileModes(t *testing.T) {
 	if info.Mode().Perm()&0o100 == 0 {
 		t.Fatalf("executable bit lost: %v", info.Mode())
 	}
+}
+
+func TestRemoteSourceStatCacheSkipsUnchangedFiles(t *testing.T) {
+	ssh := deltaBox(t)
+	common := t.TempDir()
+	module := filepath.Join(common, "mod")
+	writeTree(t, module, map[string]string{"go.mod": "module example.test/mod\n", "a.go": "package mod\n", "b.go": "package mod\n"})
+	old := time.Now().Add(-time.Hour)
+	age := func(name string) {
+		t.Helper()
+		if err := os.Chtimes(filepath.Join(module, name), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"go.mod", "a.go", "b.go"} {
+		age(name)
+	}
+	state, jobs := t.TempDir(), t.TempDir()
+	run := func(label string) remoteSourceUpload {
+		t.Helper()
+		up, err := uploadRemoteSourcesDelta(ssh, os.Stderr, state, "box", filepath.Join(jobs, label), label, common, []string{module}, remoteScopeModules)
+		if err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+		return up
+	}
+	if up := run("cold"); up.hashed != 3 {
+		t.Fatalf("cold upload hashed %d files, want 3", up.hashed)
+	}
+	if up := run("warm"); up.hashed != 0 || up.files != 0 {
+		t.Fatalf("warm upload = %+v, want nothing hashed or sent", up)
+	}
+	// A recent edit is inside the racy window, so it is always rehashed.
+	writeTree(t, module, map[string]string{"a.go": "package xx\n"})
+	if up := run("edited"); up.hashed != 1 || up.files != 1 {
+		t.Fatalf("edited upload = %+v, want 1 hashed and 1 sent", up)
+	}
+	sameTree(t, "edited", treeFiles(t, filepath.Join(jobs, "edited", "source")), treeFiles(t, common))
 }

@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -72,13 +73,19 @@ const (
 
 var errRemoteSourceStale = errors.New("remote source base is not the expected base")
 
+// errRemoteSourceUnsupported means the closure holds a path the manifest
+// cannot carry; the caller uses the full tar upload instead.
+var errRemoteSourceUnsupported = errors.New("delta transport cannot carry this closure")
+
 // remoteSourceEntry is one closure file.
 type remoteSourceEntry struct {
-	rel  string
-	path string
-	mode fs.FileMode
-	size int64
-	hash string
+	rel   string
+	path  string
+	mode  fs.FileMode
+	size  int64
+	mtime int64 // UnixNano
+	ino   uint64
+	hash  string
 }
 
 // remoteSourceLine is one manifest line: content hash and permission bits.
@@ -92,6 +99,10 @@ type remoteSourceUpload struct {
 	mode  string
 	files int
 	bytes int64
+	// Step timings: listing the closure, hashing it (stat-cache misses
+	// only), and every send attempt including box-side work.
+	collectMS, hashMS, sendMS int64
+	hashed                    int
 }
 
 func remoteSourceDeltaEnabled() bool {
@@ -121,7 +132,7 @@ func collectRemoteSources(modules []string, common string, scope remoteInputScop
 		if total > remoteSourceLimit {
 			return errors.New("remote source exceeds 512MiB; narrow the module")
 		}
-		entries = append(entries, remoteSourceEntry{rel: filepath.ToSlash(rel), path: path, mode: info.Mode().Perm(), size: info.Size()})
+		entries = append(entries, remoteSourceEntry{rel: filepath.ToSlash(rel), path: path, mode: info.Mode().Perm(), size: info.Size(), mtime: info.ModTime().UnixNano(), ino: remoteSourceInode(info)})
 		return nil
 	})
 	sort.Slice(entries, func(a, b int) bool { return entries[a].rel < entries[b].rel })
@@ -141,20 +152,75 @@ func hashRemoteSourceFile(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// hashRemoteSources fills each entry's hash. A file removed since the walk
-// keeps an empty hash and is treated as changed, so the send step drops it.
-func hashRemoteSources(entries []remoteSourceEntry) error {
+// remoteSourceStat is one stat-cache entry: a file whose size, mtime and
+// inode are unchanged keeps its hash without being read again.
+type remoteSourceStat struct {
+	Size  int64  `json:"s"`
+	Mtime int64  `json:"m"`
+	Ino   uint64 `json:"i"`
+	Hash  string `json:"h"`
+}
+
+// remoteSourceRacyWindow: a file modified this close to the scan may change
+// again within the same mtime, so its cached hash is never trusted or kept.
+const remoteSourceRacyWindow = 2 * time.Second
+
+// hashRemoteSources fills each entry's hash, reading only files the stat
+// cache cannot vouch for, and returns the updated cache and the number of
+// files read. A file removed since the walk keeps an empty hash and is
+// treated as changed, so the send step drops it.
+func hashRemoteSources(entries []remoteSourceEntry, cache map[string]remoteSourceStat, scanStart time.Time) (map[string]remoteSourceStat, int, error) {
+	next := make(map[string]remoteSourceStat, len(entries))
+	racy := scanStart.Add(-remoteSourceRacyWindow).UnixNano()
+	read := 0
 	for i := range entries {
-		hash, err := hashRemoteSourceFile(entries[i].path)
+		e := &entries[i]
+		if c, ok := cache[e.rel]; ok && e.mtime < racy && c.Size == e.size && c.Mtime == e.mtime && c.Ino == e.ino && len(c.Hash) == 64 {
+			e.hash = c.Hash
+			next[e.rel] = c
+			continue
+		}
+		hash, err := hashRemoteSourceFile(e.path)
+		read++
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return err
+			return nil, read, err
 		}
-		entries[i].hash = hash
+		e.hash = hash
+		if e.mtime < racy {
+			next[e.rel] = remoteSourceStat{Size: e.size, Mtime: e.mtime, Ino: e.ino, Hash: hash}
+		}
 	}
-	return nil
+	return next, read, nil
+}
+
+func remoteSourceStatPath(stateDir, key string) string {
+	return filepath.Join(stateDir, "remote-source-bases", key+".stat.json")
+}
+
+func loadRemoteSourceStat(stateDir, key string) map[string]remoteSourceStat {
+	body, err := os.ReadFile(remoteSourceStatPath(stateDir, key))
+	if err != nil {
+		return nil
+	}
+	var cache map[string]remoteSourceStat
+	if json.Unmarshal(body, &cache) != nil {
+		return nil
+	}
+	return cache
+}
+
+func saveRemoteSourceStat(stateDir, key string, cache map[string]remoteSourceStat) {
+	body, err := json.Marshal(cache)
+	if err != nil {
+		return
+	}
+	path := remoteSourceStatPath(stateDir, key)
+	if os.MkdirAll(filepath.Dir(path), 0700) == nil {
+		_ = atomicWrite(path, body, 0600)
+	}
 }
 
 // renderRemoteSourceManifest writes "<sha256> <mode> <path>" lines with a
@@ -306,19 +372,33 @@ func writeRemoteSourceDelta(w io.Writer, entries []remoteSourceEntry, send []int
 	return manifest, sent, nil
 }
 
-// remoteSourceDeltaScript builds the stage on the box. The upload stream is
-// extracted outside the lock (a slow sender holds no one else up); the base
-// change, its verification, and the stage copy run under the host-wide
-// transfer lock.
+// remoteSourceDeltaScript builds the stage on the box.
+//
+// Outside the host-wide transfer lock (a slow sender holds no one up): the
+// stream is extracted and every incoming file is checked against the new
+// manifest. Under the lock: the base digest is compared with the one the Mac
+// diffed against (exit 45), the base's manifest and digest are removed
+// before any change so an interrupted apply forces a reseed, the change is
+// applied, the file count is checked (exit 46 drops the base), the manifest
+// and digest are written last, and the stage is made as a hard-link snapshot.
+// After the lock is released every byte of the stage is checked against the
+// manifest (exit 46 drops a damaged base).
+//
+// The snapshot is safe because the base is never written in place: changed
+// files replace the old inode (cp --remove-destination), removals unlink,
+// and a seed renames a new tree into place. An earlier stage keeps its own
+// inodes, and the runner only reads the stage (it copies it into retained
+// inputs before execution).
 func remoteSourceDeltaScript(remote, key, request string) string {
 	base := remoteSourceBaseRoot + "/" + key
+	tree := "\"$inc/" + remoteSourceTreeDir + "\""
 	return strings.Join([]string{
 		"set -eu",
 		"umask 077",
 		"remote=" + shellQuote(remote),
 		"base=" + shellQuote(base),
 		"inc=\"$remote/.incoming\"",
-		"mkdir -p \"$inc\" \"$remote/source\" " + shellQuote(remoteSourceBaseRoot),
+		"mkdir -p \"$inc\" " + shellQuote(remoteSourceBaseRoot),
 		"printf '%s\\n' " + shellQuote(request) + " > \"$remote.request\"",
 		"tar -xzf - -C \"$inc\"",
 		"ctl=\"$inc/" + remoteSourceControlDir + "\"",
@@ -326,29 +406,46 @@ func remoteSourceDeltaScript(remote, key, request string) string {
 		// Removal entries come from a manifest the box accepted; refuse any
 		// path that could leave the base anyway.
 		"if tr '\\000' '\\n' < \"$ctl/removed\" | grep -qE '(^|/)\\.\\.(/|$)|^/'; then exit 2; fi",
+		// Every sent file must be in the manifest with the same content.
+		"if [ -d " + tree + " ]; then",
+		"  (cd " + tree + " && find . -type f -printf '%P\\n') | awk 'NR==FNR{h[substr($0,71)]=substr($0,1,64); next} !($0 in h){exit 3} {print h[$0] \"  \" $0}' \"$ctl/manifest\" - > \"$ctl/check\"",
+		"  (cd " + tree + " && sha256sum --quiet --strict -c \"$ctl/check\" >/dev/null)",
+		"fi",
 		"exec 9>" + shellQuote(remoteSourceTransferLock),
 		"flock -w 600 9",
 		"expect=$(cat \"$ctl/expect\")",
 		"drop() { rm -rf \"$base\" \"$base.manifest\" \"$base.digest\" \"$base.new\"; }",
 		"if [ \"$expect\" = none ]; then",
-		"  rm -rf \"$base.new\"",
-		"  if [ -d \"$inc/" + remoteSourceTreeDir + "\" ]; then mv \"$inc/" + remoteSourceTreeDir + "\" \"$base.new\"; else mkdir \"$base.new\"; fi",
-		"  rm -rf \"$base\"",
+		"  drop",
+		"  if [ -d " + tree + " ]; then mv " + tree + " \"$base.new\"; else mkdir \"$base.new\"; fi",
 		"  mv \"$base.new\" \"$base\"",
 		"else",
 		"  if [ ! -d \"$base\" ] || [ \"$(cat \"$base.digest\" 2>/dev/null)\" != \"$expect\" ]; then rm -rf \"$inc\"; exit " + fmt.Sprint(remoteSourceExitStale) + "; fi",
-		"  if [ -d \"$inc/" + remoteSourceTreeDir + "\" ]; then cp -a \"$inc/" + remoteSourceTreeDir + "/.\" \"$base/\"; fi",
+		"  rm -f \"$base.digest\" \"$base.manifest\"",
+		"  if [ -d " + tree + " ]; then cp -a --remove-destination " + strings.TrimSuffix(tree, "\"") + "/.\" \"$base/\"; fi",
 		"  if [ -s \"$ctl/removed\" ]; then (cd \"$base\" && xargs -0 rm -f -- < \"$ctl/removed\"); fi",
 		"  find \"$base\" -mindepth 1 -type d -empty -delete",
 		"fi",
+		// Nothing beyond the manifest: every listed file was checked when it
+		// arrived, and the count rules out strays.
+		"if [ \"$(find \"$base\" -type f | wc -l)\" -ne \"$(wc -l < \"$ctl/manifest\")\" ]; then drop; rm -rf \"$inc\"; exit " + fmt.Sprint(remoteSourceExitBroken) + "; fi",
 		"cp \"$ctl/manifest\" \"$base.manifest\"",
 		"cut -c1-64 \"$ctl/digest\" > \"$base.digest\"",
-		// Every byte of the base, and nothing beyond it.
-		"if ! (cd \"$base\" && awk '{print substr($0,1,64) \"  \" substr($0,71)}' \"$base.manifest\" | sha256sum --quiet --strict -c - >/dev/null 2>&1) || [ \"$(cd \"$base\" && find . -type f | wc -l)\" -ne \"$(wc -l < \"$base.manifest\")\" ]; then drop; rm -rf \"$inc\"; exit " + fmt.Sprint(remoteSourceExitBroken) + "; fi",
-		"cp -a \"$base/.\" \"$remote/source/\"",
+		"rm -rf \"$remote/source\"",
+		"cp -al \"$base\" \"$remote/source\"",
+		// Release the lock, then check every byte of the stage. It shares
+		// inodes with the base, so this also catches a base damaged on disk;
+		// a damaged base is dropped (if still current) and the Mac reseeds.
+		"exec 9>&-",
+		"if ! (cd \"$remote/source\" && awk '{print substr($0,1,64) \"  \" substr($0,71)}' \"$ctl/manifest\" | sha256sum --quiet --strict -c - >/dev/null 2>&1); then",
+		"  exec 9>" + shellQuote(remoteSourceTransferLock),
+		"  flock -w 600 9",
+		"  if [ \"$(cat \"$base.digest\" 2>/dev/null)\" = \"$(cut -c1-64 \"$ctl/digest\")\" ]; then drop; fi",
+		"  rm -rf \"$remote/source\" \"$inc\"",
+		"  exit " + fmt.Sprint(remoteSourceExitBroken),
+		"fi",
 		"rm -rf \"$inc\"",
-		"touch \"$base.digest\"",
-		// Keep the newest bases; each is one closure (100 to 170 MB).
+		// Keep the newest bases; each is one closure (100 to 400 MB).
 		"ls -1t " + shellQuote(remoteSourceBaseRoot) + "/*.digest 2>/dev/null | tail -n +" + fmt.Sprint(remoteSourceBaseKeep+1) + " | while read -r old; do b=${old%.digest}; rm -rf \"$b\" \"$b.manifest\" \"$b.digest\"; done",
 	}, "\n")
 }
@@ -391,16 +488,26 @@ func saveLocalRemoteSourceBase(stateDir, key string, manifest []byte) {
 // remote command. It tries the base this Mac last sent, then the base the
 // box reports, then a full seed; any other failure is returned.
 func uploadRemoteSourcesDelta(ssh func(string) *exec.Cmd, stderr io.Writer, stateDir, host, remote, request, common string, modules []string, scope remoteInputScope) (remoteSourceUpload, error) {
+	scanStart := time.Now()
 	entries, _, err := collectRemoteSources(modules, common, scope)
+	collectMS := time.Since(scanStart).Milliseconds()
 	if err != nil {
 		return remoteSourceUpload{}, err
 	}
 	for _, e := range entries {
 		if !safeRemoteSourceRel(e.rel) {
-			return remoteSourceUpload{}, fmt.Errorf("delta transport cannot carry %q", boundedRemoteLine(e.rel))
+			return remoteSourceUpload{}, fmt.Errorf("%w: %q", errRemoteSourceUnsupported, boundedRemoteLine(e.rel))
 		}
 	}
 	key := remoteSourceBaseKey(host, common, modules, scope)
+	hashStarted := time.Now()
+	stat, hashed, err := hashRemoteSources(entries, loadRemoteSourceStat(stateDir, key), scanStart)
+	if err != nil {
+		return remoteSourceUpload{}, err
+	}
+	hashMS := time.Since(hashStarted).Milliseconds()
+	saveRemoteSourceStat(stateDir, key, stat)
+	sendStarted := time.Now()
 	send := func(mode string, base map[string]remoteSourceLine, expect string) (remoteSourceUpload, error) {
 		plan, removed := planRemoteSourceDelta(entries, base)
 		if base != nil && float64(len(plan)) > remoteSourceDeltaMaxShare*float64(max(len(entries), 1)) {
@@ -427,10 +534,7 @@ func uploadRemoteSourcesDelta(ssh func(string) *exec.Cmd, stderr io.Writer, stat
 			return remoteSourceUpload{}, err
 		}
 		saveLocalRemoteSourceBase(stateDir, key, manifest)
-		return remoteSourceUpload{mode: mode, files: len(plan), bytes: sent}, nil
-	}
-	if err := hashRemoteSources(entries); err != nil {
-		return remoteSourceUpload{}, err
+		return remoteSourceUpload{mode: mode, files: len(plan), bytes: sent, collectMS: collectMS, hashMS: hashMS, hashed: hashed, sendMS: time.Since(sendStarted).Milliseconds()}, nil
 	}
 	if base, digest, ok := loadLocalRemoteSourceBase(stateDir, key); ok {
 		up, err := send(remoteUploadDeltaKnown, base, digest)

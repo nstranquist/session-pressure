@@ -525,6 +525,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	var sourceUploadMode string
 	var sourceFilesSent int
 	var sourceBytesSent int64
+	var sourceDelta remoteSourceUpload
 	defer func() {
 		finishStage()
 		event := map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "timing_ms": timingMS, "source_bytes": sourceBytes, "delivery_id": os.Getenv("NDEV_COMMIT_DELIVERY_ID"), "operation": options.Command[1], "profile": profile, "runner_host": policy.Host, "runner_user": policy.User, "request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0}
@@ -534,6 +535,9 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		}
 		if sourceUploadMode != "" {
 			event["source_upload_mode"], event["source_files_sent"], event["source_bytes_sent"] = sourceUploadMode, sourceFilesSent, sourceBytesSent
+			if sourceDelta.mode != "" {
+				event["source_collect_ms"], event["source_hash_ms"], event["source_send_ms"], event["source_files_hashed"] = sourceDelta.collectMS, sourceDelta.hashMS, sourceDelta.sendMS, sourceDelta.hashed
+			}
 		}
 		recordControlEvent(dir, event)
 	}()
@@ -563,13 +567,21 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	// from the scheduler's execution slot. A stalled sender cannot hold it forever.
 	nextStage("source_upload_ms")
 	uploadMode, uploadFiles, uploadBytes := remoteUploadFull, 0, int64(0)
-	if remoteSourceDeltaEnabled() {
+	var deltaUpload remoteSourceUpload
+	useDelta := remoteSourceDeltaEnabled()
+	if useDelta {
 		up, deltaErr := uploadRemoteSourcesDelta(ssh, streams.Stderr, dir, policy.Host, remote, "pressure-"+job, common, modules, scope)
-		if deltaErr != nil {
+		switch {
+		case errors.Is(deltaErr, errRemoteSourceUnsupported):
+			useDelta = false
+		case deltaErr != nil:
 			return true, 1, fmt.Errorf("remote source upload failed (%s): %w", up.mode, deltaErr)
+		default:
+			deltaUpload = up
+			uploadMode, uploadFiles, uploadBytes = up.mode, up.files, up.bytes
 		}
-		uploadMode, uploadFiles, uploadBytes = up.mode, up.files, up.bytes
-	} else {
+	}
+	if !useDelta {
 		upload := ssh("timeout 600 flock -w 600 /srv/build/input-transfer.lock sh -c " + shellQuote("umask 077; mkdir -p "+shellQuote(remote+"/source")+" && printf '%s\n' "+shellQuote("pressure-"+job)+" > "+shellQuote(remote+".request")+" && tar -xzf - -C "+shellQuote(remote+"/source")))
 		pipe, err := upload.StdinPipe()
 		if err != nil {
@@ -587,7 +599,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		}
 		uploadBytes = sourceBytes
 	}
-	sourceUploadMode, sourceFilesSent, sourceBytesSent = uploadMode, uploadFiles, uploadBytes
+	sourceUploadMode, sourceFilesSent, sourceBytesSent, sourceDelta = uploadMode, uploadFiles, uploadBytes, deltaUpload
 	cleanupSafe := false
 	defer func() {
 		nextStage("cleanup_ms")
