@@ -105,3 +105,18 @@ separate evidence for the retained-authorization correction.
 
 The 01:03 app-1.4.8 observer was used during interactive trace diagnosis.
 Its elapsed time is diagnostic and cannot establish an idle resource pass.
+
+## Final installed 1.4.11 trace acceptance
+
+At 01:54 UTC on November 9, the user confirmed entry of the administrator
+credentials for the fresh 15-second trace requested at 01:52 UTC. The installed
+app version was independently read as 1.4.11. The live Disk Writes view showed
+a completed result: four unique paths and an explicit bounded-result truncation
+notice. Trace buttons were available again, and live samples continued to
+refresh. This completes the installed privileged-trace check for the asynchronous
+authorization correction. Raw paths were not copied into this audit or receipt.
+
+Private categorical receipt: `review-app1411-final-trace.json`. The earlier
+pending-authorization statement is superseded by this result. Interactive use
+interrupts the idle cohort; this result does not establish a 30-minute, 24-hour,
+or 72-hour idle observation pass. Factory delivery state remains independent.
