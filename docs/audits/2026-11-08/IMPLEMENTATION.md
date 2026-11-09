@@ -1625,3 +1625,13 @@ Scratchpad Agents note `01M6YN14GE6XF01K51JDR6SPMA` and WORK-41 comment
 `1c2bff4cfdfd21fd5a45e65c583f0e9d` record the installed outcome, outstanding
 owners and exact elapsed re-check times. The [review report](REVIEW.md) is the
 current concise handoff; private receipts preserve the full diagnostics.
+
+### 2026-11-09 review follow-up (session 01a1bc3b)
+
+Added durable writer stage benchmarks and fail-closed, independent combined
+acceptance collection. Preserved the installed631f374 observer and its deadline.
+Enabled the existing bounded Go cache helper after a real protocol round trip.
+Typed pnpm/npm cleanup reclaimed about7.3GiB. Old-cache retirement has explicit
+rebuild-cost approval and waits for build ownership to clear. The current review
+checkpoint records artifact identities, remote tests, measured writer latency,
+worker installation and outstanding acceptance gates without promoting policy.
