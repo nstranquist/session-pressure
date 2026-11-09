@@ -96,20 +96,23 @@ final class PrivilegedTraceClient {
 
     private func authorizationExternalForm() throws -> Data {
         var authorization: AuthorizationRef?
+        let create = AuthorizationCreate(nil, nil, [], &authorization)
+        guard create == errAuthorizationSuccess, let authorization else {
+            throw PrivilegedTraceError.authorization(create)
+        }
+        // Release the reference even when the user cancels the rights prompt.
+        defer { AuthorizationFree(authorization, []) }
         let status = kAuthorizationRightExecute.withCString { rightName -> OSStatus in
             var item = AuthorizationItem(name: rightName, valueLength: 0, value: nil, flags: 0)
             return withUnsafeMutablePointer(to: &item) { pointer -> OSStatus in
                 var rights = AuthorizationRights(count: 1, items: pointer)
                 let flags: AuthorizationFlags = [.interactionAllowed, .extendRights, .preAuthorize]
-                let create = AuthorizationCreate(nil, nil, [], &authorization)
-                guard create == errAuthorizationSuccess, let authorization else { return create }
                 return AuthorizationCopyRights(authorization, &rights, nil, flags, nil)
             }
         }
-        guard status == errAuthorizationSuccess, let authorization else {
+        guard status == errAuthorizationSuccess else {
             throw PrivilegedTraceError.authorization(status)
         }
-        defer { AuthorizationFree(authorization, []) }
         var external = AuthorizationExternalForm()
         let externalStatus = AuthorizationMakeExternalForm(authorization, &external)
         guard externalStatus == errAuthorizationSuccess else {
