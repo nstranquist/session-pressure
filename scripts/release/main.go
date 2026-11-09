@@ -241,7 +241,11 @@ func verifyBundle(dir string, allowLegacy bool) (manifest, error) {
 		return m, e
 	}
 	rev, e := hex.DecodeString(m.Revision)
-	if e != nil || len(rev) != 20 || len(m.Files) != len(names) {
+	expectedFiles := len(names)
+	if allowLegacy && m.Files["gaterunner-fleet"] == "" {
+		expectedFiles--
+	}
+	if e != nil || len(rev) != 20 || len(m.Files) != expectedFiles {
 		return m, errors.New("invalid release identity")
 	}
 	if m.OS == "darwin" && !m.CGOEnabled {
