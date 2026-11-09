@@ -556,7 +556,7 @@ public struct NDevPressureClient: Sendable {
         let policyTask: Task<PolicyEnvelope?, Never>? = includePolicy ? Task { try? await policyShow() } : nil
         let monitorTask: Task<MonitorStatusEnvelope?, Never>? = includeMonitor ? Task { try? await monitorStatus() } : nil
         let doctorTask: Task<DoctorEnvelope?, Never>? = includeDoctor ? Task { try? await doctor() } : nil
-        let reportTask: Task<WorkReportEnvelope?, Never>? = includeCalibration ? Task { try? await workReport(since: "24h") } : nil
+        let reportTask: Task<WorkReportEnvelope, Error>? = includeCalibration ? Task { try await workReport(since: "24h") } : nil
         let idleTask: Task<IdleEnvelope?, Never>? = includeIdle ? Task { try? await idle() } : nil
         let telemetryTask: Task<TelemetryEnvelope?, Never>? = includeTelemetry ? Task { try? await telemetry() } : nil
 
@@ -566,7 +566,8 @@ public struct NDevPressureClient: Sendable {
         let policyEnv = await policyTask?.value
         let monitorEnv = await monitorTask?.value
         let doctorEnv = await doctorTask?.value
-        let reportEnv = await reportTask?.value
+        let reportResult = await reportTask?.result
+        let reportEnv = try? reportResult?.get()
         let idleEnv = await idleTask?.value
         let telemetryEnv = await telemetryTask?.value
 
@@ -578,7 +579,7 @@ public struct NDevPressureClient: Sendable {
             boardSnapshot = sampled ?? previous?.snapshot ?? PressureSnapshot()
         }
 
-        return PressureBoard(
+        var board = PressureBoard(
             snapshot: boardSnapshot,
             health: statusEnv.health,
             coverage: statusEnv.coverage ?? previous?.coverage,
@@ -597,6 +598,22 @@ public struct NDevPressureClient: Sendable {
             refreshedAt: Date(),
             liveSample: live
         )
+        // Retaining calibration must also retain its freshness/error state when
+        // the caller skips that read, just as the composite-board path does.
+        board.sectionErrors["calibration"] = previous?.sectionErrors["calibration"]
+        board.sectionRefreshedAt["calibration"] = previous?.sectionRefreshedAt["calibration"]
+        if let reportResult {
+            switch reportResult {
+            case .success(let report) where report.calibration != nil:
+                board.sectionErrors.removeValue(forKey: "calibration")
+                board.sectionRefreshedAt["calibration"] = Date()
+            case .success:
+                board.sectionErrors["calibration"] = "Calibration missing from work report."
+            case .failure(let error):
+                board.sectionErrors["calibration"] = error.localizedDescription
+            }
+        }
+        return board
     }
 
     // MARK: - Mutations

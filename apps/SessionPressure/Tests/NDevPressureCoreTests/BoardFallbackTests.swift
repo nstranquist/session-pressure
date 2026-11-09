@@ -16,6 +16,10 @@ struct BoardFallbackTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let calls = dir.appendingPathComponent("calls.log")
         let binary = dir.appendingPathComponent("ndev")
+        // Reuse a scrubbed real recording rather than inventing a CLI payload.
+        let recording = try Data(contentsOf: Bundle.module.url(forResource: "board-full", withExtension: "json", subdirectory: "Fixtures")!)
+        let report = dir.appendingPathComponent("report.json")
+        try recording.write(to: report)
 
         let boardArm = supportsBoard
             ? #"""
@@ -40,6 +44,13 @@ struct BoardFallbackTests {
           *"pressure work status"*)
             echo '{"action":"work.status","work":{"capacity":8,"used":1,"available":7,"leases":[],"waiters":[],"queue_depth":0}}'
             ;;
+          *"pressure work report"*)
+            if [ -f "__REPORT__.fail" ]; then
+              echo "calibration read failed" >&2
+              exit 1
+            fi
+            cat "__REPORT__"
+            ;;
           *"pressure check"*)
             echo '{"action":"check","admission":{"allowed":true,"level":"normal"}}'
             ;;
@@ -50,6 +61,7 @@ struct BoardFallbackTests {
         exit 0
         """#
             .replacingOccurrences(of: "__CALLS__", with: calls.path)
+            .replacingOccurrences(of: "__REPORT__", with: report.path)
             .replacingOccurrences(of: "__BOARD_ARM__", with: boardArm)
 
         try script.write(to: binary, atomically: true, encoding: .utf8)
@@ -98,4 +110,39 @@ struct BoardFallbackTests {
         #expect(calls.contains { $0.contains("pressure check") }, "should have fallen back to check")
         #expect(calls.count > 1, "fallback must issue the fan-out, got: \(calls)")
     }
+
+    @Test("fallback calibration failures stay unavailable until a successful refresh")
+    func calibrationFailureAndRecovery() async throws {
+        let stub = try stubNDev(supportsBoard: false)
+        defer { try? FileManager.default.removeItem(at: stub.calls.deletingLastPathComponent()) }
+        func refresh(_ previous: PressureBoard?, includeCalibration: Bool = true) async throws -> PressureBoard {
+            try await stub.client.refreshBoard(
+                live: false, includeIdle: false, includeTelemetry: false, fullStatus: false,
+                includePolicy: false, includeMonitor: false, includeDoctor: false,
+                includeCalibration: includeCalibration, previous: previous
+            )
+        }
+        let first = try await refresh(nil)
+        #expect((first.calibration?.interruptCount ?? 0) > 0)
+        #expect(first.sectionErrors["calibration"] == nil)
+        #expect(first.sectionRefreshedAt["calibration"] != nil)
+
+        let failureFlag = stub.calls.deletingLastPathComponent().appendingPathComponent("report.json.fail")
+        try Data().write(to: failureFlag)
+        let failed = try await refresh(first)
+        #expect(failed.calibration == first.calibration, "cached data is retained but marked unavailable")
+        #expect(failed.sectionErrors["calibration"] != nil)
+        #expect(failed.sectionRefreshedAt["calibration"] == first.sectionRefreshedAt["calibration"])
+
+        let skipped = try await refresh(failed, includeCalibration: false)
+        #expect(skipped.sectionErrors["calibration"] == failed.sectionErrors["calibration"])
+        #expect(skipped.sectionRefreshedAt["calibration"] == first.sectionRefreshedAt["calibration"])
+
+        try FileManager.default.removeItem(at: failureFlag)
+        let recovered = try await refresh(skipped)
+        #expect(recovered.sectionErrors["calibration"] == nil)
+        #expect(recovered.calibration == first.calibration)
+        #expect(recovered.sectionRefreshedAt["calibration"]! >= first.sectionRefreshedAt["calibration"]!)
+    }
+
 }
