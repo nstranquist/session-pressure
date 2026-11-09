@@ -219,7 +219,11 @@ func build(out, platform string) error {
 	}
 	return writeJSON(filepath.Join(abs, "release.json"), m)
 }
-func verify(dir string) (manifest, error) {
+func verify(dir string) (manifest, error) { return verifyBundle(dir, false) }
+
+// Older active releases predate the fleet selector. Verify every artifact they
+// shipped; new candidate bundles must still contain the selector.
+func verifyBundle(dir string, allowLegacy bool) (manifest, error) {
 	var m manifest
 	f, e := os.Open(filepath.Join(dir, "release.json"))
 	if e != nil {
@@ -244,6 +248,9 @@ func verify(dir string) (manifest, error) {
 		return m, errors.New("Darwin release lacks native SMART support")
 	}
 	for _, name := range names {
+		if allowLegacy && name == "gaterunner-fleet" && m.Files[name] == "" {
+			continue
+		}
 		path := filepath.Join(dir, name)
 		info, e := os.Lstat(path)
 		if e != nil {
@@ -357,7 +364,7 @@ func install(dir, prefix, expected string, allowRollback bool) error {
 		if decodeErr != nil || len(id) != 20 || filepath.Base(previous) != previous {
 			return errors.New("invalid installed authority link")
 		}
-		a, err := verify(filepath.Join(store, previous))
+		a, err := verifyBundle(filepath.Join(store, previous), true)
 		if err != nil {
 			return fmt.Errorf("verify active release: %w", err)
 		}
