@@ -6,6 +6,45 @@ This report states the review findings and the remaining acceptance conditions.
 Private receipts are under `~/.nicos-dev/session-pressure/acceptance/2026-11-08/`.
 
 
+Current checkpoint (**2026-11-09 04:26 UTC**, session `01a1bc3b`):
+Nico's approved old-cache retirement completed after real local Go owners
+finished. The typed executor retained all ownership checks and reclaimed
+**19.53 GiB**, raising available space to **72.2 GiB** and clearing the disk
+latch to **normal**. No Trash, archives, module caches, or simulator data were
+deleted. Future Go builds use the separate **8 GiB LRU target**; active client
+pins can exceed it temporarily. The executable-anchored owner repair `901efec`
+passed remote race tests/vet and a native private CLI performed this one
+operation; the installed product remains **631f374**. Receipts:
+`storage-owner-fixed-build-receipt.json`, `storage-owner-fixed-retirement.json`,
+`storage-after-retirement.json`, and `bounded-cache-enabled.json`.
+
+The first post-retirement product writer cohort still exceeded 25 ms in two
+runs. After storage settled, three 100-call cohorts passed at **14.574, 15.413,
+and 18.357 ms p95**; factory writer p95 was **2.199, 1.894, and 2.133 ms**.
+All cohorts retain integrity checks and have zero loss. This is fresh target
+filesystem evidence, not sustained two-hour acceptance. The resident is now
+healthy: rolling duty **0.434%**, sample CPU p95 **17.634 ms**, RSS **17.5 MiB**,
+normal host pressure, no queued or running local work. Receipts:
+`writer-product-settled-durable.log`, `writer-factory-after-retirement.log`, and
+`final-retirement-doctor.json`. No durability or acceptance threshold changed.
+
+The continuous observer recorded health failures while the resident exceeded
+its CPU budget. Its app samples also include active Hetzner-pane rendering,
+so this run cannot establish controlled idle acceptance. The failed run and
+profiles remain intact (`followup-observation-failure.json`); its original
+November 12 deadline is historical and does not imply a future pass. A fresh
+controlled observation is required after stable recovery. The earlier passed
+30-minute idle cohort remains separate evidence. Live replay still fails its
+performance gate despite passing 22 deterministic scenarios and safety gates.
+
+Collector source `7d8ddcf` retains valid unhealthy audit payloads with documented
+exit 1, while strict reads still reject command failures. Remote race/vet/native
+build job `a31b483c-9959-4a29-88cd-a8310711236a` is queued; the previously tested
+`67d7a147` helper remains installed until that job passes. Collection remains
+fail-closed. Factory benchmark delivery `b244072a-2230-4fa3-b791-2a9b06d2efed`
+is accepted, not yet landed. Queue delay and sustained/replay/72-hour acceptance
+remain open; healthy installation alone does not prove them resolved.
+
 Current checkpoint (**2026-11-09 04:04 UTC**, session `01a1bc3b`):
 The installed product remains **631f374**; its continuous observer is preserved.
 An independent, hourly combined collector now checks exact installed identities,
