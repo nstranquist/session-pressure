@@ -19,6 +19,21 @@
 
 ### Fixed
 
+- **Remote Go work uploads only changed source files.** Before, every job
+  sent a gzip tar of its whole closure (100 to 400 MB); on 2026-11-09 that
+  took 58 minutes a day, as long as all runner time (p50 11 s, p90 41 s).
+  The box now keeps a pristine base per closure in
+  `/srv/build/cache/pressure-base` (8 newest kept). The Mac sends the files
+  whose hash or mode differ (stat-cached hashes, 2 s racy window), a removal
+  list and the full manifest. The box checks incoming files, applies them
+  under the transfer lock without writing any base file in place, snapshots
+  the stage by hard link, and verifies every stage byte after the lock. A
+  stale base (exit 45) diffs against the box manifest; a damaged one (exit
+  46) is dropped and reseeded. A warm 333 MB nicos-dev upload takes 4.8 to
+  5.3 s. `remote_work_finished` records `source_upload_mode`,
+  `source_files_sent`, `source_collect_ms`, `source_hash_ms` and
+  `source_send_ms`. `SESSION_PRESSURE_REMOTE_DELTA=off` restores the full
+  tar upload.
 - **Remote Go builds send only the module closure, gzip-compressed.** Every
   remote job used to upload an uncompressed tar of the whole repository
   (nicos-tools: ~28k files, ~300 MiB with docs and apps). At the measured
