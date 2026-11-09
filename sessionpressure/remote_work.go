@@ -120,11 +120,17 @@ func normalizeRemoteBuildArgv(argv []string) ([]string, string, error) {
 		if out[i] == "-o" && i+1 < len(out) {
 			output := out[i+1]
 			out[i+1] = "/srv/build/candidates/OUTPUT"
+			if remoteBuildDirectory(output) {
+				out[i+1] += "/"
+			}
 			return out, output, nil
 		}
 		if strings.HasPrefix(out[i], "-o=") {
 			output := strings.TrimPrefix(out[i], "-o=")
 			out[i] = "-o=/srv/build/candidates/OUTPUT"
+			if remoteBuildDirectory(output) {
+				out[i] += "/"
+			}
 			return out, output, nil
 		}
 	}
@@ -586,7 +592,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		command += " " + shellQuote(arg)
 	}
 	if output != "" && output != "/dev/null" {
-		command += " && sha256sum " + shellQuote(remote+"/artifact") + " > " + shellQuote(remote+"/artifact.sha256")
+		command += remoteBuildArtifactSeal(remote, output)
 	}
 	// The canonical runner retains source inputs before durable submission.
 	// The command starts at the retained common root, preserving replacements.
@@ -615,13 +621,17 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		if manifestErr != nil || len(fields) != 2 || len(fields[0]) != 64 || fields[1] != remote+"/artifact" {
 			return true, 1, fmt.Errorf("remote artifact manifest unavailable or invalid: %w", manifestErr)
 		}
+		directoryOutput := remoteBuildDirectory(output)
 		if !filepath.IsAbs(output) {
 			output = filepath.Join(cwd, output)
 		}
-		if err = os.MkdirAll(filepath.Dir(output), 0755); err != nil {
+		if directoryOutput {
+			output = filepath.Clean(output) + "/"
+		}
+		if err = os.MkdirAll(filepath.Dir(filepath.Clean(output)), 0755); err != nil {
 			return true, 1, err
 		}
-		f, err := os.CreateTemp(filepath.Dir(output), ".remote-go-artifact-*")
+		f, err := os.CreateTemp(filepath.Dir(filepath.Clean(output)), ".remote-go-artifact-*")
 		if err != nil {
 			return true, 1, err
 		}
@@ -637,6 +647,13 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		}
 		if fmt.Sprintf("%x", digest.Sum(nil)) != fields[0] {
 			return true, 1, errors.New("remote artifact checksum mismatch")
+		}
+		if remoteBuildDirectory(output) {
+			if err = publishRemoteBuildDirectory(f.Name(), output, remoteBuildDirectoryReceipt(policy, profile, "pressure-"+job, fmt.Sprintf("%x", digest.Sum(nil)), sourceBytes)); err != nil {
+				return true, 1, err
+			}
+			cleanupSafe = true
+			return true, 0, nil
 		}
 		if err = os.Chmod(f.Name(), 0755); err != nil {
 			return true, 1, err
