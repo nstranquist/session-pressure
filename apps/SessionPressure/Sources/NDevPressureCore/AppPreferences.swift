@@ -249,16 +249,9 @@ public enum AppPreferences {
         return (env, problems)
     }
 
-    /// Same rule as `NDevPressureAPIClient`: loopback http(s) only.
+    /// Delegates to the API client so Settings and the client share one rule.
     public static func isLoopbackHTTPURL(_ raw: String) -> Bool {
-        guard let url = URL(string: raw),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https",
-              let host = url.host?.lowercased(),
-              ["localhost", "127.0.0.1", "::1"].contains(host),
-              url.user == nil, url.password == nil,
-              url.query == nil, url.fragment == nil else { return false }
-        return true
+        NDevPressureAPIClient.isAllowedURL(raw)
     }
 
     /// Source of an environment-backed value after the overlay.

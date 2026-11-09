@@ -64,9 +64,7 @@ final class PressureStore: ObservableObject {
             (self == .dayGate || self == .hetzner ? "⇧⌘" : "⌘") + commandDigit
         }
 
-        /// Optional, host-specific panes can be hidden from Settings.
-        var isOptional: Bool { self == .dayGate || self == .hetzner }
-
+        /// Day Gate and Hetzner are host-specific and can be hidden in Settings.
         func isVisible(_ defaults: UserDefaults = .standard) -> Bool {
             switch self {
             case .dayGate: defaults.object(forKey: AppPreferenceKey.showDayGate) as? Bool ?? true
