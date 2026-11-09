@@ -178,7 +178,7 @@ struct OverviewView: View {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(PressureTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        } else if store.board.wrapperInterruptOperations > 0 {
+        } else if (WorkCancellationTelemetry(calibration: store.board.calibration)?.total ?? 0) > 0 {
             // Calibration-only strip when doctor envelope is unavailable.
             VStack(alignment: .leading, spacing: 8) {
                 Text("Work forensics")
@@ -193,10 +193,14 @@ struct OverviewView: View {
 
     @ViewBuilder
     private var interruptAndSuggestionRow: some View {
-        let interrupts = store.board.wrapperInterruptOperations
-        if interrupts > 0 {
+        if store.board.sectionErrors["calibration"] == nil,
+           let counts = WorkCancellationTelemetry(calibration: store.board.calibration), counts.total > 0 {
             HStack(spacing: 10) {
-                StatusChip(label: "wrapper interrupts \(interrupts)", ok: false)
+                Text("Interruptions & timeouts (24h): \(counts.total)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help(PressureHelp.workCancellationHistory)
+                Button("Details") { store.selectedSection = .telemetry }
                 Spacer(minLength: 0)
             }
         }
