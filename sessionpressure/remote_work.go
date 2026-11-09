@@ -65,7 +65,7 @@ func (p *RemoteWorkPolicy) validate() error {
 		return errors.New("remote fleet inventory path must be absolute")
 	}
 	if p.Host == "" {
-		p.Host = "runner-1"
+		p.Host = "runner-2"
 	}
 	if p.User == "" {
 		p.User = "builder"

@@ -46,7 +46,7 @@ func cmdSessionPressureBrowser(g *Flags, args []string) int {
 func cmdSessionPressureRemote(g *Flags, args []string) int {
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" || arg == "help" {
-			return emitPressure(g, map[string]any{"ok": true}, "Usage: session-pressure remote status|enable [--host HOST] [--user USER]|disable\n       session-pressure remote inspect [--host HOST] [--user USER] [--no-box] [--known-ledger SHA256]\n       session-pressure remote job-log [--host HOST] [--user USER] --id JOB\n", 0)
+			return emitPressure(g, map[string]any{"ok": true}, "Usage: session-pressure remote status|enable [--host HOST] [--user USER] [--fleet PATH]|disable\n       session-pressure remote inspect [--host HOST] [--user USER] [--no-box] [--known-ledger SHA256]\n       session-pressure remote job-log [--host HOST] [--user USER] --id JOB\n", 0)
 		}
 	}
 	if len(args) > 0 && (args[0] == "inspect" || args[0] == "job-log") {
