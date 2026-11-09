@@ -78,13 +78,23 @@ type diskWriteHistoryRecord struct {
 	BaselineP99Bytes uint64                         `json:"baseline_p99_bytes,omitempty"`
 	Contexts         map[string]diskHistogramRecord `json:"contexts"`
 	Executables      []diskExecutableHistory        `json:"executables,omitempty"`
-	LastSampleAt     time.Time                      `json:"last_sample_at,omitempty,omitzero"`
-	DeviceIdentity   string                         `json:"device_identity,omitempty"`
-	DeviceBytes      uint64                         `json:"device_bytes,omitempty"`
-	DeviceCount      int                            `json:"device_count,omitempty"`
-	DeviceSource     string                         `json:"device_source,omitempty"`
+	// Writers is the hour's exact per-executable write total: the sum of
+	// per-sample process deltas over every valid window, quiet or not.
+	// Executables above holds baseline-training histograms only, so it
+	// was empty in exactly the high hours, and its total_bytes summed a
+	// rolling 15-minute window every sample (inflated about 60x).
+	Writers []DiskWriteHistoryExecutable `json:"writers,omitempty"`
+	// AttributedBytes is the hour's total of all process write deltas, so
+	// readers can see how much of BytesWritten has a named writer.
+	AttributedBytes uint64    `json:"attributed_bytes,omitempty"`
+	LastSampleAt    time.Time `json:"last_sample_at,omitempty,omitzero"`
+	DeviceIdentity  string    `json:"device_identity,omitempty"`
+	DeviceBytes     uint64    `json:"device_bytes,omitempty"`
+	DeviceCount     int       `json:"device_count,omitempty"`
+	DeviceSource    string    `json:"device_source,omitempty"`
 
 	executableHistograms map[string]*diskHistogram
+	writerTotals         map[string]uint64
 }
 
 type DiskWriteHistoryExecutable struct {
@@ -93,14 +103,18 @@ type DiskWriteHistoryExecutable struct {
 }
 
 type DiskWriteHistoryPoint struct {
-	Hour             time.Time                    `json:"hour"`
-	State            DiskWriteState               `json:"state,omitempty"`
-	BytesWritten     uint64                       `json:"bytes_written,omitempty"`
-	SwapOutBytes     uint64                       `json:"swap_out_bytes,omitempty"`
-	UnscoredGapBytes uint64                       `json:"unscored_gap_bytes,omitempty"`
-	BaselineP99Bytes uint64                       `json:"baseline_p99_bytes,omitempty"`
-	SampleCount      uint64                       `json:"sample_count"`
-	Executables      []DiskWriteHistoryExecutable `json:"executables,omitempty"`
+	Hour             time.Time      `json:"hour"`
+	State            DiskWriteState `json:"state,omitempty"`
+	BytesWritten     uint64         `json:"bytes_written,omitempty"`
+	SwapOutBytes     uint64         `json:"swap_out_bytes,omitempty"`
+	UnscoredGapBytes uint64         `json:"unscored_gap_bytes,omitempty"`
+	BaselineP99Bytes uint64         `json:"baseline_p99_bytes,omitempty"`
+	SampleCount      uint64         `json:"sample_count"`
+	// AttributedBytes is the part of BytesWritten with a named writer
+	// (all-volume process counters, best effort). 0 for hours written
+	// before writer attribution was recorded per hour.
+	AttributedBytes uint64                       `json:"attributed_bytes,omitempty"`
+	Executables     []DiskWriteHistoryExecutable `json:"executables,omitempty"`
 }
 
 type DiskWriteStore struct {
@@ -186,6 +200,12 @@ func boundedDiskWriteHistoryRecord(record diskWriteHistoryRecord) (diskWriteHist
 			return record, body, nil
 		}
 		if len(record.Executables) == 0 {
+			// Writer attribution is the evidence an operator reads; it goes
+			// last, after every training histogram.
+			if len(record.Writers) > 0 {
+				record.Writers = record.Writers[:len(record.Writers)-1]
+				continue
+			}
 			return record, nil, fmt.Errorf("disk-write history record is %d bytes above %d-byte ceiling", len(body), maxDiskWriteHistoryRecordBytes)
 		}
 		record.Executables = record.Executables[:len(record.Executables)-1]
@@ -352,6 +372,29 @@ func summarizeHistoryExecutables(executables []diskExecutableHistory, maxExecuta
 	return out
 }
 
+// summarizeHistoryWriters returns the largest exact hourly writers.
+func summarizeHistoryWriters(writers []DiskWriteHistoryExecutable, maxExecutables int) []DiskWriteHistoryExecutable {
+	if maxExecutables <= 0 || len(writers) == 0 {
+		return nil
+	}
+	copied := make([]DiskWriteHistoryExecutable, 0, len(writers))
+	for _, writer := range writers {
+		if name := strings.TrimSpace(writer.Executable); name != "" {
+			copied = append(copied, DiskWriteHistoryExecutable{Executable: name, TotalBytes: writer.TotalBytes})
+		}
+	}
+	sort.Slice(copied, func(i, j int) bool {
+		if copied[i].TotalBytes != copied[j].TotalBytes {
+			return copied[i].TotalBytes > copied[j].TotalBytes
+		}
+		return copied[i].Executable < copied[j].Executable
+	})
+	if len(copied) > maxExecutables {
+		copied = copied[:maxExecutables]
+	}
+	return copied
+}
+
 func (store *DiskWriteStore) readHistory(limit int, since time.Time, maxExecutables int) ([]DiskWriteHistoryPoint, int, error) {
 	records, _, err := store.loadRecordsWithCheckpoint(since)
 	if err != nil {
@@ -373,10 +416,15 @@ func (store *DiskWriteStore) readHistory(limit int, since time.Time, maxExecutab
 			point.BaselineP99Bytes = record.BaselineP99Bytes
 			latestByHour[hour] = record
 			if maxExecutables > 0 {
-				point.Executables = summarizeHistoryExecutables(record.Executables, maxExecutables)
+				if len(record.Writers) > 0 {
+					point.Executables = summarizeHistoryWriters(record.Writers, maxExecutables)
+				} else {
+					point.Executables = summarizeHistoryExecutables(record.Executables, maxExecutables)
+				}
 			}
 		}
 		point.BytesWritten = saturatingAddUint64(point.BytesWritten, record.BytesWritten)
+		point.AttributedBytes = saturatingAddUint64(point.AttributedBytes, record.AttributedBytes)
 		point.SwapOutBytes = saturatingAddUint64(point.SwapOutBytes, record.SwapOutBytes)
 		point.UnscoredGapBytes = saturatingAddUint64(point.UnscoredGapBytes, record.UnscoredGapBytes)
 		count := record.SampleCount

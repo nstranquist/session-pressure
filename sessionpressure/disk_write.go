@@ -422,6 +422,12 @@ func (observer *DiskWriteObserver) restore() {
 			histogram := diskHistogramFromRecord(executable.Histogram)
 			current.executableHistograms[executable.Executable] = &histogram
 		}
+		// Resume the partial hour's writer totals; the checkpoint keeps the
+		// top 8, so a restart can only under-attribute, never inflate.
+		current.writerTotals = make(map[string]uint64, len(source.Writers))
+		for _, writer := range source.Writers {
+			current.writerTotals[writer.Executable] = writer.TotalBytes
+		}
 		observer.currentHour = &current
 		if current.State == DiskWriteStateHigh || current.State == DiskWriteStateUnusual {
 			observer.lastState = current.State
@@ -743,6 +749,9 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 		accepted = false
 	}
 	observer.recordHourLocked(at, state, p99, deviceDelta, swapDelta, device, hasPrevious, validWindow)
+	if hasPrevious && validWindow {
+		observer.recordHourWritersLocked(processDeltas)
+	}
 	if accepted {
 		histogram.add(window15, at)
 		observer.recordBaselineLocked(at, contextName, window15, writers)
@@ -1114,6 +1123,7 @@ func (observer *DiskWriteObserver) ensureCurrentHourLocked(at time.Time) {
 		observer.currentHour = &diskWriteHistoryRecord{
 			SchemaVersion: 1, ModelVersion: diskWriteModelVersion, BaselineEpoch: diskWriteBaselineEpoch, Hour: hour,
 			Contexts: make(map[string]diskHistogramRecord), executableHistograms: make(map[string]*diskHistogram),
+			writerTotals: make(map[string]uint64),
 		}
 	}
 }
@@ -1134,6 +1144,51 @@ func (observer *DiskWriteObserver) recordHourLocked(at time.Time, state DiskWrit
 	observer.currentHour.DeviceBytes = device.BytesWritten
 	observer.currentHour.DeviceCount = device.DeviceCount
 	observer.currentHour.DeviceSource = device.Source
+}
+
+// recordHourWritersLocked adds one sample's exact process write deltas to
+// the current hour, for every valid window. Attribution must not depend
+// on baseline training: training skips high, burst and swap-dominated
+// windows on purpose, and on 2026-11-09 that left every hour above
+// ~89 GB without a named writer.
+func (observer *DiskWriteObserver) recordHourWritersLocked(deltas []diskProcessDelta) {
+	if observer.currentHour == nil {
+		return
+	}
+	if observer.currentHour.writerTotals == nil {
+		observer.currentHour.writerTotals = make(map[string]uint64)
+	}
+	for _, delta := range deltas {
+		name := delta.Executable
+		if name == "" {
+			name = "unknown"
+		}
+		observer.currentHour.writerTotals[name] = saturatingAddUint64(observer.currentHour.writerTotals[name], delta.Bytes)
+		observer.currentHour.AttributedBytes = saturatingAddUint64(observer.currentHour.AttributedBytes, delta.Bytes)
+	}
+	if len(observer.currentHour.writerTotals) > diskWriteMaxHourWriters {
+		trimHourWriterTotals(observer.currentHour.writerTotals, diskWriteMaxHourWriters)
+	}
+}
+
+// diskWriteMaxHourWriters bounds the in-memory hourly writer map; the
+// persisted record keeps the top 8.
+const diskWriteMaxHourWriters = 64
+
+func trimHourWriterTotals(totals map[string]uint64, keep int) {
+	names := make([]string, 0, len(totals))
+	for name := range totals {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if totals[names[i]] != totals[names[j]] {
+			return totals[names[i]] > totals[names[j]]
+		}
+		return names[i] < names[j]
+	})
+	for _, name := range names[keep:] {
+		delete(totals, name)
+	}
 }
 
 func (observer *DiskWriteObserver) recordBaselineLocked(at time.Time, contextName string, value uint64, writers []DiskWriter) {
@@ -1233,7 +1288,13 @@ func (observer *DiskWriteObserver) currentHourRecordLocked() (diskWriteHistoryRe
 	if len(record.Executables) > 8 {
 		record.Executables = record.Executables[:8]
 	}
+	record.Writers = make([]DiskWriteHistoryExecutable, 0, len(record.writerTotals))
+	for name, total := range record.writerTotals {
+		record.Writers = append(record.Writers, DiskWriteHistoryExecutable{Executable: name, TotalBytes: total})
+	}
+	record.Writers = summarizeHistoryWriters(record.Writers, 8)
 	record.executableHistograms = nil
+	record.writerTotals = nil
 	return record, true
 }
 
