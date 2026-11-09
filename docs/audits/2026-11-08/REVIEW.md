@@ -5,60 +5,67 @@ The [implementation ledger](IMPLEMENTATION.md) retains the full evidence history
 This report states the review findings and the remaining acceptance conditions.
 Private receipts are under `~/.nicos-dev/session-pressure/acceptance/2026-11-08/`.
 
-## Current installed review (22:35 UTC)
+## Current installed review (2026-11-09 00:16 UTC)
 
-Native CLI/helper **0.7.0 / d56f7cf3** is installed at both managed prefixes.
-All five release files match both manifests (`review-d56-installed-manifests-2229.json`).
-Fresh doctor and artifact checks pass: resident PID 9392, 16.125 MiB RSS,
-0.144% normal CPU duty, sample CPU p95 49.895 ms, 528,384 bytes/day projected
-telemetry, no warning or drift. A delegated factory capabilities call confirms
-the standalone route only; final factory source/installation proof is separate.
+Native CLI/helper **0.7.0 / d56f7cf3** remains installed at both managed
+prefixes. The five-file manifest check, installed closed-outcome and privacy
+checks, automatic remote Git regression and real Swift/Unix API contract pass.
+The targeted telemetry race job `20261108T220457Z-1906275` passes; the full
+product race job `20261108T213140Z-1666344` passes. Earlier evidence remains
+bound to its recorded source and artifacts.
 
-App **1.4.2 build 10** is installed with full-bundle authority
-`0b92fbfd67424e0b9651bf81a6b5fc8aa843c09f2a90e0a925052591d18b086a`.
-Strict signature verification, all 75 Swift tests and release build pass. All
-twelve installed panes were reviewed, including 95 Hetzner runs, 695 jobs,
-divergence filtering, recorded agreement and a real captured test log.
-`review-installed-ui-2217.json` records that review. The actual installed d56
-CLI/Unix API contract passes (`review-d56-installed-swift-contract-2228.log`).
+The final factory installation is now independently verified. All three front
+door paths hash to `7ec3c96ce83772f63c988f844b9d11835898e6da6a92373904deb280853f9a45`,
+matching the schema-4 receipt for clean committed source **a39854ab**. The
+private proof is `review-resume-factory-installed-0016.json`. This installation
+does not include changes that are still in the delivery queue.
 
-The `921c267` telemetry correction is now installed and dogfooded. Success,
-invalid input and a completed audit finding produce the expected closed outcome
-and reason fields; the wrapper emits no duplicate event. No raw invalid argument
-leaks into telemetry. `review-installed-outcomes-2226/receipt.json` binds these
-checks to the installed binary. Its exact-source targeted race job
-`20261108T220457Z-1906275` passed in 16 seconds; the final promoter also reports
-full race, vet and native build success. The installed automatic remote Git
-regression passes without a Mac fallback.
+App **1.4.3 build 11**, source **8c4734d2**, is installed with full-bundle authority
+`ee522429b208ea70aa5cd03c82de1eeba157a8f72de5f356461d78a831466b7f`.
+The sole promoter reports 76 Swift tests and strict signature verification
+passing. Independent source review confirms compact 60-second board polling
+while inactive or minimized and immediate refresh on activation. The twelve-pane
+live review belongs to 1.4.2; its 30-minute CPU observation later failed at
+1.063% against the 1% limit. That failed cohort remains preserved.
 
-The 100-call writer diagnostic has 100 attempts, 100 writes and zero failures,
-writer p95 **25.310 ms** and command-completion p95 **38.275 ms**
-(`review-d56-writer-window-2227.json`). This exceeds the 25 ms target by 0.310 ms;
-it does not replace the older natural window or establish a causal speedup.
-Historical gaps and failures remain visible. Strict source coverage passes.
+The new observer is `observation-d56f7cf3-app143b11-20261109T000337Z.json`.
+Its monitoring clock starts after warmup at **2026-11-09T00:04:29.616413Z**.
+All 300 reads succeed: status p95 **112.329/250 ms**, board **114.817/500 ms**
+and full board **655.103/1,000 ms** pass. At 00:12:32 it has nine successful
+health checks, zero failures/restarts and passing continuity. App observation is
+483.375 seconds, CPU **1.1047%**, peak RSS **118.719 MiB**, zero sample failures.
+The CPU value is over budget; no resource pass is claimed. The first eligible
+30-minute, 24-hour and 72-hour checks are November 9 at **00:34:29**, November
+10 at **00:04:29**, and November 12 at **00:04:29 UTC**. Old elapsed time cannot
+transfer. This observer binds CLI/app/resident identity; it does not prove that
+all queued factory changes are installed.
 
-The new immutable observer starts its elapsed clock after warmup, at
-**2026-11-08T22:29:45.525347Z**. All three 100-call read gates pass: status
-137.073/250 ms, board 78.694/500 ms and full board 285.710/1,000 ms, zero read
-failures. At 22:34:46, six health checks pass with no sample failures or restarts;
-app observation is 301 seconds, CPU 0.899%, peak RSS 86.828 MiB. The 30-minute
-app gate cannot pass before 22:59:45. The 24/72-hour gates are first eligible
-November 9/11 at 22:29:45 UTC. Output is
-`observation-d56f7cf3-app142b10-20261108T222913Z.json`; the immutable launch
-receipt is `review-d56-observer-launch-2229.json`. This is a **CLI/app diagnostic
-cohort**, not final factory acceptance. Old elapsed time does not transfer.
+The current audit **fails** (`review-resume-audit-0008.json`). Factory writer
+shard s20 has a pending completion for sequence 8008 at midnight. Its matching
+primary `legacy.kb` event exists. The completion cause is unknown; this is not
+proof of a missing primary event. The pending row, counters and source event
+are retained. The live telemetry owner has claimed the completion regression
+fix. Factory/product writer p95 is **100/56.985 ms** in that audit, above the
+25 ms target. The earlier diagnostic 100/100 writes with p95 25.310 ms remains
+valid only for its own bounded cohort.
 
-Worker 2.34.0 is healthy. One queued parent recovery and one retained waiter
-remain active. Four owned factory deliveries are nonterminal; the final factory
-also waits for the promoter's queue/browser dependencies. Writer latency,
-scheduler evidence, administrator trace and actual elapsed acceptance remain
-open. The dated historical sections below keep their original evidence.
+Three owned factory deliveries are landed; parent `64c635e4` is paused with its
+existing recovery queued, child `2aca8f87` is held and `b20237d3`/`196ac71c` are
+accepted. Retain one waiter and do not duplicate recovery. Native export review
+also found that receipts selected host files instead of export-platform files.
+The owned correction selects GOOS, GOARCH, CGO and build tags through a host
+helper. Exact-source platform/CGO/tag mutation tests are queued on Hetzner;
+publication and passing verification are not yet claimed.
+
+WORK-41 remains in progress. Writer completion and latency, queue delivery,
+scheduler evidence, a real administrator-authorized trace and actual elapsed
+acceptance remain open. The historical sections retain their original times.
 
 ## Findings and corrections
 
 | Finding | Correction | Evidence and limit |
 | --- | --- | --- |
-| The acceptance observer started its elapsed clock before read warmup and did not bind the complete installed artifact pair. | Bind CLI SHA-256, full app bundle authority and the running executable path. Start the monitoring clock after warmup. Preserve artifact changes, failures and restarts. Require all read, health, continuity and app gates before 24/72-hour acceptance. | `b36ac47`; observer race tests pass. A new immutable d56/app1.4.2 observer is active; old observations do not gain the new semantics. |
+| The acceptance observer started its elapsed clock before read warmup and did not bind the complete installed artifact pair. | Bind CLI SHA-256, full app bundle authority and the running executable path. Start the monitoring clock after warmup. Preserve artifact changes, failures and restarts. Require all read, health, continuity and app gates before 24/72-hour acceptance. | `b36ac47`; observer race tests pass. The current immutable d56/app1.4.3 observer is active; old observations do not gain the new semantics. |
 | The uncommitted Hetzner pane read worker files and ran SSH directly from Swift. | Adopt and complete the pane through typed `remote inspect` and `remote job-log` Go contracts. Swift retains view state only. | CLI reads are bounded by file type, byte count, rows, process lifetime and response size. No new database or policy authority. |
 | Equal local/remote booleans could be presented as agreement when the local run failed because of its environment. | Use the worker's recorded `agreement` as the only comparison authority. Keep unknown comparisons unknown. Show environment text as a hint. | Go and Swift tests preserve an unknown agreement despite opposite booleans and an environment failure. |
 | A failed refresh could look like fresh empty history. | Retain the last successful data and its original age. Show local, box and job-log failures. Show missing ledgers without inventing a cause. | Store tests cover failed reads and retained ages. |
@@ -67,7 +74,7 @@ open. The dated historical sections below keep their original evidence.
 | History and receipt inputs had no complete resource contract. | Reject links, FIFOs and special files; close the open/stat race; read at most 4 MiB and 1,000 complete ledger rows. Bound emitted history and jobs to 512 KiB each, configuration to 256 KiB, SSH output to 1 MiB and job logs to 100,000 bytes. | Tests cover oversized input, response encoding expansion, malformed rows, invalid job IDs, non-finite health and bounded capture. |
 | Capabilities omitted existing commands, and some read leaves had incomplete telemetry vocabulary. | Cover dispatcher operations and categorize remote inspection/job logs, I/O health and identity reads without retaining private flag values. | A dispatcher-based test detects future capability omissions. |
 | The pane displayed only the first 100 runs and 120 jobs without access to later matching rows. Unknown decisions looked like shadow decisions. | Add bounded incremental display with lazy rows. Preserve unknown decision text. Counts explicitly describe the loaded window. | Source review; final native verification and live review are recorded below when available. |
-| Standalone command events omitted the shared outcome class and reason. All 373 nonzero calls projected into one unknown group. | Add the factory's closed result vocabulary. Mark a completed audit finding only after successful report output; preserve loading, encoding and output failures as command failures. Keep the stable operation ID, bounded action and legacy outcome fields. | `921c267`: guarded publication complete. Exact-source targeted race test is retained; installation is still pending. Historical events are unchanged. |
+| Standalone command events omitted the shared outcome class and reason. All 373 nonzero calls projected into one unknown group. | Add the factory's closed result vocabulary. Mark a completed audit finding only after successful report output; preserve loading, encoding and output failures as command failures. Keep the stable operation ID, bounded action and legacy outcome fields. | `921c267`: guarded publication complete. Exact-source targeted race and installed outcome/privacy dogfood pass. Historical events are unchanged. |
 
 The Hetzner UI originated in a concurrent, uncommitted six-path change. Its owner
 was inactive after board coordination. WORK-41 explicitly adopted integration at
@@ -175,8 +182,8 @@ two accepted, one held and one paused. No queued work is described as installed.
 
 | Owner | Required result | Completion proof |
 | --- | --- | --- |
-| WORK-41 | Completed API/app review, native installation and installed outcome dogfood | Full Go race and 75 Swift tests pass; d56 manifests, doctor, installed outcome events, app 1.4.2 signature, installed endpoint and twelve-pane review pass. Elapsed and separate factory acceptance remain pending. |
-| Runtime/factory promoter | Activate the reviewed native CGO profile and fail-closed wrapper routing, then include the new read API | Clean committed source, pinned Darwin toolchain, matching installed CLI/factory receipts and live artifact identity. Portable fixture binaries are not release candidates. |
+| WORK-41 | Completed API/app review, native installation and installed outcome dogfood | Full Go race passes; the promoter reports 76 Swift tests for app 1.4.3. The earlier twelve-pane review, d56 manifests and installed endpoint/outcome checks pass. Current writer, app resource and elapsed gates remain open. |
+| Runtime/factory promoter | Activate the reviewed native CGO profile and fail-closed wrapper routing, then include the new read API | Factory a39854ab receipt and all three installed hashes match. Later queued helper/browser/export changes still require their own landed and installed proof. Portable fixture binaries are not release candidates. |
 | Delivery owner | Finish the paused builder parent, held child and two accepted factory deliveries | Exact delivery IDs are landed, installed source agrees, owned doctor is clean and the service remains healthy. Do not stop a busy worker. |
 | Factory telemetry owner | Diagnose the persistent missing receipt and writer latency | Preserve historical gaps; prove newly completed writes and fresh bounded latency windows. Missing history cannot be repaired by resetting evidence. |
 | WORK-41 | Final same-artifact 30-minute, 24-hour and 72-hour acceptance | One immutable observer helper and one new cohort; zero sample errors, restarts and health failures; continuity and all three 100-sample read budgets pass. Actual elapsed time is required. |
