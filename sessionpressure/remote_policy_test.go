@@ -12,10 +12,12 @@ func TestRemoteEndpointPolicyCompatibilityAndPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	old, err := RemoteWorkConfig(dir)
-	if err != nil || old.Host != "gaterunner-1" || old.User != "builder" || !old.Enabled {
+	if err != nil || old.Host != "gaterunner-2" || old.User != "builder" || !old.Enabled {
 		t.Fatal(old, err)
 	}
-	if err := ConfigureRemoteWork(dir, true, "gaterunner-2", "builder"); err != nil {
+	// An explicit reserve endpoint survives toggling; it must not revert to
+	// the default active runner.
+	if err := ConfigureRemoteWork(dir, true, "gaterunner-1", "builder"); err != nil {
 		t.Fatal(err)
 	}
 	pinned, err := RemoteWorkConfig(dir)
@@ -26,7 +28,7 @@ func TestRemoteEndpointPolicyCompatibilityAndPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, err := RemoteWorkConfig(dir)
-	if err != nil || current.Enabled || current.Host != "gaterunner-2" || pinned.Host != "gaterunner-2" || !pinned.Enabled {
+	if err != nil || current.Enabled || current.Host != "gaterunner-1" || pinned.Host != "gaterunner-1" || !pinned.Enabled {
 		t.Fatal(current, pinned, err)
 	}
 	for _, host := range []string{"-oProxyCommand=x", "host;cmd", "user@host", "host\n"} {
