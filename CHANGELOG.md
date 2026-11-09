@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Desktop 1.6.0 — Settings
+
+- **NDev Pressure Settings now surfaces the important app settings.** Launch
+  pane, launch at login (off by default, live Login Items status), Dock badge
+  mode, opt-in Red/Critical notifications (rising transitions only, 10-minute
+  per-level cooldown), refresh profile with effective intervals, sidebar pane
+  visibility, and saved control-plane overrides (binaries, API socket/URL,
+  token file path, timeout) with the resolved path, source and API transport.
+  A read-only guard configuration summary links to Policy and Monitor.
+  Diagnostics can reveal the state folder, copy a summary and reset app
+  preferences. The ⌘, window is now tabbed and gets the store it needs (it
+  previously had no environment object). Every pane builds its client through
+  one factory, so saved overrides apply everywhere, including to apps opened
+  from Finder, which never see shell environment variables.
+
 ### Fixed
 
 - **Remote Go builds send only the module closure, gzip-compressed.** Every

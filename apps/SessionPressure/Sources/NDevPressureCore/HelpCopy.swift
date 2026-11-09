@@ -132,10 +132,52 @@ public enum PressureHelp {
     public static let guardBudget =
         "Self-imposed budgets for helper RSS, CPU duty, sample cost, and daily telemetry growth. Budget breaches suppress automatic relief."
     public static let binaryPath =
-        "Path to the ndev binary this app shells out to. Override with NDEV_BIN or NDEV_PATH."
+        "Path to the control-plane binary this app shells out to. Set it in Settings → Control plane, or with SESSION_PRESSURE_BIN / NDEV_BIN when launched from a shell."
 
     public static let showMenuBarExtra =
         "Show or hide the NDev Pressure icon in the menu bar. This setting is saved and takes effect immediately."
+
+    public static let launchPane =
+        "The pane the main window shows when the app starts. Last used restores the pane you had open."
+
+    public static let launchAtLogin =
+        "Start NDev Pressure when you log in. Off by default. macOS may ask you to approve it in System Settings → General → Login Items."
+
+    public static let dockBadge =
+        "What the Dock icon badge shows: the Day Gate residue plus the pressure level, only the pressure level, or nothing."
+
+    public static let alertThreshold =
+        "Send a macOS notification when host pressure rises to this level. Only rising transitions alert, at most once per level every 10 minutes."
+
+    public static let refreshProfile =
+        "How often this app reads the control plane. Adaptive reads faster under higher pressure. Slower profiles reduce CPU and process launches; the guard itself is not affected."
+
+    public static let pressureBinaryOverride =
+        "Absolute path to the session-pressure (or ndev) binary. A saved value wins over the environment. Leave empty for automatic resolution."
+
+    public static let ndevBinaryOverride =
+        "Absolute path to the full ndev binary, used by Day Gate and other ndev-only reads. Leave empty for automatic resolution."
+
+    public static let apiTransport =
+        "The app uses the local Unix-socket API when it exists, a loopback URL when one is set, and the CLI otherwise. The CLI path is always the fallback."
+
+    public static let apiTokenFile =
+        "Path to a file that holds the API token. The app stores only this path, never the token."
+
+    public static let apiTimeout =
+        "Per-request timeout for the local API, 1–30 seconds. 0 uses the default (10 s)."
+
+    public static let guardConfiguration =
+        "Read-only view of the guard's own configuration. Change it on the Policy and Monitor panes, where every change is confirmed and audited."
+
+    public static let sidebarPanes =
+        "Hide host-specific panes you do not use. Hidden panes also leave the Pressure menu."
+
+    public static let copyDiagnostics =
+        "Copy app version, resolved binaries, API transport, preferences and current errors. Tokens are never included."
+
+    public static let resetPreferences =
+        "Remove every saved NDev Pressure app preference and return to defaults. Guard policy is not changed."
 
     public static func section(_ name: String) -> String {
         switch name {

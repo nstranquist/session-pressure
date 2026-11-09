@@ -86,14 +86,19 @@ public enum PressureFormat {
     }
 
     /// Adaptive UI poll interval mirroring resident cadence philosophy.
-    public static func pollInterval(for level: PressureLevel) -> TimeInterval {
+    public static func pollInterval(for level: PressureLevel, profile: RefreshProfile = .default) -> TimeInterval {
+        let base: TimeInterval
         switch level {
-        case .critical: return 5
-        case .red: return 8
-        case .warning: return 12
-        case .normal, .unknown: return 20
+        case .critical: base = 5
+        case .red: base = 8
+        case .warning: base = 12
+        case .normal, .unknown: base = 20
         }
+        return profile.scaled(base)
     }
+
+    /// Disk Writes pane: one bounded live sample per interval while visible.
+    public static let diskFocusPollInterval: TimeInterval = 15
 
     /// Cadence while the main window is closed. The menu-bar extra outlives the
     /// window by design, so its gauge must keep moving — but nothing else is on
@@ -109,11 +114,22 @@ public enum PressureFormat {
     public static func workFocusPollInterval(
         queueDepth: Int,
         leaseCount: Int,
-        interfaceActive: Bool
+        interfaceActive: Bool,
+        profile: RefreshProfile = .default
     ) -> TimeInterval {
         guard interfaceActive else { return workFocusSuspendedCheckInterval }
-        if queueDepth > 0 || leaseCount > 0 { return workFocusBusyPollInterval }
-        return workFocusIdlePollInterval
+        if queueDepth > 0 || leaseCount > 0 { return profile.scaled(workFocusBusyPollInterval) }
+        return profile.scaled(workFocusIdlePollInterval)
+    }
+
+    /// One-line summary of every effective cadence for a profile, shown in
+    /// Settings so the operator sees what a choice really does.
+    public static func cadenceSummary(_ profile: RefreshProfile) -> String {
+        func s(_ t: TimeInterval) -> String {
+            t == t.rounded() ? "\(Int(t)) s" : String(format: "%.1f s", t)
+        }
+        return "Normal \(s(pollInterval(for: .normal, profile: profile))) · Warning \(s(pollInterval(for: .warning, profile: profile))) · Red \(s(pollInterval(for: .red, profile: profile))) · Critical \(s(pollInterval(for: .critical, profile: profile)))\n"
+            + "Menu bar only \(s(profile.scaled(menuBarOnlyPollInterval))) · Work Queue \(s(profile.scaled(workFocusBusyPollInterval)))/\(s(profile.scaled(workFocusIdlePollInterval))) · Disk Writes \(s(profile.scaled(diskFocusPollInterval)))"
     }
 
     public static func shortOperationID(_ id: String?) -> String {

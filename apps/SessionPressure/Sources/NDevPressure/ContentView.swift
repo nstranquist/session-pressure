@@ -7,6 +7,16 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var hetzner = HetznerStore()
     @State private var windowVisible = true
+    @AppStorage(AppPreferenceKey.showDayGate) private var showDayGate = true
+    @AppStorage(AppPreferenceKey.showHetzner) private var showHetzner = true
+
+    private func visibleSection(_ section: PressureStore.Section) -> Bool {
+        switch section {
+        case .dayGate: showDayGate
+        case .hetzner: showHetzner
+        default: true
+        }
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -70,7 +80,7 @@ struct ContentView: View {
             Divider()
 
             List(selection: $store.selectedSection) {
-                ForEach(PressureStore.Section.allCases) { section in
+                ForEach(PressureStore.Section.allCases.filter { visibleSection($0) }) { section in
                     Label {
                         HStack {
                             Text(section.rawValue)

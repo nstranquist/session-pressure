@@ -24,7 +24,7 @@ Native macOS desktop app for visualizing and controlling **`ndev session pressur
 | **Policy** | Full protection / admission-only / observe-only, thresholds, budgets, storage policy, and Keyboard (⌘1–⌘9; remap via System Settings App Shortcuts) |
 | **Monitor** | LaunchAgent install/status/uninstall, resident health, sample cost, copy-only unclean-start recovery evidence |
 | **Telemetry** | Bounded state transitions, heartbeats, audited relief actions |
-| **Settings** | Saved app preferences, including **Show in menu bar** (⌘9) |
+| **Settings** | Launch pane, launch at login (off by default), menu bar and Dock badge, opt-in Red/Critical alerts, refresh profile, sidebar panes, control-plane binary/API overrides with the resolved path and transport, a read-only guard configuration summary, keyboard map, and diagnostics (⌘9 or ⌘,) |
 
 Process CPU is measured from native cumulative CPU-time deltas using stable
 PID/start-time identity. A real zero is distinct from unavailable evidence;
@@ -40,10 +40,11 @@ can alert and never changes pressure level, admission, or process authority.
 Also: **menu bar extra** with level badge, compact metrics, and quick access to the confirmed policy controls; dock badge at warning/red/critical. The compact surface never changes process authority directly.
 
 Select **Settings** at the bottom of the sidebar (⌘9), choose
-**NDev Pressure → Settings…** (⌘,), or use **Settings…** in the menu bar panel
-to change **Show in menu bar**. The icon is shown by default. Changes take
-effect immediately and are saved across app launches. When the icon is hidden,
-open the app from the Dock or Applications to show it again in Settings.
+**NDev Pressure → Settings…** (⌘,), or use **Settings…** in the menu bar panel.
+Changes take effect immediately and are saved across app launches. App
+preferences change only how this app reads and presents the control plane; the
+guard's own policy is shown read-only and changed on Policy and Monitor. See
+[operator guide → Settings](docs/operator-guide.md#settings).
 
 ## Build & run
 

@@ -1,11 +1,22 @@
 import AppKit
 import SwiftUI
+import NDevPressureCore
 
 @main
 struct NDevPressureApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = PressureStore()
-    @AppStorage(AppSettings.showMenuBarExtraKey) private var showMenuBarExtra = true
+    @AppStorage(AppPreferenceKey.showMenuBarExtra) private var showMenuBarExtra = true
+    @AppStorage(AppPreferenceKey.showDayGate) private var showDayGate = true
+    @AppStorage(AppPreferenceKey.showHetzner) private var showHetzner = true
+
+    private func visibleSection(_ section: PressureStore.Section) -> Bool {
+        switch section {
+        case .dayGate: showDayGate
+        case .hetzner: showHetzner
+        default: true
+        }
+    }
 
     var body: some Scene {
         Window("NDev Pressure", id: "main") {
@@ -29,7 +40,7 @@ struct NDevPressureApp: App {
 
                 Divider()
 
-                ForEach(PressureStore.Section.allCases) { section in
+                ForEach(PressureStore.Section.allCases.filter { visibleSection($0) }) { section in
                     Button(section.rawValue) {
                         if section == .storage { store.openStorage(tab: .disk) }
                         else { store.selectedSection = section }
@@ -43,9 +54,8 @@ struct NDevPressureApp: App {
         }
 
         Settings {
-            AppSettingsView()
-                .frame(width: 420)
-                .fixedSize(horizontal: false, vertical: true)
+            SettingsWindowView()
+                .environmentObject(store)
         }
 
         MenuBarExtra(isInserted: $showMenuBarExtra) {

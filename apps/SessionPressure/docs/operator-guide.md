@@ -32,6 +32,28 @@ and can fall back to `ndev`, which execs the nicos-tools product CLI.
 7. **Policy** — choose Balanced, Throughput, Interactive, or Observe (confirmations required), then use the legacy protection buttons when you need the explicit admission/auto-shed flags. Storage policy enable/observe and the **Keyboard** card (⌘1–⌘8 plus remap via System Settings App Shortcuts) are also here.
 8. **Monitor** — LaunchAgent install/status/uninstall, helper budget health, and copy-only recovery evidence after an unclean start.
 9. **Telemetry** — recent transitions and audited relief actions.
+10. **Settings** (⌘9, or ⌘, for the tabbed window) — app preferences and a read-only guard summary. See [Settings](#settings).
+
+## Settings
+
+App preferences live in the app's own defaults domain
+(`com.nstranquist.ndev-pressure`). They never change guard policy.
+
+| Section | What it controls |
+|---|---|
+| General | Pane on launch (or last used). Launch at login: off by default, read from the live macOS Login Items status. |
+| Menu bar & Dock | Show in menu bar. Dock badge: Day Gate and level (default), level only, or off. |
+| Alerts | Opt-in macOS notification when pressure rises to Red or Critical. Only rising transitions alert, at most once per level per 10 minutes; app launch never alerts. Permission is requested only when you turn alerts on. |
+| Refresh | Adaptive (default), Relaxed (2× slower), Minimal (4× slower; every interval capped at 300 s). Shows each effective interval. The resident guard cadence does not change. |
+| Sidebar | Hide Day Gate and Hetzner. Hidden panes also leave the Pressure menu. |
+| Control plane | Saved session-pressure and ndev binary paths, API socket, loopback API URL, token *file* path (never a token), and API timeout. Each binary shows the path in use and its source (saved / environment / automatic / not found). Invalid overrides are ignored and listed. Product identity is here too. |
+| Guard configuration | Read-only: mode, guard/admission/auto-shed, block-new level, guard sample intervals, disk-write watchdog, storage policy, LaunchAgent and artifact state, disk-trace helper. Open Policy / Open Monitor to change them. |
+| Keyboard | Shortcut map and a link to App Shortcuts. |
+| Diagnostics | Reveal the state folder, copy a diagnostics summary (no tokens), and reset app preferences (confirmed; guard policy unchanged). |
+
+Saved control-plane paths win over environment variables. An app opened from
+Finder or the Dock does not see your shell environment, so prefer Settings over
+`SESSION_PRESSURE_BIN` / `NDEV_BIN` for the installed app.
 
 ## Keyboard
 

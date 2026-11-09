@@ -64,6 +64,17 @@ final class PressureStore: ObservableObject {
             (self == .dayGate || self == .hetzner ? "⇧⌘" : "⌘") + commandDigit
         }
 
+        /// Optional, host-specific panes can be hidden from Settings.
+        var isOptional: Bool { self == .dayGate || self == .hetzner }
+
+        func isVisible(_ defaults: UserDefaults = .standard) -> Bool {
+            switch self {
+            case .dayGate: defaults.object(forKey: AppPreferenceKey.showDayGate) as? Bool ?? true
+            case .hetzner: defaults.object(forKey: AppPreferenceKey.showHetzner) as? Bool ?? true
+            default: true
+            }
+        }
+
         var freshnessKey: String {
             switch self {
             case .overview, .trees, .storage, .processIncidents: "status"
@@ -211,6 +222,7 @@ final class PressureStore: ObservableObject {
     @Published var selectedSection: Section = .overview {
         didSet {
             guard selectedSection != oldValue else { return }
+            UserDefaults.standard.set(selectedSection.rawValue, forKey: AppPreferenceKey.lastPane)
             Task { await refresh(live: false, light: false) }
             if selectedSection == .dayGate { Task { await refreshAdvisorBrief(force: false) } }
             if selectedSection == .work {
@@ -227,11 +239,21 @@ final class PressureStore: ObservableObject {
             if selectedSection == .storage, storageTab == .disk {
                 Task { await refreshStorageInventory() }
             }
-            if selectedSection == .policy {
+            if selectedSection == .policy || selectedSection == .settings {
                 Task { await refreshStorageInventory() }
+            }
+            if selectedSection == .settings {
+                Task { await refreshIdentity() }
+                Task { await alerts.refreshAuthorization() }
             }
         }
     }
+
+    /// Opt-in level notifications; feeds on every full board read.
+    let alerts = LevelAlertNotifier()
+    /// Saved Settings overrides that were refused (shown on the Settings page).
+    @Published var preferenceProblems: [PreferenceProblem] = []
+    private var launchPaneApplied = false
 
     @Published var storageTab: StorageTab = .disk {
         didSet {
@@ -307,6 +329,7 @@ final class PressureStore: ObservableObject {
     }
 
     var binaryPath: String { client?.binaryPath ?? board.binaryPath }
+    var advisorBinaryPath: String? { client?.advisorBinaryPath }
 
     var workFocusPollActive: Bool {
         selectedSection == .work && workFocusTask != nil && interfaceAllowsFocusedRefresh
@@ -320,7 +343,8 @@ final class PressureStore: ObservableObject {
         PressureFormat.workFocusPollInterval(
             queueDepth: board.work?.queueDepth ?? 0,
             leaseCount: board.work?.leases.count ?? 0,
-            interfaceActive: interfaceAllowsFocusedRefresh
+            interfaceActive: interfaceAllowsFocusedRefresh,
+            profile: refreshProfile
         )
     }
 
@@ -377,13 +401,54 @@ final class PressureStore: ObservableObject {
     /// ladder; menu-bar-only use backs off hard.
     var boardPollInterval: TimeInterval {
         windowOpen && interfaceAllowsFocusedRefresh
-            ? PressureFormat.pollInterval(for: board.level)
-            : PressureFormat.menuBarOnlyPollInterval
+            ? PressureFormat.pollInterval(for: board.level, profile: refreshProfile)
+            : refreshProfile.scaled(PressureFormat.menuBarOnlyPollInterval)
+    }
+
+    var refreshProfile: RefreshProfile { AppPreferences.refreshProfile() }
+
+    /// Pane to show on first window open, from Settings. "lastUsed" restores
+    /// the last pane; a hidden optional pane falls back to Overview.
+    static func launchSection(_ defaults: UserDefaults = .standard) -> Section {
+        let choice = defaults.string(forKey: AppPreferenceKey.launchPane) ?? Section.overview.rawValue
+        let raw = choice == "lastUsed" ? defaults.string(forKey: AppPreferenceKey.lastPane) : choice
+        guard let raw, let section = Section(rawValue: raw), section.isVisible(defaults) else { return .overview }
+        return section
+    }
+
+    /// Called by Settings after any app preference changes. Client-affecting
+    /// changes rebuild the client so the next read uses the new binaries/API.
+    func preferencesChanged(rebuildClient: Bool) {
+        if rebuildClient {
+            let resolved = AppPreferences.clientEnvironment()
+            preferenceProblems = resolved.problems
+            do {
+                client = try NDevPressureClient(environment: resolved.environment)
+                lastError = nil
+            } catch {
+                client = nil
+                lastError = error.localizedDescription
+            }
+            capabilities = nil
+            Task { await refreshIdentity() }
+        }
+        if !selectedSection.isVisible() { selectedSection = .settings }
+        updateDockBadge()
+        schedulePoll(immediate: rebuildClient)
+        if selectedSection == .work { scheduleWorkFocusPoll(immediate: false) }
+        if selectedSection == .diskWrites { scheduleDiskFocusPoll(immediate: false) }
     }
 
     func start() {
+        if !launchPaneApplied {
+            launchPaneApplied = true
+            let launch = Self.launchSection()
+            if launch != selectedSection { selectedSection = launch }
+        }
         do {
-            client = try NDevPressureClient()
+            let resolved = AppPreferences.clientEnvironment()
+            preferenceProblems = resolved.problems
+            client = try NDevPressureClient(environment: resolved.environment)
             Task { await refreshIdentity() }
             lastError = nil
         } catch {
@@ -475,7 +540,8 @@ final class PressureStore: ObservableObject {
             var refreshImmediately = immediate
             while !Task.isCancelled, gen == self.diskFocusGeneration, self.selectedSection == .diskWrites {
                 if !refreshImmediately {
-                    try? await Task.sleep(nanoseconds: 15_000_000_000)
+                    let interval = self.refreshProfile.scaled(PressureFormat.diskFocusPollInterval)
+                    try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
                 }
                 guard !Task.isCancelled, gen == self.diskFocusGeneration else { return }
                 guard self.selectedSection == .diskWrites else { return }
@@ -504,7 +570,7 @@ final class PressureStore: ObservableObject {
         }
         guard let client else {
             do {
-                self.client = try NDevPressureClient()
+                self.client = try ClientFactory.make()
             } catch {
                 lastError = error.localizedDescription
                 return
@@ -550,8 +616,8 @@ final class PressureStore: ObservableObject {
                     includeIdle: selectedSection == .storage && storageTab == .idle,
                     includeTelemetry: selectedSection == .telemetry,
                     fullStatus: richStatus,
-                    includePolicy: board.policy == nil || selectedSection == .policy,
-                    includeMonitor: board.launchd == nil || selectedSection == .monitor,
+                    includePolicy: board.policy == nil || selectedSection == .policy || selectedSection == .settings,
+                    includeMonitor: board.launchd == nil || selectedSection == .monitor || selectedSection == .settings,
                     includeDoctor: selectedSection == .overview || selectedSection == .monitor,
                     includeCalibration: selectedSection == .overview || selectedSection == .work || selectedSection == .telemetry,
                     previous: board
@@ -563,6 +629,7 @@ final class PressureStore: ObservableObject {
             refreshWorkSelectionFromBoard()
             await refreshAdvisorBrief(force: false)
             updateDockBadge()
+            alerts.observe(level: board.level, detail: alertDetail)
             if selectedSection == .diskWrites {
                 await refreshDiskWrites(live: true, includeHistory: diskWriteHistory.isEmpty)
             }
@@ -686,6 +753,14 @@ final class PressureStore: ObservableObject {
     }
 
     func handleDeepLink(_ url: URL) {
+        if url.scheme == "ndev-pressure", url.host == "overview" {
+            selectedSection = .overview
+            return
+        }
+        if url.scheme == "ndev-pressure", url.host == "settings" {
+            selectedSection = .settings
+            return
+        }
         if url.scheme == "ndev-pressure", url.host == "day-gate" {
             selectedSection = .dayGate
             return
@@ -1173,18 +1248,21 @@ final class PressureStore: ObservableObject {
         }
     }
 
+    private var alertDetail: String {
+        let u = board.snapshot.utilization
+        return "Memory used \(u.memoryUsedPercent)%. Open NDev Pressure for trees, work and relief."
+    }
+
     private func updateDockBadge() {
         let app = NSApplication.shared
         let nextBadge: String?
-        if let advisorBrief {
-            nextBadge = advisorBrief.dockBadge(for: board.level)
-        } else {
-            switch board.level {
-            case .normal, .unknown: nextBadge = nil
-            case .warning: nextBadge = "!"
-            case .red: nextBadge = "RED"
-            case .critical: nextBadge = "CRIT"
-            }
+        switch AppPreferences.dockBadgeMode() {
+        case .off:
+            nextBadge = nil
+        case .levelOnly:
+            nextBadge = DockBadgeMode.levelBadge(board.level)
+        case .dayGateAndLevel:
+            nextBadge = advisorBrief?.dockBadge(for: board.level) ?? DockBadgeMode.levelBadge(board.level)
         }
         if app.dockTile.badgeLabel != nextBadge { app.dockTile.badgeLabel = nextBadge }
     }
