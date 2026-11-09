@@ -106,8 +106,8 @@ func TestWarningDeratingIsInteractiveOnly(t *testing.T) {
 
 func TestApplyPolicyProfileMultiAgentSoftDiffersFromObserve(t *testing.T) {
 	base := DefaultPolicy(16 * 1024)
-	// Force capacity 8 so knobs are deterministic.
-	base.WorkLimits.Capacity = 8
+	// Derive all weights from ten CPUs so capacity 8 is valid on larger runners.
+	base.WorkLimits = defaultWorkLimits(10)
 	observe, err := ApplyPolicyProfile(base, PolicyProfileObserve, ApplyProfileOptions{})
 	if err != nil {
 		t.Fatal(err)
