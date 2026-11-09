@@ -518,7 +518,12 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	}
 	defer func() {
 		finishStage()
-		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "timing_ms": timingMS, "source_bytes": sourceBytes, "delivery_id": os.Getenv("NDEV_COMMIT_DELIVERY_ID"), "operation": options.Command[1], "profile": profile, "runner_host": policy.Host, "runner_user": policy.User, "request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0})
+		event := map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "timing_ms": timingMS, "source_bytes": sourceBytes, "delivery_id": os.Getenv("NDEV_COMMIT_DELIVERY_ID"), "operation": options.Command[1], "profile": profile, "runner_host": policy.Host, "runner_user": policy.User, "request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0}
+		// The shared SQLite telemetry projection retains scalar attributes.
+		for stage, ms := range timingMS {
+			event[stage] = ms
+		}
+		recordControlEvent(dir, event)
 	}()
 	remote := "/srv/build/candidates/pressure-" + job
 	for i := range argv {
