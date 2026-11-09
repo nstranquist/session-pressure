@@ -35,7 +35,7 @@ final class PrivilegedTraceClient {
 
     func trace(pid: Int, processStartIdentity: String, durationSeconds: Int) async throws -> DiskPathTraceResult {
         try await ensureRegistered()
-        let authorization = try authorizationExternalForm()
+        let authorization = try await authorizationExternalForm()
         // External forms refer to live authorization state. Keep our reference
         // until the helper replies (or the bounded connection attempt ends).
         defer { AuthorizationFree(authorization.reference, []) }
@@ -111,7 +111,7 @@ final class PrivilegedTraceClient {
         UserDefaults.standard.set(build, forKey: registrationKey)
     }
 
-    private func authorizationExternalForm() throws -> (data: Data, reference: AuthorizationRef) {
+    private func authorizationExternalForm() async throws -> (data: Data, reference: AuthorizationRef) {
         var authorization: AuthorizationRef?
         let create = AuthorizationCreate(nil, nil, [], &authorization)
         guard create == errAuthorizationSuccess, let authorization else {
@@ -121,14 +121,14 @@ final class PrivilegedTraceClient {
         // A successful request transfers ownership to trace's defer.
         var transferred = false
         defer { if !transferred { AuthorizationFree(authorization, []) } }
-        let status = kAuthorizationRightExecute.withCString { rightName -> OSStatus in
-            var item = AuthorizationItem(name: rightName, valueLength: 0, value: nil, flags: 0)
-            return withUnsafeMutablePointer(to: &item) { pointer -> OSStatus in
-                var rights = AuthorizationRights(count: 1, items: pointer)
-                let flags: AuthorizationFlags = [.interactionAllowed, .extendRights, .preAuthorize]
-                return AuthorizationCopyRights(authorization, &rights, nil, flags, nil)
+        // Authentication can wait for operator input. The synchronous API
+        // blocks AppKit and accessibility for that entire wait.
+        let status: OSStatus = await withCheckedContinuation { continuation in
+            TraceAuthorizationRights.request(authorization) { status in
+                continuation.resume(returning: status)
             }
         }
+        try Task.checkCancellation()
         guard status == errAuthorizationSuccess else {
             throw PrivilegedTraceError.authorization(status)
         }
@@ -140,6 +140,25 @@ final class PrivilegedTraceClient {
         let data = withUnsafeBytes(of: external) { Data($0) }
         transferred = true
         return (data, authorization)
+    }
+}
+
+enum TraceAuthorizationRights {
+    // Construct the callback outside MainActor isolation: Security invokes it
+    // on its own queue. The AuthorizationRef remains owned by the caller until
+    // completion, and the callback's returned item set has a separate lifetime.
+    static func request(_ authorization: AuthorizationRef, completion: @escaping @Sendable (OSStatus) -> Void) {
+        kAuthorizationRightExecute.withCString { rightName in
+            var item = AuthorizationItem(name: rightName, valueLength: 0, value: nil, flags: 0)
+            withUnsafeMutablePointer(to: &item) { pointer in
+                var rights = AuthorizationRights(count: 1, items: pointer)
+                let flags: AuthorizationFlags = [.interactionAllowed, .extendRights, .preAuthorize]
+                AuthorizationCopyRightsAsync(authorization, &rights, nil, flags) { status, grantedRights in
+                    if let grantedRights { AuthorizationFreeItemSet(grantedRights) }
+                    completion(status)
+                }
+            }
+        }
     }
 }
 
