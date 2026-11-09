@@ -5,6 +5,24 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
+Installed follow-up (**2026-11-09 01:04 UTC**, promoter session `01a1bc3b`):
+app **1.4.8 build 16**, committed source **c966f6e**, is installed and relaunched.
+All **89 tests in 13 suites**, the release build, matching real Team ID
+**C82D23RNQ9**, and strict Apple trust-anchor checks pass. Full-bundle authority
+is `0eaf84270885d5d4142b8103b61f85ddcb1141d0355aa1dabf59612938df0a37`.
+The atomic install receipt is `app148-install.json`. The final immutable observer
+is `observation-a6cee30-app148b16-20261109T010323Z.json`; its monitoring clock
+starts at **01:03:58.385513 UTC**, after warmup. The first eligible resource check
+is **November 9 01:33:58 UTC**; the 72-hour check is **November 12 01:03:58 UTC**.
+Neither is passed in advance. Actual privileged trace completion on 1.4.8
+remains unverified. Earlier trace and resource failures remain preserved.
+
+Product doctor at 01:03 passes: matching `a6cee30a` CLI/helper, fresh resident
+PID 33936, 17.797 MiB RSS, 0.359% CPU duty, sample CPU p95 17.270 ms, no warning.
+Browser admission is Auto/recovered after two safe samples, with a 120-second
+job limit. Factory adapter/recovery installation and delivery-worker activation
+are separate follow-through; they do not block this installed product cohort.
+
 Delivery scope correction (**2026-11-09 01:01 UTC**): the four queued
 deliveries and delivery-worker upgrade belong to **nicos-tools**, not this
 Session Pressure repository. Session Pressure changes use guarded direct
@@ -15,7 +33,7 @@ factory queue completion with Session Pressure readiness are superseded by this
 scope correction. Product acceptance still requires its own installed evidence
 and actual elapsed resource checks.
 
-Latest closeout (**2026-11-09 00:58 UTC**): the operator requested that
+Earlier closeout (**2026-11-09 00:58 UTC**): the operator requested that
 queue and elapsed-test waits stop. The active producers remain running; no
 queue, worker, approval or test gate is bypassed. The approved real trace found
 and caused repairs for registration, signing, trace error handling, authorization
