@@ -5,36 +5,52 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
-Current checkpoint (**2026-11-09 01:17 UTC**, promoter session `01a1bc3b`):
-app **1.4.9 build 17**, committed source **fe06d29** including authorization
-repair **a1311f1**, is installed and running. All **89 tests in 13 suites**,
-the release build, matching real Team ID **C82D23RNQ9**, and strict Apple
-trust-anchor checks pass. Full-bundle authority is
-`99fd914457a1b0a18058af4117d41d85b0f0e5891dff9c3b70df15b5a0521d26`;
-the atomic receipt is `app149-install.json`. The approved real trace completed
-with bounded/truncated output at **01:14 UTC**. The first attempt after an
-update can still fail registration; the trace owner is repairing that race.
-The 1.4.8 observer is stopped and preserved as diagnostic evidence: interactive
-trace use and the app replacement invalidate its idle cohort. **No final
-30-minute resource or 72-hour acceptance pass is claimed.** A new immutable
-idle observation must follow the last app repair and trace verification.
+Current checkpoint (**2026-11-09 01:39 UTC**, promoter session `01a1bc3b`):
+app **1.4.11 build 19**, committed source **d463ed8** including asynchronous
+authorization repair **97d703f**, is installed and running. All **94 tests in
+13 suites**, the release build, matching real Team ID **C82D23RNQ9**, and
+strict Apple trust-anchor checks pass. Full-bundle authority is
+`d577902d147b4d95d0d98b0a90c91ffccbac9b6c46e5004cd14a72be255be59b`;
+the atomic receipt is `app1411-install.json`. The trace owner independently
+verified that the UI stays responsive during administrator authorization.
+Actual trace completion on this build is pending system authentication. The
+approved 1.4.9 trace succeeded; 1.4.10 exposed the synchronous authorization
+UI freeze now repaired. The stopped 1.4.8 observer remains diagnostic only.
+**No final 30-minute resource or 72-hour acceptance pass is claimed.** A new
+immutable idle cohort must follow the final live trace and parked-app check.
+Earlier observer deadlines below do not apply to the current build.
 
-The live product doctor at 01:14 passes: matching `a6cee30a` CLI/helper, fresh
-resident PID 33936, 17.797 MiB RSS, 0.357% CPU duty, sample CPU p95 15.085 ms,
-and no warnings. This does not make the full production audit pass. The
-natural two-hour audit (`review-audit-2h-0114.json`) **fails**: test-class
-end-to-end bounded slowdown p95 is 7.17 against 5.00, CLI writer histogram p95
-is 100 ms against 25 ms, and standalone writer p95 is 107.921 ms against the
-100 ms failure ceiling. Those windows retain earlier load. The fresh private
-100-call product cohort meets the 25 ms target at 15.608 ms; it does not erase
-production history or establish sustained acceptance. Storage is also warning
-at 48.8 GiB available. No threshold is widened and no history is deleted.
+The live product doctor at **01:28 UTC** passes: matching `a6cee30a` CLI/helper,
+fresh resident PID 33936, 18.031 MiB RSS, 0.319% CPU duty, sample CPU p95
+16.079 ms, normal host pressure, empty work queue, and no warnings. The natural
+two-hour audit (`review-audit-2h-0130.json`, generated 01:28) still **fails**:
+CLI writer histogram p95 is 100 ms against 25 ms and standalone writer p95 is
+106.077 ms against its 100 ms failure ceiling. Telemetry now passes. Scheduler
+status is warning because some classes lack 20 terminal-runtime samples and
+two long waits remain; a window losing samples is not proof of improvement.
+Storage is warning at 48.7 GiB available. Earlier loaded writes remain in the
+latency window. No threshold is widened and no history is deleted.
 
-Factory browser and completion-recovery repairs have landed at **589996f**
-and their exact committed export is building on Hetzner. Installed factory
-acceptance remains separate from this product's direct app installation.
-The independently tested proof-scan rate limit is captured as **201ed628**
-and follows that fixed installation cutoff; its accepted state is not landing.
+Factory browser and automatic completion-recovery repairs are **installed at
+589996f**, with signed SHA
+`0c8f80d28b95d7773d870fac8436bcfd9065c830f0e6f55c0f621d24aba898e4`
+verified at all three CLI paths. Native SQLite canaries pass before and after
+promotion; product/helper source agreement passes. The fresh installed private
+100-call cohort has 100 written, zero failures, writer p95 histogram upper
+bound **25 ms**, maximum 27.783 ms, and wall p95 105.531 ms. The separate product
+100-call cohort has writer p95 15.608 ms. These private cohorts do not replace
+the failing natural production window.
+
+The explicit reconciliation helper delivery **a48c48af** has **landed at
+effa7b79**; its installed artifact and native positive/negative tests were
+already verified. The independently tested cross-process proof-scan limit
+**201ed628** remains accepted, not landed or installed. Full telemetry race,
+vet, and native recovery tests pass on its exact integrated bytes. The final
+worker source **50d238e** is landed, but its proposed CGO-disabled artifact was
+withheld after review found missing SQLite support. The existing healthy
+2.34.1 worker remains active. The sole replacement installer is `01a1bdaa`;
+CGO-enabled artifact, real writer rows, activation, and normal runtime receipts
+remain required. Factory queue state does not block direct app installation.
 
 Installed follow-up (**2026-11-09 01:04 UTC**, promoter session `01a1bc3b`):
 app **1.4.8 build 16**, committed source **c966f6e**, is installed and relaunched.
