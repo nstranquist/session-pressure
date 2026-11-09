@@ -6,6 +6,56 @@ This report states the review findings and the remaining acceptance conditions.
 Private receipts are under `~/.nicos-dev/session-pressure/acceptance/2026-11-08/`.
 
 
+Current checkpoint (**2026-11-09 03:00 UTC**, promoter session `01a1bc3b`):
+The recovery scan bound **201ed628 / fe1b11e** and single browser completion
+**81f1f8a6 / 9c9a199** are landed and installed in all three factory front doors.
+The factory source cutoff is `9c9a19991f50b110437a9a456b28479fd7d31ff0`;
+the embedded product, CLI, API and helper agree on
+`06e6b047c4ceab806f7c57585f4c95a754a96072`. Native SQLite pre/post-publication
+checks, committed dependency pins, and product race tests and vet pass.
+The product cutoff includes committed remote reconnect repairs `b3a7349`
+and `3fbf026`. It also repairs a live-policy evaluator false failure:
+the operator-override fixture now leaves one unit less than the selected
+waiter's weight available, including equal browser/test weights. Failed
+scenarios now supply an actionable audit reason. The scheduler admission
+algorithm is unchanged by this evaluator repair. All **22 deterministic
+scenarios pass** on the live policy; the overall evaluation still withholds
+promotion because historical replay lacks enough samples for every gate.
+
+The installed automatic Go route executes a real Linux test through canonical
+Hetzner admission. The non-actuating installed browser policy fixture produces
+exactly **one** completion row, classified `policy_block`, with no browser
+started. Browser sessions are zero, the global switch is Auto, and the runtime
+bound remains 120 seconds. These checks do not require a browser capture.
+
+App **1.4.11 build 19** passed the live privileged disk trace after user
+authentication. Its parked 30-minute cohort passed at **02:29:32 UTC**:
+CPU **0.538%**, peak RSS **103.313 MiB**, 31 checks, no failures or restarts.
+Receipt: `app1411-idle-30m-passed-0230.json`. The app has not changed since that
+cohort. CLI identity changes stop and preserve prior observers; a new immutable
+72-hour observer uses explicit benchmark provenance. **The 72-hour gate remains
+pending**, with the current monitoring start/deadline in
+`product06e6-observer-setup.json` and its linked observation: monitoring began
+**November 9 02:59:12 UTC**; its 72-hour deadline is **November 12 02:59:12 UTC**.
+Warmup passed 100 reads per surface with no failures: status p95 **88.4 ms**,
+board **58.035 ms**, rich **241.723 ms**.
+
+Performance is **not accepted**. The final exact-artifact 100-call cohort
+(`final-writer-installed-0300/measurement.json`) recorded 100/100 writes, zero
+failures, histogram p95 upper bound **10 ms**, below the **25 ms** target.
+The preceding installed cohort recorded **50 ms**; both results are retained.
+This variable result does not establish a sustained or causal improvement.
+The natural two-hour window still contains writer latency breaches. No history,
+threshold or durable flush guarantee was weakened. Matching Darwin full-flush
+storage probes show variable flush cost; they do not establish a causal product
+speedup. Old observer calls lacked benchmark provenance; the new cohort fixes
+that classification without relabeling or deleting historical rows.
+
+Remaining acceptance: establish sustained durable writer latency within the existing gate,
+and let the exact installed cohort complete its continuous 72-hour observation.
+Parallel delivery/scheduler work remains separately owned; a healthy busy worker
+must not be restarted merely because later source commits exist.
+
 Current checkpoint (**2026-11-09 02:00 UTC**, promoter session `01a1bc3b`):
 The browser duplicate-completion repair is now delivery **81f1f8a6**, accepted
 and not installed. It supersedes **a451f1b4** after a test-only correction:
