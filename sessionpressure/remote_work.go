@@ -404,13 +404,15 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		_ = exec.CommandContext(cleanupCtx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "builder@100.106.202.89", "rm -rf -- "+shellQuote(remote)).Run()
 	}()
 	rel, _ := filepath.Rel(common, cwd)
-	command := remoteRunnerPrelude() + remoteBuildPreflight(profile, remote) + "cd " + shellQuote(remote+"/source/"+filepath.ToSlash(rel)) + " && exec env GOWORK=off GOMAXPROCS=2 GOMEMLIMIT=3GiB GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p=2")) + remoteBuildEnvironment(profile, remote)
+	command := remoteRunnerPrelude() + remoteBuildPreflight(profile, remote) + "cd " + shellQuote("./"+filepath.ToSlash(rel)) + " && exec env GOWORK=off GOMAXPROCS=2 GOMEMLIMIT=3GiB GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p=2")) + remoteBuildEnvironment(profile, remote)
 	for _, arg := range argv {
 		command += " " + shellQuote(arg)
 	}
-	command = "flock -w 1800 /srv/build/global-work.lock timeout --kill-after=5s 1800s bash -c " + shellQuote(command)
+	// The canonical runner retains source inputs before durable submission.
+	// The command starts at the retained common root, preserving replacements.
+	command = "env NCD_RUNNER_KEY=" + shellQuote("pressure-"+job) + " /srv/build/run-job.sh session-pressure " + shellQuote("session-pressure:"+job) + " --candidate-dir " + shellQuote(remote+"/source") + " --timeout 1800 --shell " + shellQuote(command)
 	if streams.Stderr != nil {
-		fmt.Fprintln(streams.Stderr, "session-pressure: routing Go work to gaterunner-1 ("+profile+", global slot, parallelism 2)")
+		fmt.Fprintln(streams.Stderr, "session-pressure: routing Go work to gaterunner-1 ("+profile+", durable runner queue, parallelism 2)")
 	}
 	child := ssh(command)
 	child.Stdin = streams.Stdin
