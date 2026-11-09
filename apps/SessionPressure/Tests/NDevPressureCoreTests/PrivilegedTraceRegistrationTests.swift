@@ -6,6 +6,104 @@ import Testing
 @Suite("Privileged trace service registration")
 @MainActor
 struct PrivilegedTraceRegistrationTests {
+    @Test("post-update SM transition retries and succeeds without manual retry")
+    func recoversRefreshTransition() async throws {
+        var current = SMAppService.Status.notRegistered
+        var registrations = 0
+        var delays: [Int] = []
+        try await TraceHelperRegistration.ensureAfterRefresh(
+            helperIsEmbedded: true, refreshed: true, status: { current },
+            register: {
+                registrations += 1
+                if registrations < 3 { throw NSError(domain: "SMAppServiceErrorDomain", code: 1) }
+                current = .enabled
+            }, pause: { delays.append($0) }
+        )
+        #expect(registrations == 3)
+        #expect(delays == [100, 200])
+    }
+
+    @Test("persistent post-update permission failure has a fixed retry bound")
+    func boundsRefreshRetries() async {
+        var registrations = 0
+        var delays: [Int] = []
+        do {
+            try await TraceHelperRegistration.ensureAfterRefresh(
+                helperIsEmbedded: true, refreshed: true, status: { .notRegistered },
+                register: {
+                    registrations += 1
+                    throw NSError(domain: "SMAppServiceErrorDomain", code: 1)
+                }, pause: { delays.append($0) }
+            )
+            Issue.record("Persistent failure must fail")
+        } catch {
+            #expect(error.localizedDescription.contains("SMAppServiceErrorDomain:1"))
+        }
+        #expect(registrations == 6)
+        #expect(delays.reduce(0, +) == 3100)
+    }
+
+    @Test("ordinary registration and unrelated errors never retry", arguments: [false, true])
+    func doesNotRetryOtherFailures(refreshed: Bool) async {
+        var registrations = 0
+        var pauses = 0
+        do {
+            try await TraceHelperRegistration.ensureAfterRefresh(
+                helperIsEmbedded: true, refreshed: refreshed, status: { .notRegistered },
+                register: {
+                    registrations += 1
+                    throw NSError(domain: refreshed ? "OtherDomain" : "SMAppServiceErrorDomain", code: 1)
+                }, pause: { _ in pauses += 1 }
+            )
+            Issue.record("Registration must fail")
+        } catch {}
+        #expect(registrations == 1)
+        #expect(pauses == 0)
+    }
+
+    @Test("approval required during refresh stops before retry")
+    func retryPreservesApproval() async {
+        var current = SMAppService.Status.notRegistered
+        var registrations = 0
+        var pauses = 0
+        do {
+            try await TraceHelperRegistration.ensureAfterRefresh(
+                helperIsEmbedded: true, refreshed: true, status: { current },
+                register: {
+                    registrations += 1
+                    current = .requiresApproval
+                    throw NSError(domain: "SMAppServiceErrorDomain", code: 1)
+                }, pause: { _ in pauses += 1 }
+            )
+            Issue.record("Approval must remain required")
+        } catch {
+            guard case .helperApprovalRequired = error as? PrivilegedTraceError else {
+                Issue.record("Wrong approval error: \(error)")
+                return
+            }
+        }
+        #expect(registrations == 1)
+        #expect(pauses == 0)
+    }
+
+    @Test("cancelled refresh backoff stops without another registration")
+    func cancellationStopsRetries() async {
+        var registrations = 0
+        do {
+            try await TraceHelperRegistration.ensureAfterRefresh(
+                helperIsEmbedded: true, refreshed: true, status: { .notRegistered },
+                register: {
+                    registrations += 1
+                    throw NSError(domain: "SMAppServiceErrorDomain", code: 1)
+                }, pause: { _ in throw CancellationError() }
+            )
+            Issue.record("Cancellation must stop registration")
+        } catch {
+            #expect(error is CancellationError)
+        }
+        #expect(registrations == 1)
+    }
+
     @Test("updated enabled helper is unregistered before registration", arguments: [Optional<String>.none, "14"])
     func refreshesUpdatedHelper(previous: String?) async throws {
         var unregistrations = 0

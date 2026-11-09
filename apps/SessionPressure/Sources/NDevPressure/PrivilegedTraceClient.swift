@@ -92,17 +92,21 @@ final class PrivilegedTraceClient {
             throw PrivilegedTraceError.helperRegistration("app build identity is missing")
         }
         let registrationKey = "traceHelperRegisteredBuild"
-        try await TraceHelperRegistration.refreshIfNeeded(
+        let refreshed = try await TraceHelperRegistration.refreshIfNeeded(
             helperIsEmbedded: embedded,
             status: service.status,
             installedBuild: build,
             registeredBuild: UserDefaults.standard.string(forKey: registrationKey),
             unregister: { try await self.service.unregister() }
         )
-        try TraceHelperRegistration.ensureRegistered(
+        try await TraceHelperRegistration.ensureAfterRefresh(
             helperIsEmbedded: embedded,
+            refreshed: refreshed,
             status: { self.service.status },
-            register: { try self.service.register() }
+            register: { try self.service.register() },
+            pause: { milliseconds in
+                try await Task.sleep(for: .milliseconds(milliseconds))
+            }
         )
         UserDefaults.standard.set(build, forKey: registrationKey)
     }
@@ -146,15 +150,16 @@ enum TraceHelperRegistration {
     /// Updated executables must be re-registered. Wait for the old service to
     /// stop before registering the current bundle. Only an explicit trace calls
     /// this path; a service awaiting user approval is never unregistered.
+    @discardableResult
     static func refreshIfNeeded(
         helperIsEmbedded: Bool,
         status: SMAppService.Status,
         installedBuild: String,
         registeredBuild: String?,
         unregister: () async throws -> Void
-    ) async throws {
+    ) async throws -> Bool {
         guard helperIsEmbedded else { throw PrivilegedTraceError.helperMissing }
-        guard status == .enabled, registeredBuild != installedBuild else { return }
+        guard status == .enabled, registeredBuild != installedBuild else { return false }
         do {
             try await unregister()
             // Service Management can finish bootout before its registration
@@ -167,6 +172,47 @@ enum TraceHelperRegistration {
             throw PrivilegedTraceError.helperRegistration(
                 "could not refresh the previous helper: \(detail.localizedDescription) [\(detail.domain):\(detail.code)]"
             )
+        }
+        return true
+    }
+
+    /// smd can acknowledge unregister before its old disabled entry settles.
+    /// Retry only the observed SM operation-not-permitted transition after our
+    /// own successful refresh. Each attempt still uses the normal approval gate.
+    static func ensureAfterRefresh(
+        helperIsEmbedded: Bool,
+        refreshed: Bool,
+        status: () -> SMAppService.Status,
+        register: () throws -> Void,
+        pause: (Int) async throws -> Void
+    ) async throws {
+        let delays = [100, 200, 400, 800, 1600] // 3.1 seconds total, only on failure.
+        var attempt = 0
+        while true {
+            try Task.checkCancellation()
+            var transientRefreshFailure = false
+            do {
+                try ensureRegistered(helperIsEmbedded: helperIsEmbedded, status: status) {
+                    do {
+                        try register()
+                    } catch {
+                        let detail = error as NSError
+                        transientRefreshFailure = refreshed
+                            && detail.domain == "SMAppServiceErrorDomain"
+                            && detail.code == 1
+                        throw error
+                    }
+                }
+                return
+            } catch {
+                guard transientRefreshFailure, attempt < delays.count else { throw error }
+                // Approval changes stop immediately, without another register.
+                if status() == .requiresApproval {
+                    throw PrivilegedTraceError.helperApprovalRequired
+                }
+                try await pause(delays[attempt])
+                attempt += 1
+            }
         }
     }
 
