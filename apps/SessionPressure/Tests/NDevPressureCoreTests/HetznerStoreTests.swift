@@ -9,6 +9,14 @@ private actor RunnerProbe {
     var peak = 0
     var fail = false
     var receivedKnown: String?
+    private var holdResponse = false
+    private var responseRelease: CheckedContinuation<Void, Never>?
+    func hold() { holdResponse = true }
+    func releaseResponse() {
+        holdResponse = false
+        responseRelease?.resume()
+        responseRelease = nil
+    }
     func setFailure() { fail = true }
     func read(_ includeBox: Bool, known: String?) async throws -> GateRunnerEnvelope {
         calls += 1
@@ -16,6 +24,9 @@ private actor RunnerProbe {
         active += 1
         peak = max(peak, active)
         defer { active -= 1 }
+        if holdResponse {
+            await withCheckedContinuation { responseRelease = $0 }
+        }
         try await Task.sleep(for: .milliseconds(30))
         if fail { throw URLError(.cannotConnectToHost) }
         return Self.envelope(includeBox: includeBox, unchanged: known != nil)
@@ -78,10 +89,12 @@ struct HetznerStoreTests {
     @Test("closing the pane prevents a late result from updating it")
     func ignoresStoppedGeneration() async throws {
         let probe = RunnerProbe()
+        await probe.hold()
         let store = HetznerStore(inspect: { box, known in try await probe.read(box, known: known) })
         let read = Task { await store.refreshNow() }
         while await probe.calls == 0 { await Task.yield() }
         store.stop()
+        await probe.releaseResponse()
         await read.value
         #expect(store.jobs.isEmpty)
         #expect(store.boxFetchedAt == nil)
