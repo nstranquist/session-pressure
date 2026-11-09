@@ -85,23 +85,24 @@ type Job struct {
 	Command         string     `json:"command"`
 }
 type Inspection struct {
-	Host             string       `json:"host"`
-	SchemaVersion    int          `json:"schema_version"`
-	CapturedAt       time.Time    `json:"captured_at"`
-	Runs             []Run        `json:"runs"`
-	Config           *Config      `json:"config"`
-	LedgerSignature  string       `json:"ledger_signature"`
-	LedgerUnchanged  bool         `json:"ledger_unchanged"`
-	LedgerPresent    bool         `json:"ledger_present"`
-	HistoryTruncated bool         `json:"history_truncated"`
-	MalformedRows    int          `json:"malformed_rows"`
-	LocalError       string       `json:"local_error,omitempty"`
-	BoxRequested     bool         `json:"box_requested"`
-	BoxReachable     bool         `json:"box_reachable"`
-	BoxError         string       `json:"box_error,omitempty"`
-	Jobs             []Job        `json:"jobs"`
-	Health           *Health      `json:"health"`
-	Live             *LiveSection `json:"live,omitempty"`
+	Host             string        `json:"host"`
+	SchemaVersion    int           `json:"schema_version"`
+	CapturedAt       time.Time     `json:"captured_at"`
+	Runs             []Run         `json:"runs"`
+	Config           *Config       `json:"config"`
+	LedgerSignature  string        `json:"ledger_signature"`
+	LedgerUnchanged  bool          `json:"ledger_unchanged"`
+	LedgerPresent    bool          `json:"ledger_present"`
+	HistoryTruncated bool          `json:"history_truncated"`
+	MalformedRows    int           `json:"malformed_rows"`
+	LocalError       string        `json:"local_error,omitempty"`
+	BoxRequested     bool          `json:"box_requested"`
+	BoxReachable     bool          `json:"box_reachable"`
+	BoxError         string        `json:"box_error,omitempty"`
+	Jobs             []Job         `json:"jobs"`
+	Health           *Health       `json:"health"`
+	Live             *LiveSection  `json:"live,omitempty"`
+	Fleet            *FleetSection `json:"fleet,omitempty"`
 }
 
 // Inspect retains errors in its contract rather than inventing an empty,
@@ -115,6 +116,10 @@ func Inspect(ctx context.Context, home string, includeBox bool) Inspection {
 func InspectSince(ctx context.Context, home string, includeBox bool, known string) Inspection {
 	s := Inspection{SchemaVersion: 1, CapturedAt: time.Now().UTC(), Runs: []Run{}, Jobs: []Job{}, BoxRequested: includeBox}
 	s.Host = runnerTarget(ctx)
+	// Fleet probes run alongside the selected host read, not on the 15-second
+	// local-only refresh. Every probe remains bound to its named endpoint.
+	fleetReady := make(chan *FleetSection, 1)
+	go func() { fleetReady <- readFleet(ctx, home, includeBox) }()
 	dir := filepath.Join(home, ".nicos-dev", "commit-delivery", "v1")
 	runs, present, truncated, malformed, signature, unchanged, err := readLedgerSince(filepath.Join(dir, "gate-delegate", "runs.jsonl"), known)
 	s.LedgerPresent, s.HistoryTruncated, s.MalformedRows = present, truncated, malformed
@@ -125,8 +130,8 @@ func InspectSince(ctx context.Context, home string, includeBox bool, known strin
 		s.Runs = runs
 	}
 	// The runner-live store is read on every inspection (local, bounded,
-	// query-only); an absent store leaves Live nil and clients render the
-	// legacy ledger + primary-box view unchanged.
+	// query-only); an absent store leaves Live nil so clients can report
+	// unavailable job samples independently from scheduler reachability.
 	s.Live = readLiveSection(ctx, filepath.Join(dir, liveStoreName), s.CapturedAt)
 	config, err := readConfig(filepath.Join(dir, "gate-delegate.json"))
 	if err != nil {
@@ -169,6 +174,7 @@ func InspectSince(ctx context.Context, home string, includeBox bool, known strin
 	s.Runs, truncated = boundRows(s.Runs, 512<<10)
 	s.HistoryTruncated = s.HistoryTruncated || truncated
 	s.Jobs, _ = boundRows(s.Jobs, 512<<10)
+	s.Fleet = <-fleetReady
 	s.CapturedAt = time.Now().UTC()
 	return s
 }

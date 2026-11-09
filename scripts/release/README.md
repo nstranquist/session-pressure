@@ -1,6 +1,8 @@
 # Verified release and acceptance
 
-Build Go binaries on gaterunner-1 from a clean committed checkout:
+Build Go binaries on an inventory-selected active runner (gaterunner-2 or
+gaterunner-3) from a clean committed checkout. Keep gaterunner-1 as explicit
+reserve; use the canonical remote verification wrapper to bind one host:
 
 ```text
 go run ./scripts/release build --platform darwin/arm64 --out /absolute/export

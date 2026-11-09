@@ -33,6 +33,12 @@ private actor RunnerProbe {
         if fail { throw URLError(.cannotConnectToHost) }
         return Self.envelope(includeBox: includeBox, unchanged: known != nil, live: live)
     }
+    static var sampleFleet: RunnerFleet {
+        RunnerFleet(generation: "test", digest: "digest", hosts: [
+            RunnerHost(name: "gaterunner-2", user: "builder", state: "active", provider: "hetzner-dedicated", platform: "linux/amd64", sourceCommit: "rev", weight: 4, heavySlots: 4, lightSlots: 2, profiles: ["linux-native"]),
+            RunnerHost(name: "gaterunner-1", user: "reserve-user", state: "reserve", provider: "hetzner-cloud", platform: "linux/arm64", sourceCommit: "rev", weight: 0, heavySlots: 1, lightSlots: 1, profiles: ["linux-native"])
+        ], observations: nil, error: nil)
+    }
     static var sampleLive: LiveSection {
         LiveSection(present: true, error: nil, hosts: [
             LiveHost(host: "gaterunner-2", runnerVersion: "6797d410", load1: 1.2,
@@ -57,7 +63,7 @@ private actor RunnerProbe {
             remoteRan: true, remotePassed: true, remoteExit: 0, remoteRunMS: 3, remoteWallMS: 4,
             remoteStage: nil, treeVerified: true, treeHash: nil, policyDigest: nil, remotePassAllowed: false)
     }
-    static func envelope(includeBox: Bool, unchanged: Bool, live: LiveSection? = nil) -> GateRunnerEnvelope {
+    static func envelope(includeBox: Bool, unchanged: Bool, live: LiveSection? = nil, host: String = "gaterunner-2") -> GateRunnerEnvelope {
         GateRunnerEnvelope(ok: true, inspection: GateRunnerInspection(
             schemaVersion: 1, capturedAt: Date(timeIntervalSince1970: 100), runs: unchanged ? [] : [sampleRun],
             config: DelegateConfig(mode: "shadow", repos: [], allowCount: 1), ledgerSignature: String(repeating: "a", count: 64), ledgerUnchanged: unchanged, ledgerPresent: true,
@@ -65,7 +71,7 @@ private actor RunnerProbe {
             boxRequested: includeBox, boxReachable: includeBox, boxError: nil,
             jobs: [BoxJob(id: "20261108T210000Z-1", at: nil, caller: "test", repo: "sample",
                           sha: nil, cand: nil, jobClass: "test", exitCode: "0", durationSeconds: 3,
-                          macEst: nil, command: "go test ./...")], health: nil, live: live))
+                          macEst: nil, command: "go test ./...")], health: nil, live: live, host: "builder@\(host)", fleet: sampleFleet))
     }
 }
 
@@ -75,7 +81,7 @@ struct HetznerStoreTests {
     @Test("concurrent refresh requests share one CLI read")
     func coalescesRefreshes() async {
         let probe = RunnerProbe()
-        let store = HetznerStore(inspect: { box, known in try await probe.read(box, known: known) })
+        let store = HetznerStore(inspect: { box, known, _, _ in try await probe.read(box, known: known) })
         async let a: Void = store.refreshNow()
         async let b: Void = store.refreshNow()
         async let c: Void = store.refreshNow()
@@ -90,7 +96,7 @@ struct HetznerStoreTests {
     @Test("failed reads retain successful data and its original age")
     func retainsStaleEvidence() async {
         let probe = RunnerProbe()
-        let store = HetznerStore(inspect: { box, known in try await probe.read(box, known: known) })
+        let store = HetznerStore(inspect: { box, known, _, _ in try await probe.read(box, known: known) })
         await store.refreshNow()
         let age = store.boxFetchedAt
         await probe.setFailure()
@@ -109,7 +115,7 @@ struct HetznerStoreTests {
     func ignoresStoppedGeneration() async throws {
         let probe = RunnerProbe()
         await probe.hold()
-        let store = HetznerStore(inspect: { box, known in try await probe.read(box, known: known) })
+        let store = HetznerStore(inspect: { box, known, _, _ in try await probe.read(box, known: known) })
         let read = Task { await store.refreshNow() }
         while await probe.calls == 0 { await Task.yield() }
         store.stop()
@@ -123,7 +129,7 @@ struct HetznerStoreTests {
     @Test("job log failures are errors instead of invented missing-history claims")
     func logFailureIsVisible() async throws {
         let probe = RunnerProbe()
-        let store = HetznerStore(inspect: { box, known in try await probe.read(box, known: known) }, readLog: { _ in throw URLError(.cannotConnectToHost) })
+        let store = HetznerStore(inspect: { box, known, _, _ in try await probe.read(box, known: known) }, readLog: { _, _, _ in throw URLError(.cannotConnectToHost) })
         await store.refreshNow()
         store.selectJob(try #require(store.jobs.first))
         while store.jobLogLoading { await Task.yield() }
@@ -134,7 +140,7 @@ struct HetznerStoreTests {
     @Test("unchanged history retains loaded rows and sends its content signature")
     func unchangedHistory() async {
         let probe = RunnerProbe()
-        let store = HetznerStore(inspect: { box, known in try await probe.read(box, known: known) })
+        let store = HetznerStore(inspect: { box, known, _, _ in try await probe.read(box, known: known) })
         await store.refreshNow()
         #expect(store.delegateRuns.count == 1)
         await store.refreshNow()
@@ -150,7 +156,7 @@ struct HetznerStoreTests {
     func liveFleetSurfaces() async {
         let probe = RunnerProbe()
         await probe.setLive(RunnerProbe.sampleLive)
-        let store = HetznerStore(inspect: { box, known in try await probe.read(box, known: known) })
+        let store = HetznerStore(inspect: { box, known, _, _ in try await probe.read(box, known: known) })
         await store.refreshNow()
         #expect(store.livePresent)
         #expect(store.liveError == nil)
@@ -162,15 +168,65 @@ struct HetznerStoreTests {
         store.stop()
     }
 
-    @Test("absent live section keeps the legacy tab state")
-    func absentLiveKeepsLegacy() async {
+    @Test("absent live section reports unavailable without hiding history")
+    func absentLiveIsUnavailable() async {
         let probe = RunnerProbe()
-        let store = HetznerStore(inspect: { box, known in try await probe.read(box, known: known) })
+        let store = HetznerStore(inspect: { box, known, _, _ in try await probe.read(box, known: known) })
         await store.refreshNow()
         #expect(!store.livePresent)
         #expect(store.liveHosts.isEmpty)
-        #expect(store.liveError == nil)
+        #expect(store.liveError != nil)
         #expect(store.jobs.count == 1)
+        store.stop()
+    }
+
+    @Test("failed live reads preserve samples and their age")
+    func retainsLiveEvidence() async {
+        let probe = RunnerProbe()
+        await probe.setLive(RunnerProbe.sampleLive)
+        let store = HetznerStore(inspect: { box, known, _, _ in try await probe.read(box, known: known) })
+        await store.refreshNow()
+        let age = store.liveCheckedAt
+        await probe.setLive(LiveSection(present: false, error: "runner_live_read_failed", hosts: []))
+        await store.refreshNow()
+        #expect(!store.livePresent)
+        #expect(store.liveError == "runner_live_read_failed")
+        #expect(store.liveHosts.count == 1)
+        #expect(store.liveCheckedAt == age)
+        store.stop()
+    }
+
+    @Test("runner switching binds job history and logs to the inventory endpoint")
+    func bindsSelectedRunner() async throws {
+        let store = HetznerStore(inspect: { box, known, host, user in
+            if host == "gaterunner-1" { #expect(user == "reserve-user") }
+            return RunnerProbe.envelope(includeBox: box, unchanged: known != nil, host: host ?? "gaterunner-2")
+        }, readLog: { _, host, user in
+            #expect(host == "gaterunner-1")
+            #expect(user == "reserve-user")
+            return "reserve log"
+        })
+        await store.refreshNow()
+        await store.selectHost("gaterunner-1")
+        #expect(store.selectedHost == "gaterunner-1")
+        #expect(store.jobLog == nil)
+        store.selectJob(try #require(store.jobs.first))
+        while store.jobLogLoading { await Task.yield() }
+        #expect(store.jobLog == "reserve log")
+        store.stop()
+    }
+
+    @Test("a response for another runner cannot replace selected history")
+    func rejectsWrongRunner() async {
+        let store = HetznerStore(inspect: { box, known, _, _ in
+            RunnerProbe.envelope(includeBox: box, unchanged: known != nil)
+        })
+        await store.refreshNow()
+        await store.selectHost("gaterunner-1")
+        #expect(store.selectedHost == "gaterunner-1")
+        #expect(store.jobs.isEmpty)
+        #expect(!store.boxReachable)
+        #expect(store.boxError == "Response belongs to a different runner")
         store.stop()
     }
 

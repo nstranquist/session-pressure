@@ -46,11 +46,23 @@ struct HetznerView: View {
 
     private var statusCard: some View {
         SectionCard(
-            title: "Hetzner offload · gaterunner-1",
+            title: "Hetzner gate-runner fleet",
             systemImage: "server.rack",
             trailing: boxStatusTrailing
         ) {
             VStack(alignment: .leading, spacing: 8) {
+                if let fleet = hetzner.fleet {
+                    Picker("Job history and logs", selection: Binding(
+                        get: { hetzner.selectedHost ?? fleet.hosts.first?.name ?? "" },
+                        set: { host in Task { await hetzner.selectHost(host) } }
+                    )) {
+                        ForEach(fleet.hosts) { host in
+                            Text("\(host.name) · \(host.roleLabel)").tag(host.name)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .help("Changes the runner whose job history and logs are read. Work placement stays governed by the fleet inventory.")
+                }
                 HStack(spacing: 8) {
                     Text("Delegate mode")
                         .font(.subheadline.weight(.semibold))
@@ -155,7 +167,7 @@ struct HetznerView: View {
 
     private var boxStatusTrailing: String {
         if let at = hetzner.boxFetchedAt {
-            return (hetzner.boxReachable ? "reachable · " : "last fetched ") + PressureFormat.relative(at)
+            return (hetzner.selectedHost ?? "runner") + " · " + (hetzner.boxReachable ? "reachable · " : "last fetched ") + PressureFormat.relative(at)
         }
         return "not fetched yet"
     }
@@ -194,7 +206,7 @@ struct HetznerView: View {
         if let uptime = health.uptime {
             parts.append("up \(uptime)")
         }
-        return parts.isEmpty ? "" : "Box — " + parts.joined(separator: " · ")
+        return parts.isEmpty ? "" : "\(hetzner.selectedHost ?? "Selected runner") — " + parts.joined(separator: " · ")
     }
 
     private func showDiverged() {
@@ -488,7 +500,7 @@ struct HetznerView: View {
 
     private var jobsCard: some View {
         SectionCard(
-            title: "Gate-runner jobs",
+            title: "Jobs · \(hetzner.selectedHost ?? "runner not selected")",
             systemImage: "terminal",
             trailing: "\(filteredJobs.count) of \(hetzner.jobs.count)"
         ) {
@@ -554,7 +566,7 @@ struct HetznerView: View {
                     .padding(.top, 6)
                 }
             }
-            Text("Source: /srv/build/logs/jobs.log on gaterunner-1 via ssh (tail of 1000) — refreshed about once a minute while this pane is visible and active. Select a job to view its captured log.")
+            Text("Source: /srv/build/logs/jobs.log on \(hetzner.selectedHost ?? "the selected runner") via SSH (tail of 1000) — refreshed about once a minute while this pane is visible and active. Select a job to view its captured log.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 6)
@@ -631,33 +643,71 @@ struct HetznerView: View {
 
     // MARK: Runner fleet (live)
 
-    @ViewBuilder
     private var fleetLiveCard: some View {
-        if hetzner.livePresent || hetzner.liveError != nil {
-            SectionCard(
-                title: "Runner fleet — live",
-                systemImage: "waveform.path.ecg",
-                trailing: hetzner.liveCheckedAt.map { "read " + PressureFormat.relative($0) }
-            ) {
-                VStack(alignment: .leading, spacing: 10) {
-                    if let error = hetzner.liveError, !hetzner.livePresent {
-                        Label("Live feed read failed: \(error). Showing the delegate ledger and the primary box only.", systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption).foregroundStyle(.orange)
-                    }
-                    ForEach(hetzner.liveHosts) { host in
-                        liveHostSection(host)
-                        if host.host != hetzner.liveHosts.last?.host {
-                            Divider().opacity(0.4)
-                        }
-                    }
-                    if hetzner.livePresent, hetzner.liveHosts.isEmpty {
-                        Text("The live store is present but reports no hosts yet.")
-                            .foregroundStyle(.secondary)
-                    }
-                    Text("Source: ~/.nicos-dev/commit-delivery/v1/runner-live.sqlite — the poller samples each box every 20 seconds; this pane re-reads every 15 seconds. Read-only.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+        SectionCard(title: "Runners", systemImage: "server.rack",
+                    trailing: hetzner.fleet.map { "\($0.hosts.count) configured" }) {
+            VStack(alignment: .leading, spacing: 12) {
+                if let error = hetzner.fleetError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange)
                 }
+                if let fleet = hetzner.fleet {
+                    ForEach(fleet.hosts) { host in
+                        runnerSection(host)
+                        if host.id != fleet.hosts.last?.id { Divider() }
+                    }
+                    Text("Inventory generation: \(fleet.generation). Active hosts receive new work; reserve hosts require an explicit choice. Existing jobs stay on their assigned host.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                } else {
+                    Text("Fleet inventory not loaded. Runner roles and capacity are unknown.")
+                        .foregroundStyle(.secondary)
+                }
+                if let error = hetzner.liveError {
+                    Label("Job feed: \(error)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                Text("Scheduler checks run about once a minute while this pane is visible and active. Local job samples refresh every 15 seconds; sample ages and read errors remain visible.")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func runnerSection(_ runner: RunnerHost) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(runner.name).font(.headline)
+                chip(runner.roleLabel.uppercased(), color: runner.state == "active" ? .blue : .secondary)
+                Spacer()
+                if let observation = hetzner.observations[runner.name] {
+                    if !observation.isFresh() {
+                        chip("CHECK STALE", color: .orange)
+                    } else if observation.healthy && !observation.drained {
+                        chip("SCHEDULER HEALTHY", color: .green)
+                    } else {
+                        chip(observation.drained ? "DRAINED" : "UNAVAILABLE", color: .orange)
+                    }
+                } else {
+                    chip("NOT CHECKED", color: .secondary)
+                }
+            }
+            Text("\(runner.providerLabel) · \(runner.platform) · \(runner.user)@\(runner.name)")
+                .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
+            Text("Configured slots: \(runner.heavySlots) heavy / \(runner.lightSlots) light · placement weight \(runner.weight)")
+                .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
+            if let observation = hetzner.observations[runner.name] {
+                Text("Scheduler: \(observation.heavyJobs)/\(observation.heavySlots) heavy · \(observation.lightJobs)/\(observation.lightSlots) light · revision \(PressureFormat.shortDigest(observation.sourceCommit)) · checked \(PressureFormat.relative(observation.observedAt))")
+                    .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
+                if let error = observation.error {
+                    Text(error).font(.caption).foregroundStyle(.orange)
+                }
+            }
+            Text("Profiles: \(runner.profiles.joined(separator: ", "))")
+                .font(.caption).foregroundStyle(.secondary)
+            if let live = hetzner.liveHosts.first(where: { $0.host == runner.name }) {
+                liveHostSection(live)
+            } else {
+                Text("No job samples recorded for this runner. Scheduler checks above show reachability, not job history.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -665,9 +715,9 @@ struct HetznerView: View {
     private func liveHostSection(_ host: LiveHost) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text(host.host)
+                Text("Job feed")
                     .font(.subheadline.weight(.semibold))
-                if host.feedStale {
+                if host.feedStale || !hetzner.livePresent || hetzner.liveError != nil || host.pollError != nil {
                     chip("FEED STALE", color: .secondary)
                 } else {
                     chip("LIVE", color: .green)
@@ -685,7 +735,7 @@ struct HetznerView: View {
                     .font(PressureTheme.monoCaption)
                     .foregroundStyle(.secondary)
             }
-            if host.feedStale {
+            if host.feedStale || !hetzner.livePresent || hetzner.liveError != nil || host.pollError != nil {
                 Label("Live feed stale — the poller may be down; showing the last samples, not a live fleet.", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(PressureTheme.levelColor(.warning))
@@ -696,7 +746,7 @@ struct HetznerView: View {
                     .foregroundStyle(.orange)
             }
             if host.liveJobs.isEmpty {
-                Text(host.feedStale ? "No jobs in the last sample." : "No jobs running.")
+                Text(host.feedStale || !hetzner.livePresent || hetzner.liveError != nil || host.pollError != nil ? "No jobs in the last sample." : "No jobs running in the last sample.")
                     .font(PressureTheme.monoCaption)
                     .foregroundStyle(.secondary)
             } else {
@@ -705,12 +755,8 @@ struct HetznerView: View {
                 }
             }
             if !host.recentRuns.isEmpty {
-                Text("Recent runs")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 2)
-                ForEach(host.recentRuns) { job in
-                    recentRunRow(job)
+                DisclosureGroup("Recent runs (\(host.recentRuns.count))") {
+                    ForEach(host.recentRuns) { job in recentRunRow(job) }
                 }
             }
             if !host.kills.isEmpty {

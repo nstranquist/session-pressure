@@ -179,10 +179,12 @@ public struct GateRunnerInspection: Decodable, Sendable {
     /// Runner-live fleet section; nil until the poller store exists on
     /// this Mac (the key is then absent from the inspection JSON).
     public let live: LiveSection?
+    public var host: String? = nil
+    public var fleet: RunnerFleet? = nil
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case capturedAt = "captured_at"
-        case runs, config, jobs, health, live
+        case runs, config, jobs, health, live, host, fleet
         case ledgerSignature = "ledger_signature"
         case ledgerUnchanged = "ledger_unchanged"
         case ledgerPresent = "ledger_present"
