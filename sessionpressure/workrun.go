@@ -959,6 +959,9 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		recordLocalPlacement(coordinator.Dir, options, streams)
 	} else if handled, code, err := TryRemoteWork(coordinator.Dir, options, streams); handled {
 		return code, err
+	} else if options.Placement == WorkPlacementRemote {
+		_, code, err := rejectRemoteWork(coordinator.Dir, "work", "explicit remote placement requires enabled remote Go routing; local fallback is disabled")
+		return code, err
 	}
 	if options.Class == WorkClassBrowser {
 		if err := CheckBrowserWork(context.Background()); err != nil {

@@ -25,6 +25,8 @@ const (
 	WorkPlacementAuto WorkPlacement = ""
 	// WorkPlacementLocal keeps local admission and never routes remotely.
 	WorkPlacementLocal WorkPlacement = "local"
+	// WorkPlacementRemote requires remote execution and forbids local admission.
+	WorkPlacementRemote WorkPlacement = "remote"
 )
 
 // maxPlacementReason bounds the reason so it stays a short telemetry token.
@@ -36,8 +38,10 @@ func ParseWorkPlacement(value string) (WorkPlacement, error) {
 		return WorkPlacementAuto, nil
 	case "local":
 		return WorkPlacementLocal, nil
+	case "remote":
+		return WorkPlacementRemote, nil
 	}
-	return "", fmt.Errorf("--placement must be auto or local, not %q", value)
+	return "", fmt.Errorf("--placement must be auto, local, or remote, not %q", value)
 }
 
 // ValidateWorkPlacement requires a reason exactly for local placement. The

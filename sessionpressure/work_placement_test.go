@@ -3,6 +3,7 @@ package sessionpressure
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseWorkRunPlacement(t *testing.T) {
@@ -16,12 +17,13 @@ func TestParseWorkRunPlacement(t *testing.T) {
 	}{
 		"default is auto": {},
 		"explicit auto":   {flags: []string{"--placement", "auto"}},
+		"explicit remote": {flags: []string{"--placement", "remote"}, placement: WorkPlacementRemote},
 		"local with reason": {flags: []string{"--placement", "local", "--placement-reason", "darwin-cgo-producer"},
 			placement: WorkPlacementLocal, reason: "darwin-cgo-producer"},
 		"local needs a reason":     {flags: []string{"--placement", "local"}, err: "requires --placement-reason"},
 		"reason needs local":       {flags: []string{"--placement-reason", "x"}, err: "only valid with --placement local"},
 		"reason is a slug":         {flags: []string{"--placement", "local", "--placement-reason", "Mac only!"}, err: "lowercase slug"},
-		"unknown placement":        {flags: []string{"--placement", "remote"}, err: "auto or local"},
+		"unknown placement":        {flags: []string{"--placement", "elsewhere"}, err: "auto, local, or remote"},
 		"placement needs a value":  {flags: []string{"--placement"}, err: "requires a value"},
 		"reason length is bounded": {flags: []string{"--placement", "local", "--placement-reason", strings.Repeat("a", 65)}, err: "at most 64"},
 	} {
@@ -42,6 +44,33 @@ func TestParseWorkRunPlacement(t *testing.T) {
 			}
 			if options.Placement != tc.placement || options.PlacementReason != tc.reason {
 				t.Fatalf("placement = %q/%q, want %q/%q", options.Placement, options.PlacementReason, tc.placement, tc.reason)
+			}
+		})
+	}
+}
+
+func TestRequiredRemotePlacementNeverEntersLocalAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		enabled bool
+		command []string
+	}{
+		{"disabled routing", false, []string{"go", "build", "./..."}},
+		{"unsupported command", true, []string{"sh", "-c", "exit 99"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := SetRemoteWork(dir, tc.enabled); err != nil {
+				t.Fatal(err)
+			}
+			code, err := RunWorkCommand(&WorkCoordinator{Dir: dir}, WorkRunOptions{
+				Class: WorkClassBuild, Placement: WorkPlacementRemote, Command: tc.command,
+			}, func() Admission {
+				t.Fatal("required remote work reached local admission")
+				return Admission{}
+			}, time.Millisecond, WorkRunStreams{})
+			if code == 0 || err == nil || !strings.Contains(err.Error(), "local fallback is disabled") {
+				t.Fatalf("code=%d err=%v", code, err)
 			}
 		})
 	}
