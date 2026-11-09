@@ -302,6 +302,10 @@ final class PressureStore: ObservableObject {
     /// extra. Board polling must survive that, at a slower cadence.
     private var windowOpen = true
 
+    init(client: NDevPressureClient? = nil) {
+        self.client = client
+    }
+
     var binaryPath: String { client?.binaryPath ?? board.binaryPath }
 
     var workFocusPollActive: Bool {
@@ -415,7 +419,7 @@ final class PressureStore: ObservableObject {
             guard !Task.isCancelled, gen == self.generation else { return }
             // With no window open only the menu-bar grid is rendering, so take
             // the compact path: host status, work, and admission.
-            await self.refresh(live: false, light: !self.windowOpen || !self.interfaceAllowsFocusedRefresh)
+            await self.refresh(live: false, light: !self.windowOpen || !self.interfaceAllowsFocusedRefresh, presentProgress: false)
             guard !Task.isCancelled, gen == self.generation else { return }
             self.schedulePoll(immediate: false)
         }
@@ -487,12 +491,15 @@ final class PressureStore: ObservableObject {
     private var pendingRefresh = false
     private var pendingLiveRefresh = false
     private var pendingRichRefresh = false
+    private var pendingProgress = false
+    private var boardRefreshInFlight = false
 
-    func refresh(live: Bool = false, light: Bool = false) async {
-        if isRefreshing {
+    func refresh(live: Bool = false, light: Bool = false, presentProgress: Bool = true) async {
+        if boardRefreshInFlight {
             pendingRefresh = true
             pendingLiveRefresh = pendingLiveRefresh || live
             pendingRichRefresh = pendingRichRefresh || !light
+            pendingProgress = pendingProgress || presentProgress
             return
         }
         guard let client else {
@@ -502,17 +509,23 @@ final class PressureStore: ObservableObject {
                 lastError = error.localizedDescription
                 return
             }
-            return await refresh(live: live, light: light)
+            return await refresh(live: live, light: light, presentProgress: presentProgress)
         }
 
-        isRefreshing = true
+        boardRefreshInFlight = true
+        // Automatic reads publish their new board once. Toggling a spinner
+        // before every poll needlessly lays out the entire observed window.
+        if presentProgress { isRefreshing = true }
         defer {
-            isRefreshing = false
+            boardRefreshInFlight = false
+            if isRefreshing { isRefreshing = false }
             if pendingRefresh {
                 let nextLive = pendingLiveRefresh
                 let nextLight = !pendingRichRefresh
+                let nextProgress = pendingProgress
                 pendingRefresh = false; pendingLiveRefresh = false; pendingRichRefresh = false
-                Task { await refresh(live: nextLive, light: nextLight) }
+                pendingProgress = false
+                Task { await refresh(live: nextLive, light: nextLight, presentProgress: nextProgress) }
             }
         }
 
@@ -544,8 +557,9 @@ final class PressureStore: ObservableObject {
                     previous: board
                 )
             }
-            lastError = board.sectionErrors.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }.joined(separator: "; ")
-            if lastError?.isEmpty == true { lastError = nil }
+            let errors = board.sectionErrors.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }.joined(separator: "; ")
+            let nextError: String? = errors.isEmpty ? nil : errors
+            if lastError != nextError { lastError = nextError }
             refreshWorkSelectionFromBoard()
             await refreshAdvisorBrief(force: false)
             updateDockBadge()
@@ -1161,20 +1175,18 @@ final class PressureStore: ObservableObject {
 
     private func updateDockBadge() {
         let app = NSApplication.shared
+        let nextBadge: String?
         if let advisorBrief {
-            app.dockTile.badgeLabel = advisorBrief.dockBadge(for: board.level)
-            return
+            nextBadge = advisorBrief.dockBadge(for: board.level)
+        } else {
+            switch board.level {
+            case .normal, .unknown: nextBadge = nil
+            case .warning: nextBadge = "!"
+            case .red: nextBadge = "RED"
+            case .critical: nextBadge = "CRIT"
+            }
         }
-        switch board.level {
-        case .normal, .unknown:
-            app.dockTile.badgeLabel = nil
-        case .warning:
-            app.dockTile.badgeLabel = "!"
-        case .red:
-            app.dockTile.badgeLabel = "RED"
-        case .critical:
-            app.dockTile.badgeLabel = "CRIT"
-        }
+        if app.dockTile.badgeLabel != nextBadge { app.dockTile.badgeLabel = nextBadge }
     }
     private static func chicagoDay(_ date: Date) -> String {
         let formatter = DateFormatter()

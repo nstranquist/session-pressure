@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Testing
 @testable import NDevPressure
 @testable import NDevPressureCore
@@ -6,6 +7,23 @@ import Testing
 @Suite("Pressure store work lifecycle")
 @MainActor
 struct PressureStoreTests {
+    @Test("automatic refreshes do not publish progress animations", arguments: [false, true])
+    func refreshProgressIsExplicit(presentProgress: Bool) async throws {
+        // A failing child still has to release the private serialization flag.
+        // No live pressure service or user data is used by this fixture.
+        let client = try NDevPressureClient(binaryPath: "/usr/bin/false", environment: ["NDEV_PRESSURE_API_SOCKET": "/absent-pressure-progress-test.sock"])
+        let store = PressureStore(client: client)
+        var progress: [Bool] = []
+        let subscription = store.$isRefreshing.dropFirst().sink { progress.append($0) }
+        await store.refresh(presentProgress: presentProgress)
+        await store.refresh(presentProgress: presentProgress)
+        #expect(progress == (presentProgress ? [true, false, true, false] : []))
+        #expect(store.isRefreshing == false)
+        #expect(store.lastError != nil)
+        subscription.cancel()
+        store.stop()
+    }
+
     @Test("background and minimized windows use the menu bar board cadence")
     func boardPollingRespectsVisibility() {
         let store = PressureStore()
