@@ -131,6 +131,16 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 		return 0
 	}
 	if sub == "run" {
+		// Child flags after -- belong to the child, including --help.
+		for _, arg := range args {
+			if arg == "--" {
+				break
+			}
+			if arg == "--help" || arg == "-h" {
+				fmt.Print(sessionPressureWorkHelp)
+				return 0
+			}
+		}
 		if g != nil && g.JSON {
 			return sessionPressureError("work run does not accept --json because the child owns stdout; use work status for JSON", 2)
 		}
