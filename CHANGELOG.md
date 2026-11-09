@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Remote Go builds send only the module closure, gzip-compressed.** Every
+  remote job used to upload an uncompressed tar of the whole repository
+  (nicos-tools: ~28k files, ~300 MiB with docs and apps). At the measured
+  ~1.5 MB/s Mac-to-box link that cost ~2 min per catalog provider build under
+  the host-wide upload lock, plus ~90 s of runner ingest, and the retained
+  copies filled the runner's 1M-file input budget (2026-11-09: every remote
+  job refused). `go build` now sends files inside closure modules only (the
+  toolchain cannot read outside them; the runner sets `GOWORK=off`). Tests
+  and vet keep repository fixtures. All uploads are gzip streams
+  (`tar -xzf`).
+
 ### Added
 
 - **`delivery-go-build-cache` storage provider (report-only).** Storage

@@ -80,14 +80,14 @@ func TestRemoteSourceSizeUsesUploadFilter(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".tmp", "big"), make([]byte, 4096), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	size, err := remoteSourceSize([]string{root}, root, 1<<20)
+	size, err := remoteSourceSize([]string{root}, root, remoteScopeRepository, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := int64(600 + len("module example.test/size\n")); size != want {
 		t.Fatalf("size = %d, want %d", size, want)
 	}
-	if _, err := remoteSourceSize([]string{root}, root, 100); err == nil || !strings.Contains(err.Error(), "exceeds") {
+	if _, err := remoteSourceSize([]string{root}, root, remoteScopeRepository, 100); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("want limit error, got %v", err)
 	}
 }
