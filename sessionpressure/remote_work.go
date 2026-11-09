@@ -412,7 +412,11 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		_ = exec.CommandContext(cleanupCtx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "builder@100.106.202.89", "rm -rf -- "+shellQuote(remote)+" "+shellQuote(remote+".request")).Run()
 	}()
 	rel, _ := filepath.Rel(common, cwd)
-	command := remoteRunnerPrelude() + remoteBuildPreflight(profile, remote) + "cd " + shellQuote("./"+filepath.ToSlash(rel)) + " && env GOWORK=off GOMAXPROCS=2 GOMEMLIMIT=3GiB GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p=2")) + remoteBuildEnvironment(profile, remote)
+	// A focused package test asks for the runner's light lane (1 CPU, 1 GiB,
+	// 300 s) so it never queues behind a suite. The runner reruns it heavy if
+	// it outgrows the lane, so a wrong guess costs time, never a verdict.
+	lane, procs, memlimit, parallel := remoteLane(options)
+	command := remoteRunnerPrelude() + remoteBuildPreflight(profile, remote) + "cd " + shellQuote("./"+filepath.ToSlash(rel)) + " && env GOWORK=off GOMAXPROCS=" + procs + " GOMEMLIMIT=" + memlimit + " GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p="+parallel)) + remoteBuildEnvironment(profile, remote)
 	for _, arg := range argv {
 		command += " " + shellQuote(arg)
 	}
@@ -421,10 +425,10 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	}
 	// The canonical runner retains source inputs before durable submission.
 	// The command starts at the retained common root, preserving replacements.
-	command = "env NCD_RUNNER_FRAMED=1 NCD_RUNNER_KEY=" + shellQuote("pressure-"+job) + " /srv/build/run-job.sh session-pressure " + shellQuote("session-pressure:"+job) + " --candidate-dir " + shellQuote(remote+"/source") + " --timeout 1800 --shell " + shellQuote(command)
+	command = "env NCD_RUNNER_FRAMED=1 NCD_RUNNER_CLASS=" + lane + " NCD_RUNNER_KEY=" + shellQuote("pressure-"+job) + " /srv/build/run-job.sh session-pressure " + shellQuote("session-pressure:"+job) + " --candidate-dir " + shellQuote(remote+"/source") + " --timeout 1800 --shell " + shellQuote(command)
 	command = "if test -x /srv/build/gaterunner && /srv/build/gaterunner inspect --key " + shellQuote("pressure-"+job) + " >/dev/null 2>&1; then exec env NCD_RUNNER_FRAMED=1 /srv/build/gaterunner wait --key " + shellQuote("pressure-"+job) + "; else exec " + command + "; fi"
 	if streams.Stderr != nil {
-		fmt.Fprintln(streams.Stderr, "session-pressure: routing Go work to gaterunner-1 ("+profile+", durable runner queue, parallelism 2)")
+		fmt.Fprintln(streams.Stderr, "session-pressure: routing Go work to gaterunner-1 ("+profile+", durable runner queue, "+lane+" lane, parallelism "+parallel+")")
 	}
 	cleanupSafe, err = runRunnerSubscriber(ctx, func() *exec.Cmd { return ssh(command) }, streams.Stdout, streams.Stderr)
 	if err != nil {
@@ -481,4 +485,13 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 func rejectRemoteWork(dir, operation, reason string) (bool, int, error) {
 	recordControlEvent(dir, map[string]any{"event": "remote_work_declined", "operation": operation, "reason": reason, "local_blocked": true})
 	return true, workExitPolicyDenied, workRefusal(WorkRefusalRemoteProfile, fmt.Errorf("remote Go work blocked: %s; use the Hetzner gate-runner with an explicit compiler profile; local fallback is disabled", reason))
+}
+
+// remoteLane picks the runner lane and the Go limits that fit it. Only an
+// express-test go test is light; older runners ignore the class.
+func remoteLane(options WorkRunOptions) (lane, procs, memlimit, parallel string) {
+	if options.Class == WorkClassExpressTest && len(options.Command) > 1 && options.Command[1] == "test" {
+		return "light", "1", "768MiB", "1"
+	}
+	return "heavy", "2", "3GiB", "2"
 }
