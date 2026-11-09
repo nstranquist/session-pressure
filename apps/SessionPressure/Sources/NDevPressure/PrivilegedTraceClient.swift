@@ -83,28 +83,15 @@ final class PrivilegedTraceClient {
     }
 
     private func ensureRegistered() throws {
-        switch service.status {
-        case .enabled:
-            return
-        case .notRegistered:
-            do {
-                try service.register()
-            } catch {
-                throw PrivilegedTraceError.helperRegistration(error.localizedDescription)
-            }
-            if service.status == .requiresApproval {
-                throw PrivilegedTraceError.helperApprovalRequired
-            }
-            guard service.status == .enabled else {
-                throw PrivilegedTraceError.helperRegistration("registration did not become enabled")
-            }
-        case .requiresApproval:
-            throw PrivilegedTraceError.helperApprovalRequired
-        case .notFound:
-            throw PrivilegedTraceError.helperMissing
-        @unknown default:
-            throw PrivilegedTraceError.helperRegistration("unknown service status \(service.status.rawValue)")
-        }
+        let contents = Bundle.main.bundleURL.appendingPathComponent("Contents/Library")
+        let helper = contents.appendingPathComponent("LaunchServices/NDevPressureTraceHelper")
+        let plist = contents.appendingPathComponent("LaunchDaemons/\(NDevPressureTraceContract.helperPlist)")
+        try TraceHelperRegistration.ensureRegistered(
+            helperIsEmbedded: FileManager.default.isExecutableFile(atPath: helper.path)
+                && FileManager.default.fileExists(atPath: plist.path),
+            status: { self.service.status },
+            register: { try self.service.register() }
+        )
     }
 
     private func authorizationExternalForm() throws -> Data {
@@ -129,6 +116,45 @@ final class PrivilegedTraceClient {
             throw PrivilegedTraceError.authorization(externalStatus)
         }
         return withUnsafeBytes(of: external) { Data($0) }
+    }
+}
+
+/// A framework lookup failure does not prove that the embedded files are missing.
+/// Try normal registration once, then require an enabled service or user approval.
+@MainActor
+enum TraceHelperRegistration {
+    static func ensureRegistered(
+        helperIsEmbedded: Bool,
+        status: () -> SMAppService.Status,
+        register: () throws -> Void
+    ) throws {
+        guard helperIsEmbedded else { throw PrivilegedTraceError.helperMissing }
+        switch status() {
+        case .enabled:
+            return
+        case .notRegistered, .notFound:
+            do {
+                try register()
+            } catch {
+                let detail = error as NSError
+                throw PrivilegedTraceError.helperRegistration(
+                    "\(detail.localizedDescription) [\(detail.domain):\(detail.code)]"
+                )
+            }
+            let registeredStatus = status()
+            if registeredStatus == .requiresApproval {
+                throw PrivilegedTraceError.helperApprovalRequired
+            }
+            guard registeredStatus == .enabled else {
+                throw PrivilegedTraceError.helperRegistration(
+                    "registration did not become enabled (status \(registeredStatus.rawValue))"
+                )
+            }
+        case .requiresApproval:
+            throw PrivilegedTraceError.helperApprovalRequired
+        @unknown default:
+            throw PrivilegedTraceError.helperRegistration("unknown service status \(status().rawValue)")
+        }
     }
 }
 
