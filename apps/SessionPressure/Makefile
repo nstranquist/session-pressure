@@ -1,10 +1,13 @@
-.PHONY: build test run install install-headless clean icon verify
+.PHONY: build test run install install-headless clean icon verify verify-signing
 
 APP_NAME := NDev Pressure
 EXECUTABLE := NDevPressure
 TRACE_HELPER := NDevPressureTraceHelper
 TRACE_HELPER_LABEL := com.nstranquist.ndev-pressure.trace-helper
-CODE_SIGN_IDENTITY ?= -
+# Prefer an installed Developer ID certificate. Ad hoc builds remain available
+# for development, but cannot pass verification or replace the installed app.
+DEVELOPER_ID := $(shell security find-identity -v -p codesigning 2>/dev/null | sed -n '/"Developer ID Application:/s/.* \([A-F0-9]\{40\}\) .*/\1/p' | head -n 1)
+CODE_SIGN_IDENTITY ?= $(if $(DEVELOPER_ID),$(DEVELOPER_ID),-)
 RELEASE_TOOL ?= $(HOME)/.local/bin/session-pressure-release
 CODE_SIGN_FLAGS := --force --sign "$(CODE_SIGN_IDENTITY)"
 # SMAppService registration for this non-sandboxed app needs no restricted
@@ -57,6 +60,7 @@ test:
 install:
 	@expected="$$("$(RELEASE_TOOL)" app-status --app "$(INSTALLED_APP)" --digest-only)" && \
 	  $(MAKE) build && \
+	  $(MAKE) verify-signing && \
 	  "$(RELEASE_TOOL)" install-app --app "$(APP_DIR)" --destination "$(INSTALLED_APP)" --expected-current "$$expected"
 	@pkill -x "$(EXECUTABLE)" 2>/dev/null || true
 	@/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$(INSTALLED_APP)" 2>/dev/null || true
@@ -64,14 +68,25 @@ install:
 install-headless:
 	@expected="$$("$(RELEASE_TOOL)" app-status --app "$(INSTALLED_APP)" --digest-only)" && \
 	  $(MAKE) build && \
+	  $(MAKE) verify-signing && \
 	  "$(RELEASE_TOOL)" install-app --app "$(APP_DIR)" --destination "$(INSTALLED_APP)" --expected-current "$$expected"
 	@echo "  Updated without relaunch: $(INSTALLED_APP)"
 
 run: install
 	@open -na "$(INSTALLED_APP)"
 
-verify: test build
+verify-signing:
 	@codesign --verify --deep --strict "$(APP_DIR)"
+	@codesign --verify --strict "$(APP_DIR)/Contents/Library/LaunchServices/$(TRACE_HELPER)"
+	@app_team="$$(codesign -dv --verbose=4 "$(APP_DIR)" 2>&1 | sed -n 's/^TeamIdentifier=//p')"; \
+	  helper_team="$$(codesign -dv --verbose=4 "$(APP_DIR)/Contents/Library/LaunchServices/$(TRACE_HELPER)" 2>&1 | sed -n 's/^TeamIdentifier=//p')"; \
+	  if [ -z "$$app_team" ] || [ "$$app_team" = not\ set ] || [ "$$app_team" != "$$helper_team" ]; then \
+	    echo "  FAIL: app and trace helper require the same real Team ID. Set CODE_SIGN_IDENTITY to an installed signing certificate."; exit 1; \
+	  fi; \
+	  echo "  Signing verified: Team ID $$app_team"
+
+verify: test build
+	@$(MAKE) verify-signing
 	@if codesign -d --entitlements - "$(APP_DIR)" 2>/dev/null | grep -q 'com\.apple\.developer\.'; then \
 	  echo "  FAIL: restricted entitlements require a provisioning profile; this app does not use them"; exit 1; \
 	fi
