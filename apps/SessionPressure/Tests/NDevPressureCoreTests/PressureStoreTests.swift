@@ -7,6 +7,21 @@ import Testing
 @Suite("Pressure store work lifecycle")
 @MainActor
 struct PressureStoreTests {
+    @Test("cached missing advisor does not publish an unchanged empty brief")
+    func missingAdvisorDoesNotInvalidateEveryPoll() async throws {
+        let client = try NDevPressureClient(binaryPath: "/usr/bin/false", advisorBinaryPath: "/usr/bin/false", environment: ["NDEV_PRESSURE_API_SOCKET": "/absent-pressure-advisor-test.sock"])
+        let store = PressureStore(client: client)
+        await store.refreshAdvisorBrief(force: false)
+        #expect(store.advisorBriefError != nil)
+        var publications = 0
+        let subscription = store.$advisorBrief.dropFirst().sink { _ in publications += 1 }
+        await store.refreshAdvisorBrief(force: false)
+        await store.refreshAdvisorBrief(force: false)
+        #expect(publications == 0)
+        subscription.cancel()
+        store.stop()
+    }
+
     @Test("automatic refreshes do not publish progress animations", arguments: [false, true])
     func refreshProgressIsExplicit(presentProgress: Bool) async throws {
         // A failing child still has to release the private serialization flag.
