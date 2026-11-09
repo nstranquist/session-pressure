@@ -39,7 +39,7 @@ struct BrowserControlView: View {
         Task { await refresh(action); changing = false }
     }
     @MainActor private func refresh(_ action: String) async {
-        do { status = try await NDevPressureClient().browserControl(action).browser; error = nil }
+        do { status = try await ClientFactory.make().browserControl(action).browser; error = nil }
         catch { self.error = error.localizedDescription }
     }
 }

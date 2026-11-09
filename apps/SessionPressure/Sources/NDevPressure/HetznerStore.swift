@@ -92,9 +92,9 @@ final class HetznerStore: ObservableObject {
     private var ledgerSignature: String?
 
     init(inspect: @escaping Inspect = { includeBox, known, host, user in
-        try await NDevPressureClient().gateRunnerInspection(includeBox: includeBox, knownLedger: known, host: host, user: user)
+        try await ClientFactory.make().gateRunnerInspection(includeBox: includeBox, knownLedger: known, host: host, user: user)
     }, readLog: @escaping ReadLog = { id, host, user in
-        try await NDevPressureClient().gateRunnerJobLog(id: id, host: host, user: user)
+        try await ClientFactory.make().gateRunnerJobLog(id: id, host: host, user: user)
     }) {
         self.inspect = inspect
         self.readLog = readLog

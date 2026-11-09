@@ -33,27 +33,61 @@ public struct NDevPressureAPIClient: Sendable {
     private let token: String?
     private let timeout: TimeInterval
 
-    public init?(environment: [String: String] = ProcessInfo.processInfo.environment) {
+    /// Which transport the app will use, and why. One resolver feeds both the
+    /// client and the Settings page so the page never guesses.
+    public enum Transport: Sendable, Equatable {
+        case socket(path: String)
+        case url(String)
+        case cliFallback(reason: String)
+
+        public var summary: String {
+            switch self {
+            case .socket(let path): "Local API socket · \(path)"
+            case .url(let url): "Local API URL · \(url)"
+            case .cliFallback(let reason): "CLI only · \(reason)"
+            }
+        }
+    }
+
+    public static func transport(environment: [String: String] = ProcessInfo.processInfo.environment) -> Transport {
         let configuredURL = environment["NDEV_PRESSURE_API_URL"]
         let home = environment["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
         let state = environment["NDEV_SESSION_PRESSURE_HOME"] ?? environment["SESSION_PRESSURE_HOME"] ?? "\(home)/.nicos-dev/session-pressure"
         let socket = environment["NDEV_PRESSURE_API_SOCKET"] ?? "\(state)/api/session-pressure.sock"
+        if let configuredURL {
+            guard let url = URL(string: configuredURL),
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https",
+                  let host = url.host?.lowercased(),
+                  ["localhost", "127.0.0.1", "::1"].contains(host),
+                  url.user == nil,
+                  url.password == nil,
+                  url.query == nil,
+                  url.fragment == nil else {
+                return .cliFallback(reason: "API URL is not a plain loopback http(s) URL")
+            }
+            return .url(configuredURL)
+        }
         // Default to the local socket only if it exists. CLI fallback stays
         // cheap when the optional API service is not installed.
-        if configuredURL == nil && !FileManager.default.fileExists(atPath: socket) { return nil }
-        guard let url = URL(string: configuredURL ?? "http://localhost"),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https",
-              let host = url.host?.lowercased(),
-              ["localhost", "127.0.0.1", "::1"].contains(host),
-              url.user == nil,
-              url.password == nil,
-              url.query == nil,
-              url.fragment == nil else {
-            return nil
+        guard FileManager.default.fileExists(atPath: socket) else {
+            return .cliFallback(reason: "no API socket at \(socket)")
         }
-        self.baseURL = url
-        self.socketPath = configuredURL == nil ? socket : nil
+        return .socket(path: socket)
+    }
+
+    public init?(environment: [String: String] = ProcessInfo.processInfo.environment) {
+        switch Self.transport(environment: environment) {
+        case .cliFallback:
+            return nil
+        case .url(let raw):
+            guard let url = URL(string: raw) else { return nil }
+            self.baseURL = url
+            self.socketPath = nil
+        case .socket(let path):
+            self.baseURL = URL(string: "http://localhost")!
+            self.socketPath = path
+        }
         self.timeout = min(max(Double(environment["NDEV_PRESSURE_API_TIMEOUT_SECONDS"] ?? "10") ?? 10, 1), 30)
         if let inline = environment["NDEV_PRESSURE_API_TOKEN"], !inline.isEmpty {
             self.token = inline

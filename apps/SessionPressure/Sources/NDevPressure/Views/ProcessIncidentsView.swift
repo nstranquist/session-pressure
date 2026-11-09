@@ -130,7 +130,7 @@ struct ProcessIncidentsView: View {
         refreshing = true
         defer { refreshing = false }
         do {
-            let client = try NDevPressureClient(binaryPath: store.binaryPath.isEmpty ? nil : store.binaryPath)
+            let client = try ClientFactory.make(binaryPath: store.binaryPath.isEmpty ? nil : store.binaryPath)
             report = try await client.processIncidents().report
             refreshedAt = Date(); error = nil
             if !incidents.contains(where: { $0.id == selectedID }) { selectedID = incidents.first?.id }
@@ -141,7 +141,7 @@ struct ProcessIncidentsView: View {
         guard !busy else { return }
         busy = true; pending = nil
         do {
-            let client = try NDevPressureClient(binaryPath: store.binaryPath.isEmpty ? nil : store.binaryPath)
+            let client = try ClientFactory.make(binaryPath: store.binaryPath.isEmpty ? nil : store.binaryPath)
             let response = try await client.stopProcessIncident(id: incident.id, force: force)
             if !response.ok { throw NDevPressureClientError.launchFailed("Stop failed; refresh incident history.") }
             error = nil

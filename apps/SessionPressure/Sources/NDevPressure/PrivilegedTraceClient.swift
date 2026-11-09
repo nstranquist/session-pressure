@@ -33,6 +33,17 @@ enum PrivilegedTraceError: LocalizedError {
 final class PrivilegedTraceClient {
     private let service = SMAppService.daemon(plistName: NDevPressureTraceContract.helperPlist)
 
+    /// Read-only registration state of the disk-trace helper, for Settings.
+    static var helperStatusLabel: String {
+        switch SMAppService.daemon(plistName: NDevPressureTraceContract.helperPlist).status {
+        case .enabled: "Registered"
+        case .requiresApproval: "Needs approval in Login Items"
+        case .notRegistered: "Not registered (registers on first trace)"
+        case .notFound: "Not embedded in this build"
+        @unknown default: "Unknown"
+        }
+    }
+
     func trace(pid: Int, processStartIdentity: String, durationSeconds: Int) async throws -> DiskPathTraceResult {
         try await ensureRegistered()
         let authorization = try await authorizationExternalForm()
