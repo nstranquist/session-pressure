@@ -68,3 +68,15 @@ The fleet CLI's status aggregates all host observations and exits nonzero if an
 active host is unhealthy or drained. It reports unavailable reserve/staging hosts
 without making them eligible. It requires no Hetzner API credentials. Provisioning
 is separate: Hetzner Cloud manages cloud VMs; Robot manages dedicated servers.
+
+## Source upload (Session Pressure remote work)
+
+Each host keeps one pristine source base per closure in
+`/srv/build/cache/pressure-base/<key>` with `<key>.manifest` and `<key>.digest`
+(the 8 newest are kept; each is 100 to 400 MB). An upload sends only changed
+files and builds the job stage as a hard-link snapshot of the base. Never
+write a base file in place: stages share its inodes. To force a fresh seed on
+a host, remove the three paths for the key under the transfer lock
+(`flock /srv/build/input-transfer.lock`). `SESSION_PRESSURE_REMOTE_DELTA=off`
+on the Mac restores the full tar upload. Enrolling a host needs GNU coreutils,
+GNU tar, `flock` and `find -printf`.
