@@ -526,6 +526,10 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		recordControlEvent(dir, event)
 	}()
 	remote := "/srv/build/candidates/pressure-" + job
+	preflight, err := remoteBuildPreflight(profile, policy.Host, remote)
+	if err != nil {
+		return reject(err.Error())
+	}
 	for i := range argv {
 		argv[i] = strings.ReplaceAll(argv[i], "/srv/build/candidates/OUTPUT", remote+"/artifact")
 	}
@@ -577,7 +581,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	// 300 s) so it never queues behind a suite. The runner reruns it heavy if
 	// it outgrows the lane, so a wrong guess costs time, never a verdict.
 	lane, procs, memlimit, parallel := remoteLane(options)
-	command := remoteRunnerPrelude() + remoteBuildPreflight(profile, remote) + "cd " + shellQuote("./"+filepath.ToSlash(rel)) + " && env GOWORK=off GOMAXPROCS=" + procs + " GOMEMLIMIT=" + memlimit + " GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p="+parallel)) + remoteBuildEnvironment(profile, remote)
+	command := remoteRunnerPrelude() + preflight + "cd " + shellQuote("./"+filepath.ToSlash(rel)) + " && env GOWORK=off GOMAXPROCS=" + procs + " GOMEMLIMIT=" + memlimit + " GOFLAGS=" + shellQuote(strings.TrimSpace(os.Getenv("GOFLAGS")+" -p="+parallel)) + remoteBuildEnvironment(profile, remote)
 	for _, arg := range argv {
 		command += " " + shellQuote(arg)
 	}
