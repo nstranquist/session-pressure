@@ -174,6 +174,9 @@ func remoteModuleClosure(start string) ([]string, string, error) {
 	return modules, common, nil
 }
 
+// remoteEnumerateTimeout bounds one repository input scan.
+const remoteEnumerateTimeout = 60 * time.Second
+
 // remoteSourceLimit bounds one upload; larger closures are rejected.
 const remoteSourceLimit = 512 << 20
 
@@ -259,8 +262,21 @@ func walkRemoteSources(modules []string, common string, scope remoteInputScope, 
 		}
 	}
 	for _, repo := range repositories {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		cmd := exec.CommandContext(ctx, "git", "-C", repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+		// The scan takes ~2 s on an idle Mac for nicos-tools; at load 40 a 5 s
+		// ceiling killed it and refused a delivery gate (2026-11-09). A slow
+		// enumeration is cheaper than a refused job, so bound it loosely.
+		ctx, cancel := context.WithTimeout(context.Background(), remoteEnumerateTimeout)
+		args := []string{"-C", repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z"}
+		if scope == remoteScopeModules {
+			// Let git skip untracked scans outside the closure modules.
+			args = append(args, "--")
+			for _, module := range modules {
+				if rel, err := filepath.Rel(repo, module); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					args = append(args, ":(literal)"+filepath.ToSlash(rel))
+				}
+			}
+		}
+		cmd := exec.CommandContext(ctx, "git", args...)
 		body, err := cmd.Output()
 		cancel()
 		if err != nil {
