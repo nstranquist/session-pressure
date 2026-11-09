@@ -6,6 +6,16 @@ This report states the review findings and the remaining acceptance conditions.
 Private receipts are under `~/.nicos-dev/session-pressure/acceptance/2026-11-08/`.
 
 
+Delivery scope correction (**2026-11-09 01:01 UTC**): the four queued
+deliveries and delivery-worker upgrade belong to **nicos-tools**, not this
+Session Pressure repository. Session Pressure changes use guarded direct
+commits and direct product installation. Factory integration is separate
+follow-through; its queue must not block the app rebuild, installation, real
+trace retry, or product runtime verification. Earlier statements that combine
+factory queue completion with Session Pressure readiness are superseded by this
+scope correction. Product acceptance still requires its own installed evidence
+and actual elapsed resource checks.
+
 Latest closeout (**2026-11-09 00:58 UTC**): the operator requested that
 queue and elapsed-test waits stop. The active producers remain running; no
 queue, worker, approval or test gate is bypassed. The approved real trace found

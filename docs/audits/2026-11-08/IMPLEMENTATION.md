@@ -5,6 +5,16 @@ Central work item: WORK-41 (`e6011b2df33955484962f546b6767e02`).
 Baseline source: `c136a8f415595b6e9b8f4ee01c85315aef75de80`.
 
 
+Delivery scope correction (**2026-11-09 01:01 UTC**): the four queued
+deliveries and delivery-worker upgrade belong to **nicos-tools**, not this
+Session Pressure repository. Session Pressure changes use guarded direct
+commits and direct product installation. Factory integration is separate
+follow-through; its queue must not block the app rebuild, installation, real
+trace retry, or product runtime verification. Earlier statements that combine
+factory queue completion with Session Pressure readiness are superseded by this
+scope correction. Product acceptance still requires its own installed evidence
+and actual elapsed resource checks.
+
 Latest closeout (**2026-11-09 00:58 UTC**): the operator requested that
 queue and elapsed-test waits stop. The active producers remain running; no
 queue, worker, approval or test gate is bypassed. The approved real trace found
