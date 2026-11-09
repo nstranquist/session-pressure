@@ -6,6 +6,37 @@ This report states the review findings and the remaining acceptance conditions.
 Private receipts are under `~/.nicos-dev/session-pressure/acceptance/2026-11-08/`.
 
 
+Current checkpoint (**2026-11-09 01:17 UTC**, promoter session `01a1bc3b`):
+app **1.4.9 build 17**, committed source **fe06d29** including authorization
+repair **a1311f1**, is installed and running. All **89 tests in 13 suites**,
+the release build, matching real Team ID **C82D23RNQ9**, and strict Apple
+trust-anchor checks pass. Full-bundle authority is
+`99fd914457a1b0a18058af4117d41d85b0f0e5891dff9c3b70df15b5a0521d26`;
+the atomic receipt is `app149-install.json`. The approved real trace completed
+with bounded/truncated output at **01:14 UTC**. The first attempt after an
+update can still fail registration; the trace owner is repairing that race.
+The 1.4.8 observer is stopped and preserved as diagnostic evidence: interactive
+trace use and the app replacement invalidate its idle cohort. **No final
+30-minute resource or 72-hour acceptance pass is claimed.** A new immutable
+idle observation must follow the last app repair and trace verification.
+
+The live product doctor at 01:14 passes: matching `a6cee30a` CLI/helper, fresh
+resident PID 33936, 17.797 MiB RSS, 0.357% CPU duty, sample CPU p95 15.085 ms,
+and no warnings. This does not make the full production audit pass. The
+natural two-hour audit (`review-audit-2h-0114.json`) **fails**: test-class
+end-to-end bounded slowdown p95 is 7.17 against 5.00, CLI writer histogram p95
+is 100 ms against 25 ms, and standalone writer p95 is 107.921 ms against the
+100 ms failure ceiling. Those windows retain earlier load. The fresh private
+100-call product cohort meets the 25 ms target at 15.608 ms; it does not erase
+production history or establish sustained acceptance. Storage is also warning
+at 48.8 GiB available. No threshold is widened and no history is deleted.
+
+Factory browser and completion-recovery repairs have landed at **589996f**
+and their exact committed export is building on Hetzner. Installed factory
+acceptance remains separate from this product's direct app installation.
+The independently tested proof-scan rate limit is captured as **201ed628**
+and follows that fixed installation cutoff; its accepted state is not landing.
+
 Installed follow-up (**2026-11-09 01:04 UTC**, promoter session `01a1bc3b`):
 app **1.4.8 build 16**, committed source **c966f6e**, is installed and relaunched.
 All **89 tests in 13 suites**, the release build, matching real Team ID
