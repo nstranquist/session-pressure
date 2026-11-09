@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nstranquist/session-pressure/runnerfleet"
 	"golang.org/x/mod/modfile"
 )
 
@@ -24,6 +25,7 @@ type RemoteWorkPolicy struct {
 	Enabled bool   `json:"enabled"`
 	Host    string `json:"host,omitempty"`
 	User    string `json:"user,omitempty"`
+	Fleet   string `json:"fleet,omitempty"`
 }
 
 func SetRemoteWork(dir string, enabled bool) error {
@@ -31,11 +33,18 @@ func SetRemoteWork(dir string, enabled bool) error {
 	if err != nil {
 		return err
 	}
-	return ConfigureRemoteWork(dir, enabled, policy.Host, policy.User)
+	policy.Enabled = enabled
+	return SaveRemoteWorkPolicy(dir, policy)
 }
 
 func ConfigureRemoteWork(dir string, enabled bool, host, user string) error {
 	policy := RemoteWorkPolicy{Enabled: enabled, Host: host, User: user}
+	return SaveRemoteWorkPolicy(dir, policy)
+}
+
+// SaveRemoteWorkPolicy preserves fleet routing across enable/disable operations.
+// ConfigureRemoteWork remains an explicit single-host override.
+func SaveRemoteWorkPolicy(dir string, policy RemoteWorkPolicy) error {
 	if err := policy.validate(); err != nil {
 		return err
 	}
@@ -52,6 +61,9 @@ func RemoteWorkEnabled(dir string) (bool, error) {
 }
 
 func (p *RemoteWorkPolicy) validate() error {
+	if p.Fleet != "" && !filepath.IsAbs(p.Fleet) {
+		return errors.New("remote fleet inventory path must be absolute")
+	}
 	if p.Host == "" {
 		p.Host = "gaterunner-1"
 	}
@@ -487,6 +499,17 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		return true, 1, err
 	}
 	profile := remoteBuildProfile(argv[1], os.Getenv("CGO_ENABLED"))
+	if policy.Fleet != "" {
+		lane, _, _, _ := remoteLane(options)
+		binding, bindErr := runnerfleet.Assign(context.Background(), policy.Fleet, runnerfleet.Request{
+			Key: "pressure-" + job, Identity: cwd + "\x00" + strings.Join(argv, "\x00"),
+			Repository: "session-pressure-work", Profile: profile, Lane: lane,
+		}, nil)
+		if bindErr != nil {
+			return reject("fleet assignment: " + bindErr.Error())
+		}
+		policy.Host, policy.User = binding.Host.Name, binding.Host.User
+	}
 	started := time.Now()
 	defer func() {
 		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "operation": options.Command[1], "profile": profile, "runner_host": policy.Host, "runner_user": policy.User, "request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0})

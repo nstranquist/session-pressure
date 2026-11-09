@@ -35,3 +35,30 @@ func TestRemoteEndpointPolicyCompatibilityAndPersistence(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoteFleetPolicySurvivesToggleAndExplicitPin(t *testing.T) {
+	dir := t.TempDir()
+	p := RemoteWorkPolicy{Enabled: true, Fleet: filepath.Join(dir, "fleet.json")}
+	if err := SaveRemoteWorkPolicy(dir, p); err != nil {
+		t.Fatal(err)
+	}
+	for _, enabled := range []bool{false, true} {
+		if err := SetRemoteWork(dir, enabled); err != nil {
+			t.Fatal(err)
+		}
+		got, err := RemoteWorkConfig(dir)
+		if err != nil || got.Fleet != p.Fleet || got.Enabled != enabled {
+			t.Fatal(got, err)
+		}
+	}
+	if err := ConfigureRemoteWork(dir, true, "gaterunner-3", "builder"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := RemoteWorkConfig(dir)
+	if err != nil || got.Fleet != "" || got.Host != "gaterunner-3" {
+		t.Fatal(got, err)
+	}
+	if err := SaveRemoteWorkPolicy(dir, RemoteWorkPolicy{Fleet: "relative.json"}); err == nil {
+		t.Fatal("relative inventory accepted")
+	}
+}
