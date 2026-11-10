@@ -48,16 +48,14 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     }
 }
 
-/// Sidebar Settings pane (⌘9): left rail + scrollable single page.
-/// All sections are visible in one `ScrollView` (so you can see everything)
-/// and the left rail is a jump list — click to scroll to a section, and
-/// scrolling the page updates the highlighted rail item (scroll-spy).
+/// Sidebar Settings pane (⌘9): a scrollable settings page and separate help page.
+/// The settings rail is a jump list, with the highlight following the scroll.
 ///
 /// Scroll-spy is intentionally robust: it tracks minY for every row and picks
 /// the section whose top has most recently passed a small viewport threshold.
 /// A 100ms hold prevents fast flapping from reversing the highlight.
 struct AppSettingsView: View {
-    @State private var selected: SettingsSection = .general
+    @Binding var selected: SettingsSection
     @State private var isProgrammaticScroll = false
     @State private var pendingCandidate: SettingsSection?
     @State private var pendingWorkItem: DispatchWorkItem?
@@ -76,10 +74,14 @@ struct AppSettingsView: View {
             .navigationTitle("Settings")
             .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
         } detail: {
+            if selected == .about {
+                HelpView()
+                    .navigationTitle(selected.title)
+            } else {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
                     VStack(alignment: .leading, spacing: 22) {
-                        ForEach(SettingsSection.allCases) { sec in
+                        ForEach(SettingsSection.allCases.filter { $0 != .about }) { sec in
                             SettingsDetailRow(sec: sec, proxy: proxy)
                                 .id(sec)
                                 .background {
@@ -97,8 +99,19 @@ struct AppSettingsView: View {
                 .background {
                     Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
                 }
-                .onReceive(NotificationCenter.default.publisher(for: Notification.Name("OpenSettingsToAbout"))) { _ in
-                    selected = .about
+                .onAppear {
+                    isProgrammaticScroll = true
+                    proxy.scrollTo(selected, anchor: .top)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                        isProgrammaticScroll = false
+                    }
+                }
+                .onDisappear {
+                    pendingWorkItem?.cancel()
+                    pendingCandidate = nil
+                    lastOffsets = [:]
+                    lastScrollDirection = 0
+                    isProgrammaticScroll = false
                 }
                 .onPreferenceChange(SectionTopPreferenceKey.self) { offsets in
                     guard !isProgrammaticScroll else { return }
@@ -169,6 +182,7 @@ struct AppSettingsView: View {
                 }
             }
             .navigationTitle(selected.title)
+            }
         }
         .frame(minWidth: 680, minHeight: 520)
     }
@@ -224,6 +238,8 @@ struct SettingsWindowView: View {
                 .tabItem { Label("Guard", systemImage: "shield.lefthalf.filled") }
             tab { DiagnosticsSettingsSection() }
                 .tabItem { Label("Diagnostics", systemImage: "stethoscope") }
+            HelpView()
+                .tabItem { Label("About & Help", systemImage: "questionmark.circle") }
         }
         .frame(width: 600, height: 520)
     }

@@ -7,6 +7,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var hetzner = HetznerStore()
     @State private var windowVisible = true
+    @State private var selectedSettingsSection: SettingsSection = .general
     @AppStorage(AppPreferenceKey.showDayGate) private var showDayGate = true
     @AppStorage(AppPreferenceKey.showHetzner) private var showHetzner = true
 
@@ -145,7 +146,7 @@ struct ContentView: View {
         case .policy: PolicyView()
         case .monitor: MonitorView()
         case .telemetry: TelemetryView()
-        case .settings: AppSettingsView()
+        case .settings: AppSettingsView(selected: $selectedSettingsSection)
                 .navigationTitle("Settings")
         }
     }
@@ -231,8 +232,8 @@ struct ContentView: View {
 
             // Help sits farthest right — not buried next to the bell.
             Button {
+                selectedSettingsSection = .about
                 store.selectedSection = .settings
-                NotificationCenter.default.post(name: Notification.Name("OpenSettingsToAbout"), object: nil)
             } label: {
                 Image(systemName: "questionmark.circle")
                     .font(.system(size: 15, weight: .regular))
