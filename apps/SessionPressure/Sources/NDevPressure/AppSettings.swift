@@ -61,6 +61,8 @@ struct AppSettingsView: View {
     @State private var isProgrammaticScroll = false
     @State private var pendingCandidate: SettingsSection?
     @State private var pendingWorkItem: DispatchWorkItem?
+    @State private var lastOffsets: [SettingsSection: CGFloat] = [:]
+    @State private var lastScrollDirection: Int = 0
 
     var body: some View {
         NavigationSplitView {
@@ -101,6 +103,18 @@ struct AppSettingsView: View {
                 .onPreferenceChange(SectionTopPreferenceKey.self) { offsets in
                     guard !isProgrammaticScroll else { return }
                     guard !offsets.isEmpty else { return }
+                    // Scroll direction from aggregate offset movement: content
+                    // moving up (offsets decreasing) is scrolling down.
+                    if !lastOffsets.isEmpty {
+                        let prevSum = lastOffsets.values.reduce(0, +)
+                        let nowSum = offsets.values.reduce(0, +)
+                        let delta = nowSum - prevSum
+                        if delta < -2 { lastScrollDirection = 1 } // down
+                        else if delta > 2 { lastScrollDirection = -1 } // up
+                        else { lastScrollDirection = 0 }
+                    }
+                    lastOffsets = offsets
+
                     // The active section is the one whose top has most recently
                     // moved past 70pt from the viewport top. Among all rows with
                     // minY <= 70, the largest minY is the current one — even if
@@ -109,19 +123,37 @@ struct AppSettingsView: View {
                     guard let best = eligible.max(by: { $0.value < $1.value })?.key else { return }
                     guard best != selected else { return }
 
-                    // Hold 80ms to debounce fast scroll — prevents the rail
-                    // reversing when the user flicks past two sections.
+                    // Direction gate: while fast-scrolling down, ignore candidates
+                    // that would move the rail backwards (and vice versa). This
+                    // stops the inversion where a flick temporarily reports an
+                    // earlier section as eligible from a stale layout pass.
+                    let all = SettingsSection.allCases
+                    if let curIdx = all.firstIndex(of: selected), let bestIdx = all.firstIndex(of: best) {
+                        if lastScrollDirection == 1 && bestIdx < curIdx { return }
+                        if lastScrollDirection == -1 && bestIdx > curIdx { return }
+                    }
+
+                    // Hold 120ms (not 80ms) to absorb fast-scroll batches before
+                    // committing. Stale candidates are ignored if direction flips.
                     pendingWorkItem?.cancel()
                     pendingCandidate = best
+                    let capturedDirection = lastScrollDirection
                     let work = DispatchWorkItem {
-                        // Don't apply stale candidates that were superseded.
-                        if pendingCandidate == best, !isProgrammaticScroll {
-                            withAnimation(.easeOut(duration: 0.12)) { selected = best }
+                        // Don't apply stale candidates that were superseded or
+                        // that now disagree with the live scroll direction.
+                        guard pendingCandidate == best, !isProgrammaticScroll else {
+                            pendingCandidate = nil
+                            return
                         }
+                        if capturedDirection != 0 && capturedDirection != lastScrollDirection {
+                            pendingCandidate = nil
+                            return
+                        }
+                        withAnimation(.easeOut(duration: 0.12)) { selected = best }
                         pendingCandidate = nil
                     }
                     pendingWorkItem = work
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
                 }
                 .onChange(of: selected) { _, newValue in
                     pendingWorkItem?.cancel()
