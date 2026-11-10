@@ -165,10 +165,18 @@ struct ContentView: View {
                 .environmentObject(store)
 
             if let at = store.selectedSection == .hetzner ? hetzner.ledgerCheckedAt : store.selectedSectionRefreshedAt {
-                ReadAgeView(date: at)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .help("Time since this section was read successfully. Using \(store.binaryPath)")
+                Button {
+                    Task {
+                        if store.selectedSection == .hetzner { await hetzner.refreshNow() }
+                        else { await store.refresh(live: false, light: false) }
+                    }
+                } label: {
+                    ReadAgeView(date: at)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Time since this section was read successfully — click to refresh now. Using \(store.binaryPath)")
             } else {
                 Text("No successful read").font(.caption).foregroundStyle(.secondary)
             }
