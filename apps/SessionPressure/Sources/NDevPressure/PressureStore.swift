@@ -1250,6 +1250,12 @@ final class PressureStore: ObservableObject {
         await refreshStorageInventory()
     }
 
+    func setOverrideBeyondCapacity(_ on: Bool) async {
+        await mutate(on ? "Allowing override beyond capacity…" : "Restoring the capacity cap for overrides…") { client in
+            _ = try await client.policyOverrideBeyondCapacity(on: on)
+        }
+    }
+
     private func appendStorageReceipt(_ line: StorageReceiptLine) {
         if line.kind == .command || line.kind == .status,
            storageReceipt.contains(where: { $0.kind == line.kind && $0.text == line.text }) {

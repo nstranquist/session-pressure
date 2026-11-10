@@ -935,6 +935,7 @@ public struct PolicyWorkLimits: Codable, Sendable, Hashable {
     public var capacity: Int?
     public var warningCapacity: Int?
     public var warningCapacityEnabled: Bool?
+    public var allowOverrideBeyondCapacity: Bool?
     public var testWeight: Int?
     public var buildWeight: Int?
     public var expressTestWeight: Int?
@@ -949,6 +950,7 @@ public struct PolicyWorkLimits: Codable, Sendable, Hashable {
         case capacity
         case warningCapacity = "warning_capacity"
         case warningCapacityEnabled = "warning_capacity_enabled"
+        case allowOverrideBeyondCapacity = "allow_override_beyond_capacity"
         case testWeight = "test_weight"
         case buildWeight = "build_weight"
         case expressTestWeight = "express_test_weight"

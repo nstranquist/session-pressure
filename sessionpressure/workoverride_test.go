@@ -519,3 +519,65 @@ func TestWorkOverrideAuditsEachDistinctSelection(t *testing.T) {
 		seenRequests[event.RequestID] = struct{}{}
 	}
 }
+
+func TestWorkOverrideBeyondCapacityAdmitsPastLogicalCapWhenEnabled(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 11, 10, 1, 2, 0, 0, time.UTC)
+	alive := func(pid int) bool { return pid == 100 || pid == 200 || pid == 300 || pid == 400 || pid == 999 }
+	identity := func(pid int) (string, error) { return fmt.Sprintf("owner:%d", pid), nil }
+	limits := testWorkLimits()
+	limits.AllowOverrideBeyondCapacity = true
+	makeCoordinator := func(pid int) *WorkCoordinator {
+		return &WorkCoordinator{
+			Dir: dir, Limits: limits, PID: pid, Now: func() time.Time { return now },
+			ProcessAlive: alive, ProcessIdentity: identity, EventStore: NewWorkEventStore(dir),
+			SchedulingPolicy: WorkSchedulingPolicy,
+		}
+	}
+	heavy, _, err := makeCoordinator(300).AcquireOperation(context.Background(), WorkClassHeavy, "00000000000000000000000000000030")
+	if err != nil {
+		t.Fatal(err)
+	}
+	browser, _, err := makeCoordinator(200).AcquireOperation(context.Background(), WorkClassBrowser, "00000000000000000000000000000002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Leased weight now equals capacity (6 + 2 = 8 of 8): the test waiter's
+	// weight 3 cannot fit under the logical cap by any drain-free path.
+	target, _, err := makeCoordinator(400).RegisterWaiter(context.Background(), WorkClassTest, "00000000000000000000000000000003")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bystander, _, err := makeCoordinator(100).RegisterWaiter(context.Background(), WorkClassTest, "00000000000000000000000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := makeCoordinator(999).OverrideWaiter(context.Background(), target.operationID); err != nil {
+		t.Fatal(err)
+	}
+	// The toggle widens admission for the overridden waiter only: a
+	// non-overridden waiter still cannot jump the queue or the cap.
+	if lease, _, acquireErr := bystander.TryAcquire(context.Background()); lease != nil || acquireErr == nil {
+		t.Fatalf("bystander bypassed the cap: lease=%+v err=%v", lease, acquireErr)
+	}
+	lease, acquired, err := target.TryAcquire(context.Background())
+	if err != nil || lease == nil {
+		t.Fatalf("beyond-capacity override did not admit: status=%+v err=%v", acquired, err)
+	}
+	if acquired.SelectedOperationID != target.operationID || acquired.DecisionReason != "priority_override_beyond_capacity" {
+		t.Fatalf("acquired=%+v, want beyond-capacity override selection", acquired)
+	}
+	if acquired.Used != 11 || acquired.Capacity != 8 {
+		t.Fatalf("status used/capacity = %d/%d, want 11/8 (past the logical cap)", acquired.Used, acquired.Capacity)
+	}
+	if err := lease.Release(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := heavy.Release(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := browser.Release(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_ = bystander.Cancel(context.Background())
+}

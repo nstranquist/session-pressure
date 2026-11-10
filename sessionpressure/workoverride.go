@@ -66,19 +66,27 @@ type WorkOverrideResult struct {
 }
 
 // selectStateWaiter gives one explicit operator override precedence over the
-// ordinary FIFO/bounded-lookahead policy. It changes queue order only: the
-// hard weighted-capacity ceiling and the separate host-pressure admission gate
-// remain authoritative.
+// ordinary FIFO/bounded-lookahead policy. By default it changes queue order
+// only: the hard weighted-capacity ceiling and the separate host-pressure
+// admission gate remain authoritative. When the policy toggle
+// work_limits.allow_override_beyond_capacity is on, the overridden waiter is
+// also admitted past the weighted ceiling - but never past the host-pressure
+// gate, which runs before selection and is untouched by the toggle.
 func (coordinator *WorkCoordinator) selectStateWaiter(state workState, used, capacity int, now time.Time, green workGreenExpressWindow) workSelection {
 	if state.OverrideOperationID != "" {
-		if selection, found := selectOverriddenWorkWaiter(state.Waiters, used, capacity, state.OverrideOperationID); found {
+		if selection, found := selectOverriddenWorkWaiter(state.Waiters, used, capacity, state.OverrideOperationID, coordinator.limits().AllowOverrideBeyondCapacity); found {
 			return selection
 		}
 	}
 	return coordinator.selectWaiter(state.Waiters, used, capacity, now, green, expressLeasedWeight(state.Leases))
 }
 
-func selectOverriddenWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, operationID string) (workSelection, bool) {
+// selectOverriddenWorkWaiter reports the overridden waiter's selection. The
+// waiter is always protected (it owns the next reservation); it is selected
+// for admission only when its weight fits the remaining capacity - or, when
+// allowBeyondCapacity is set, unconditionally: the operator has explicitly
+// accepted running past the logical weighted cap.
+func selectOverriddenWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, operationID string, allowBeyondCapacity bool) (workSelection, bool) {
 	for _, waiter := range waiters {
 		if waiter.OperationID != operationID {
 			continue
@@ -87,9 +95,13 @@ func selectOverriddenWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, 
 			ProtectedOperationID: operationID,
 			DecisionReason:       "priority_override_bounded_drain",
 		}
-		if waiter.Weight <= max(0, capacity-used) {
+		switch {
+		case waiter.Weight <= max(0, capacity-used):
 			selection.SelectedOperationID = operationID
 			selection.DecisionReason = "priority_override_selected"
+		case allowBeyondCapacity:
+			selection.SelectedOperationID = operationID
+			selection.DecisionReason = "priority_override_beyond_capacity"
 		}
 		return selection, true
 	}

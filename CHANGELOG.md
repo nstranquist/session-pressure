@@ -17,6 +17,19 @@
   one factory, so saved overrides apply everywhere, including to apps opened
   from Finder, which never see shell environment variables.
 
+### Guard - work override beyond capacity
+
+- **`work_limits.allow_override_beyond_capacity` policy toggle.** With the
+  toggle on, an explicit `work override` admits its waiter past the weighted
+  `work_limits.capacity` ceiling (decision reason
+  `priority_override_beyond_capacity`); host-pressure gates - red pressure in
+  any dimension and the shared admission latch - still block the waiter
+  before selection. Default off: an override then changes queue order only.
+  Set it with `session-pressure policy override-beyond-capacity on|off` or
+  the NDev Pressure Settings -> Guard configuration toggle. Motivated by the
+  2026-11-10 incident where an overridden waiter starved at a full pool and
+  died at its wait bound.
+
 ### Fixed
 
 - **Remote Go work uploads only changed source files.** Before, every job

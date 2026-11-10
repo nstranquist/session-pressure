@@ -156,8 +156,8 @@ func EvaluateWorkSystem(policy Policy) WorkEvaluationReport {
 	}
 	// Leave one unit less than the selected waiter's weight available. Browser
 	// and test weights may be equal, so browser weight cannot model this drain.
-	overrideDrain, overrideFound := selectOverriddenWorkWaiter(overrideWaiters, limits.Capacity-limits.TestWeight+1, limits.Capacity, secondID)
-	overrideSelected, selectedFound := selectOverriddenWorkWaiter(overrideWaiters, 0, limits.Capacity, secondID)
+	overrideDrain, overrideFound := selectOverriddenWorkWaiter(overrideWaiters, limits.Capacity-limits.TestWeight+1, limits.Capacity, secondID, false)
+	overrideSelected, selectedFound := selectOverriddenWorkWaiter(overrideWaiters, 0, limits.Capacity, secondID, false)
 	add("operator-override-safety", overrideFound && selectedFound && overrideDrain.SelectedOperationID == "" && overrideDrain.ProtectedOperationID == secondID && overrideDrain.DecisionReason == "priority_override_bounded_drain" && overrideSelected.SelectedOperationID == secondID,
 		fmt.Sprintf("drain=%s protected=%s selected_after_release=%s", overrideDrain.DecisionReason, overrideDrain.ProtectedOperationID, overrideSelected.SelectedOperationID))
 

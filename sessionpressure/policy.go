@@ -149,6 +149,16 @@ type WorkLimits struct {
 	// recoverable host signal into avoidable agent wait. Balanced and Throughput
 	// leave the normal weighted ceiling in place until true red pressure.
 	WarningCapacityEnabled bool `json:"warning_capacity_enabled"`
+	// AllowOverrideBeyondCapacity lets an explicit operator override (work
+	// override) admit its waiter past the weighted Capacity ceiling. It
+	// widens only that logical cap: the host-pressure admission gate -
+	// red-level pressure in any dimension and the shared admission latch -
+	// runs before selection and still blocks the waiter outright. Default
+	// false: an override changes queue order only. Turning it on trades
+	// the cap protection for operator judgement; sustained oversubscription
+	// can hide a misclassified weight that the cap would have exposed, so
+	// pair it with weight-classification review.
+	AllowOverrideBeyondCapacity bool `json:"allow_override_beyond_capacity"`
 	// SwapThrashCapacity is the weighted ceiling for new heavy work while the
 	// resident's swap-thrash latch is set under an enforcing profile. Thrash
 	// slows every process super-linearly, so serializing memory-heavy work
