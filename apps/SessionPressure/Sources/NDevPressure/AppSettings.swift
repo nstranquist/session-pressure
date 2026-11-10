@@ -5,21 +5,176 @@ import SwiftUI
 
 // MARK: - Containers
 
-/// Sidebar Settings pane (⌘9): every section in one grouped, scrolling form.
-struct AppSettingsView: View {
-    var body: some View {
-        Form {
-            GeneralSettingsSection()
-            MenuBarDockSettingsSection()
-            AlertSettingsSection()
-            RefreshSettingsSection()
-            SidebarSettingsSection()
-            ControlPlaneSettingsSection()
-            GuardConfigurationSection()
-            KeyboardSettingsSection()
-            DiagnosticsSettingsSection()
+enum SettingsSection: String, CaseIterable, Identifiable {
+    case general
+    case menuBar
+    case sidebar
+    case keyboard
+    case alerts
+    case refresh
+    case controlPlane
+    case guardConfig
+    case diagnostics
+    case about
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .general: "General"
+        case .menuBar: "Menu bar & Dock"
+        case .sidebar: "Sidebar"
+        case .keyboard: "Keyboard"
+        case .alerts: "Alerts"
+        case .refresh: "Refresh"
+        case .controlPlane: "Control Plane"
+        case .guardConfig: "Guard"
+        case .diagnostics: "Diagnostics"
+        case .about: "About & Help"
         }
-        .formStyle(.grouped)
+    }
+    var systemImage: String {
+        switch self {
+        case .general: "gearshape"
+        case .menuBar: "macwindow"
+        case .sidebar: "sidebar.left"
+        case .keyboard: "keyboard"
+        case .alerts: "bell.badge"
+        case .refresh: "arrow.clockwise"
+        case .controlPlane: "terminal"
+        case .guardConfig: "shield.lefthalf.filled"
+        case .diagnostics: "stethoscope"
+        case .about: "questionmark.circle"
+        }
+    }
+}
+
+/// Sidebar Settings pane (⌘9): left rail + scrollable single page.
+/// All sections are visible in one `ScrollView` (so you can see everything)
+/// and the left rail is a jump list — click to scroll to a section, and
+/// scrolling the page updates the highlighted rail item (scroll-spy).
+///
+/// Scroll-spy is intentionally robust: it tracks minY for every row and picks
+/// the section whose top has most recently passed a small viewport threshold.
+/// A 100ms hold prevents fast flapping from reversing the highlight.
+struct AppSettingsView: View {
+    @State private var selected: SettingsSection = .general
+    @State private var isProgrammaticScroll = false
+    @State private var pendingCandidate: SettingsSection?
+    @State private var pendingWorkItem: DispatchWorkItem?
+
+    var body: some View {
+        NavigationSplitView {
+            List(selection: $selected) {
+                ForEach(SettingsSection.allCases) { sec in
+                    Label(sec.title, systemImage: sec.systemImage)
+                        .tag(sec)
+                }
+            }
+            .listStyle(.sidebar)
+            .navigationTitle("Settings")
+            .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
+        } detail: {
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: true) {
+                    VStack(alignment: .leading, spacing: 22) {
+                        ForEach(SettingsSection.allCases) { sec in
+                            SettingsDetailRow(sec: sec, proxy: proxy)
+                                .id(sec)
+                                .background {
+                                    GeometryReader { geo in
+                                        Color.clear
+                                            .preference(key: SectionTopPreferenceKey.self,
+                                                      value: [sec: geo.frame(in: .named("AppSettingsScroll")).minY])
+                                    }
+                                }
+                        }
+                    }
+                    .padding(16)
+                }
+                .coordinateSpace(name: "AppSettingsScroll")
+                .background {
+                    Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: Notification.Name("OpenSettingsToAbout"))) { _ in
+                    selected = .about
+                }
+                .onPreferenceChange(SectionTopPreferenceKey.self) { offsets in
+                    guard !isProgrammaticScroll else { return }
+                    guard !offsets.isEmpty else { return }
+                    // The active section is the one whose top has most recently
+                    // moved past 70pt from the viewport top. Among all rows with
+                    // minY <= 70, the largest minY is the current one — even if
+                    // scrolled far, earlier rows are far negative.
+                    let eligible = offsets.filter { $0.value <= 70 }
+                    guard let best = eligible.max(by: { $0.value < $1.value })?.key else { return }
+                    guard best != selected else { return }
+
+                    // Hold 80ms to debounce fast scroll — prevents the rail
+                    // reversing when the user flicks past two sections.
+                    pendingWorkItem?.cancel()
+                    pendingCandidate = best
+                    let work = DispatchWorkItem {
+                        // Don't apply stale candidates that were superseded.
+                        if pendingCandidate == best, !isProgrammaticScroll {
+                            withAnimation(.easeOut(duration: 0.12)) { selected = best }
+                        }
+                        pendingCandidate = nil
+                    }
+                    pendingWorkItem = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
+                }
+                .onChange(of: selected) { _, newValue in
+                    pendingWorkItem?.cancel()
+                    pendingCandidate = nil
+                    // Clicking the rail jumps the page; suppress spy for the animation window.
+                    isProgrammaticScroll = true
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        proxy.scrollTo(newValue, anchor: .top)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                        isProgrammaticScroll = false
+                    }
+                }
+            }
+            .navigationTitle(selected.title)
+        }
+        .frame(minWidth: 680, minHeight: 520)
+    }
+}
+
+private struct SectionTopPreferenceKey: PreferenceKey {
+    static let defaultValue: [SettingsSection: CGFloat] = [:]
+    static func reduce(value: inout [SettingsSection: CGFloat], nextValue: () -> [SettingsSection: CGFloat]) {
+        for (k, v) in nextValue() { value[k] = v }
+    }
+}
+
+private struct SettingsDetailRow: View {
+    let sec: SettingsSection
+    let proxy: ScrollViewProxy
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            switch sec {
+            case .general: GeneralSettingsSection()
+            case .menuBar: MenuBarDockSettingsSection()
+            case .sidebar: SidebarSettingsSection()
+            case .keyboard: KeyboardSettingsSection()
+            case .alerts: AlertSettingsSection()
+            case .refresh: RefreshSettingsSection()
+            case .controlPlane: ControlPlaneSettingsSection()
+            case .guardConfig: GuardConfigurationSection()
+            case .diagnostics: DiagnosticsSettingsSection()
+            case .about: HelpView()
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PressureTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(PressureTheme.hairline, lineWidth: 1)
+        )
     }
 }
 

@@ -86,28 +86,35 @@ public enum PressureFormat {
     }
 
     /// Adaptive UI poll interval mirroring resident cadence philosophy.
+    /// Tuned lower for idle CPU — spikes only matter at red/critical.
     public static func pollInterval(for level: PressureLevel, profile: RefreshProfile = .default) -> TimeInterval {
         let base: TimeInterval
         switch level {
-        case .critical: base = 5
-        case .red: base = 8
-        case .warning: base = 12
-        case .normal, .unknown: base = 20
+        case .critical: base = 6
+        case .red: base = 11
+        case .warning: base = 18
+        case .normal, .unknown: base = 30
         }
         return profile.scaled(base)
     }
 
     /// Disk Writes pane: one bounded live sample per interval while visible.
-    public static let diskFocusPollInterval: TimeInterval = 15
+    public static let diskFocusPollInterval: TimeInterval = 30
+
+    /// Idle/visibility backoff — app sleeps 60s when never visible
+    public static let boardIdleBackoffInterval: TimeInterval = 60
+
+    /// History freshness threshold for diskWrites — 600s halves IO vs 300s.
+    public static let diskHistoryFreshInterval: TimeInterval = 600
 
     /// Cadence while the main window is closed. The menu-bar extra outlives the
     /// window by design, so its gauge must keep moving — but nothing else is on
     /// screen, so this is deliberately far slower than the windowed ladder.
     public static let menuBarOnlyPollInterval: TimeInterval = 60
 
-    public static let workFocusBusyPollInterval: TimeInterval = 2.5
-    public static let workFocusIdlePollInterval: TimeInterval = 10
-    public static let workFocusSuspendedCheckInterval: TimeInterval = 30
+    public static let workFocusBusyPollInterval: TimeInterval = 4.5
+    public static let workFocusIdlePollInterval: TimeInterval = 18
+    public static let workFocusSuspendedCheckInterval: TimeInterval = 45
 
     /// Work Queue focus cadence: near-live for active work, lower churn when
     /// empty, and no CLI refresh while the interface is inactive.

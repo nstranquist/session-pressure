@@ -178,9 +178,9 @@ struct CoreTests {
         #expect(PressureFormat.duration(seconds: 3700).contains("h"))
         #expect(PressureFormat.shortSession("019f5946-2c91-7653-99a4-ef51389e84b3").hasSuffix("…"))
         #expect(PressureFormat.pollInterval(for: .critical) < PressureFormat.pollInterval(for: .normal))
-        #expect(PressureFormat.workFocusPollInterval(queueDepth: 1, leaseCount: 0, interfaceActive: true) == 2.5)
-        #expect(PressureFormat.workFocusPollInterval(queueDepth: 0, leaseCount: 0, interfaceActive: true) == 10)
-        #expect(PressureFormat.workFocusPollInterval(queueDepth: 4, leaseCount: 1, interfaceActive: false) == 30)
+        #expect(PressureFormat.workFocusPollInterval(queueDepth: 1, leaseCount: 0, interfaceActive: true) == PressureFormat.workFocusBusyPollInterval)
+        #expect(PressureFormat.workFocusPollInterval(queueDepth: 0, leaseCount: 0, interfaceActive: true) == PressureFormat.workFocusIdlePollInterval)
+        #expect(PressureFormat.workFocusPollInterval(queueDepth: 4, leaseCount: 1, interfaceActive: false) == PressureFormat.workFocusSuspendedCheckInterval)
         #expect(PressureFormat.shortOperationID("abcdef0123456789") == "abcdef01…")
         #expect(PressureFormat.shortDigest("sha256:d1119227a47498786bab382f0c3011f82bf9d13fa52fe6e455b6b3ba232941aa").hasPrefix("sha256:"))
     }

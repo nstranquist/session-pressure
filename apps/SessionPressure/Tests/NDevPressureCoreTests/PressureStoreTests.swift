@@ -7,6 +7,56 @@ import Testing
 @Suite("Pressure store work lifecycle")
 @MainActor
 struct PressureStoreTests {
+    @Test("notifications can be dismissed after viewing")
+    func notificationsDismissAfterView() {
+        let store = PressureStore()
+        store.board.snapshot.level = .warning
+        #expect(store.notifications.map(\.id).contains("pressure-warning"))
+        #expect(store.notificationCount > 0)
+
+        store.dismissNotification(id: "pressure-warning")
+        #expect(!store.notifications.map(\.id).contains("pressure-warning"))
+        // Still dismissed even though board still warns
+        #expect(store.board.level == .warning)
+
+        store.board.snapshot.level = .red
+        #expect(store.notifications.map(\.id).contains("pressure-red"))
+        #expect(!store.notifications.map(\.id).contains("pressure-warning"))
+
+        store.dismissAllNotifications()
+        #expect(store.notificationCount == 0)
+    }
+
+    @Test("back navigation pushes history and pops on goBack")
+    func backNavigationHistory() {
+        let store = PressureStore()
+        #expect(store.canGoBack == false)
+        #expect(store.navigationHistory.isEmpty)
+
+        store.selectedSection = .policy
+        #expect(store.canGoBack == true)
+        #expect(store.backDestination == .overview)
+        #expect(store.navigationHistory == [.overview])
+
+        store.selectedSection = .monitor
+        #expect(store.navigationHistory == [.overview, .policy])
+        #expect(store.backDestination == .policy)
+
+        store.goBack()
+        #expect(store.selectedSection == .policy)
+        #expect(store.navigationHistory == [.overview])
+        #expect(store.backDestination == .overview)
+
+        store.goBack()
+        #expect(store.selectedSection == .overview)
+        #expect(store.canGoBack == false)
+        #expect(store.navigationHistory.isEmpty)
+
+        // Extra goBack is no-op
+        store.goBack()
+        #expect(store.selectedSection == .overview)
+    }
+
     @Test("cached missing advisor does not publish an unchanged empty brief")
     func missingAdvisorDoesNotInvalidateEveryPoll() async throws {
         let client = try NDevPressureClient(binaryPath: "/usr/bin/false", advisorBinaryPath: "/usr/bin/false", environment: ["NDEV_PRESSURE_API_SOCKET": "/absent-pressure-advisor-test.sock"])
@@ -61,16 +111,54 @@ struct PressureStoreTests {
         store.setApplicationActive(false)
         store.selectedSection = .work
         #expect(store.workFocusPollActive == false)
-        #expect(store.workFocusPollInterval == 30)
+        #expect(store.workFocusPollInterval == PressureFormat.workFocusSuspendedCheckInterval)
 
         store.setApplicationActive(true)
         #expect(store.workFocusPollActive == true)
-        #expect(store.workFocusPollInterval == 10)
+        #expect(store.workFocusPollInterval == PressureFormat.workFocusIdlePollInterval)
 
         store.setWindowVisible(false)
         #expect(store.workFocusPollActive == false)
-        #expect(store.workFocusPollInterval == 30)
+        #expect(store.workFocusPollInterval == PressureFormat.workFocusSuspendedCheckInterval)
         store.stop()
+    }
+
+    @Test("board poll backs off when window is not visible or app is inactive")
+    func boardPollBackoffWhenInactive() {
+        let store = PressureStore()
+        store.setWindowOpen(true)
+        store.setWindowVisible(true)
+        store.setApplicationActive(true)
+        store.board.snapshot.level = .normal
+        #expect(store.boardPollInterval == PressureFormat.pollInterval(for: .normal, profile: store.refreshProfile))
+        #expect(store.boardPollInterval == 30)
+        store.board.snapshot.level = .warning
+        #expect(store.boardPollInterval == PressureFormat.pollInterval(for: .warning, profile: store.refreshProfile))
+        store.setWindowVisible(false)
+        #expect(store.boardPollInterval == store.refreshProfile.scaled(PressureFormat.menuBarOnlyPollInterval))
+        store.setWindowVisible(true)
+        store.setApplicationActive(false)
+        #expect(store.boardPollInterval == store.refreshProfile.scaled(PressureFormat.menuBarOnlyPollInterval))
+        store.setApplicationActive(true)
+        store.setWindowVisible(true)
+        store.setWindowOpen(false)
+        #expect(store.boardPollInterval == store.refreshProfile.scaled(PressureFormat.menuBarOnlyPollInterval))
+        store.stop()
+    }
+
+    @Test("poll intervals are tuned for low idle CPU")
+    func pollIntervalsAreOptimized() {
+        #expect(PressureFormat.pollInterval(for: .normal) == 30)
+        #expect(PressureFormat.pollInterval(for: .warning) == 18)
+        #expect(PressureFormat.pollInterval(for: .red) == 11)
+        #expect(PressureFormat.pollInterval(for: .critical) == 6)
+        #expect(PressureFormat.workFocusBusyPollInterval == 4.5)
+        #expect(PressureFormat.workFocusIdlePollInterval == 18)
+        #expect(PressureFormat.workFocusSuspendedCheckInterval == 45)
+        #expect(PressureFormat.diskFocusPollInterval == 30)
+        #expect(PressureFormat.diskHistoryFreshInterval == 600)
+        #expect(PressureFormat.menuBarOnlyPollInterval == 60)
+        #expect(PressureFormat.boardIdleBackoffInterval == 60)
     }
 
     @Test("disk focus polling exists only while its pane is visible and active")

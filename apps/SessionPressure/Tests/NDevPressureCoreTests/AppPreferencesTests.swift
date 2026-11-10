@@ -130,11 +130,11 @@ struct AppPreferencesTests {
 struct RefreshProfileTests {
     @Test("adaptive equals the historical cadence")
     func adaptiveUnchanged() {
-        #expect(PressureFormat.pollInterval(for: .critical, profile: .adaptive) == 5)
-        #expect(PressureFormat.pollInterval(for: .red, profile: .adaptive) == 8)
-        #expect(PressureFormat.pollInterval(for: .warning, profile: .adaptive) == 12)
-        #expect(PressureFormat.pollInterval(for: .normal, profile: .adaptive) == 20)
-        #expect(PressureFormat.workFocusPollInterval(queueDepth: 1, leaseCount: 0, interfaceActive: true, profile: .adaptive) == 2.5)
+        #expect(PressureFormat.pollInterval(for: .critical, profile: .adaptive) == 6)
+        #expect(PressureFormat.pollInterval(for: .red, profile: .adaptive) == 11)
+        #expect(PressureFormat.pollInterval(for: .warning, profile: .adaptive) == 18)
+        #expect(PressureFormat.pollInterval(for: .normal, profile: .adaptive) == 30)
+        #expect(PressureFormat.workFocusPollInterval(queueDepth: 1, leaseCount: 0, interfaceActive: true, profile: .adaptive) == 4.5)
     }
 
     @Test("slower profiles scale and stay bounded", arguments: RefreshProfile.allCases)
@@ -146,7 +146,7 @@ struct RefreshProfileTests {
         }
         #expect(profile.scaled(PressureFormat.menuBarOnlyPollInterval) <= RefreshProfile.maximumInterval)
         // Suspended work-focus checks are not scaled: they only wake to re-check visibility.
-        #expect(PressureFormat.workFocusPollInterval(queueDepth: 1, leaseCount: 1, interfaceActive: false, profile: profile) == 30)
+        #expect(PressureFormat.workFocusPollInterval(queueDepth: 1, leaseCount: 1, interfaceActive: false, profile: profile) == PressureFormat.workFocusSuspendedCheckInterval)
         #expect(PressureFormat.cadenceSummary(profile).contains("Menu bar only"))
     }
 }
