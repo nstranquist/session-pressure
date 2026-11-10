@@ -217,9 +217,20 @@ final class PressureStore: ObservableObject {
     @Published var diskHealth: DiskHealthSnapshot?
     @Published var diskHealthError: String?
     @Published var board = PressureBoard()
+
+    /// Back-stack for card-initiated navigation (Overview → detail and back).
+    /// Rendered as a fixed 28×28 overlay so enabling/disabling never shifts layout.
+    @Published private(set) var navigationHistory: [Section] = []
+    private var isNavigatingBack = false
+
     @Published var selectedSection: Section = .overview {
         didSet {
             guard selectedSection != oldValue else { return }
+            if !isNavigatingBack && oldValue != selectedSection {
+                navigationHistory.append(oldValue)
+                if navigationHistory.count > 20 { navigationHistory.removeFirst() }
+            }
+            isNavigatingBack = false
             UserDefaults.standard.set(selectedSection.rawValue, forKey: AppPreferenceKey.lastPane)
             Task { await refresh(live: false, light: false) }
             if selectedSection == .dayGate { Task { await refreshAdvisorBrief(force: false) } }
@@ -321,13 +332,111 @@ final class PressureStore: ObservableObject {
     /// The main window can close while the app keeps running for its menu-bar
     /// extra. Board polling must survive that, at a slower cadence.
     private var windowOpen = true
+    private var lastFullStatusRefresh: Date? = nil
+    @Published private(set) var dismissedNotificationIDs: Set<String> = []
+
+    private static let fullStatusMaxAge: TimeInterval = 90
 
     init(client: NDevPressureClient? = nil) {
         self.client = client
     }
 
+    struct NotificationItem: Identifiable, Hashable {
+        var id: String
+        var title: String
+        var detail: String?
+        var severity: PressureLevel
+        var systemImage: String
+        var section: Section?
+    }
+
     var binaryPath: String { client?.binaryPath ?? board.binaryPath }
     var advisorBinaryPath: String? { client?.advisorBinaryPath }
+
+    private var activeNotificationIDs: Set<String> {
+        var ids = Set<String>()
+        if lastError != nil, !(lastError?.isEmpty ?? true) { ids.insert("error") }
+        if board.level == .warning || board.level == .red || board.level == .critical { ids.insert("pressure-\(board.level.rawValue)") }
+        if let admission = board.admission, !admission.allowed { ids.insert("admission-blocked") }
+        if residueCount > 0 { ids.insert("residue-\(residueCount)") }
+        if let briefError = advisorBriefError, !briefError.isEmpty { ids.insert("advisor-error") }
+        if let doctor = board.doctor, !doctor.fixes.isEmpty, !(doctor.ok ?? false) { ids.insert("doctor-\(doctor.fixes.count)") }
+        if let storage = board.snapshot.storage as StorageSnapshot?, storage.level == .warning || storage.level == .red || storage.level == .critical { ids.insert("storage-\(storage.level.rawValue)") }
+        if let healthError = diskHealthError, !healthError.isEmpty { ids.insert("disk-health-error") }
+        return ids
+    }
+
+    /// Active alerts surfaced by the top-right notification bell.
+    /// Dismissed IDs are filtered so viewing/clicking silences the bell
+    /// even while the underlying host condition persists; a new ID
+    /// (level change, residue change) re-alerts.
+    var notifications: [NotificationItem] {
+        var items: [NotificationItem] = []
+        if let error = lastError, !error.isEmpty {
+            items.append(NotificationItem(id: "error", title: error, detail: "Tap to dismiss", severity: .warning, systemImage: "exclamationmark.triangle.fill", section: nil))
+        }
+        if board.level == .warning || board.level == .red || board.level == .critical {
+            let reason = board.snapshot.reasons.first ?? board.level.displayName
+            items.append(NotificationItem(id: "pressure-\(board.level.rawValue)", title: "\(board.level.displayName) pressure", detail: reason, severity: board.level, systemImage: "gauge.with.dots.needle.67percent", section: .overview))
+        }
+        if let admission = board.admission, !admission.allowed {
+            items.append(NotificationItem(id: "admission-blocked", title: "Launches blocked", detail: admission.source ?? "Admission closed at current pressure", severity: .red, systemImage: "xmark.seal.fill", section: .overview))
+        }
+        if residueCount > 0 {
+            items.append(NotificationItem(id: "residue-\(residueCount)", title: "\(residueCount) residue \(residueCount == 1 ? "item" : "items") today", detail: "Day Gate needs review", severity: .warning, systemImage: "calendar.badge.exclamationmark", section: .dayGate))
+        }
+        if let briefError = advisorBriefError, !briefError.isEmpty {
+            items.append(NotificationItem(id: "advisor-error", title: "Day Gate brief unavailable", detail: briefError, severity: .warning, systemImage: "questionmark.circle", section: .dayGate))
+        }
+        if let doctor = board.doctor, !doctor.fixes.isEmpty, !(doctor.ok ?? false) {
+            items.append(NotificationItem(id: "doctor-\(doctor.fixes.count)", title: "\(doctor.fixes.count) doctor \(doctor.fixes.count == 1 ? "fix" : "fixes") suggested", detail: doctor.fixes.first, severity: .warning, systemImage: "stethoscope", section: .overview))
+        }
+        if let storage = board.snapshot.storage as StorageSnapshot?, storage.level == .warning || storage.level == .red || storage.level == .critical {
+            items.append(NotificationItem(id: "storage-\(storage.level.rawValue)", title: "Storage \(storage.level.displayName.lowercased())", detail: storage.reasons.first ?? storage.error ?? "\(PressureFormat.bytes(storage.availableBytes)) free", severity: storage.level, systemImage: "internaldrive", section: .diskWrites))
+        }
+        if let healthError = diskHealthError, !healthError.isEmpty {
+            items.append(NotificationItem(id: "disk-health-error", title: "Disk health probe failed", detail: healthError, severity: .warning, systemImage: "exclamationmark.triangle.fill", section: .storage))
+        }
+        // Filter dismissed — no mutation inside the getter to avoid publishing loops.
+        return items.filter { !dismissedNotificationIDs.contains($0.id) }
+    }
+
+    var notificationCount: Int { notifications.count }
+
+    func dismissNotification(id: String) {
+        dismissedNotificationIDs.insert(id)
+        // Prune stale IDs that are no longer active so the set stays bounded.
+        let active = activeNotificationIDs
+        dismissedNotificationIDs = dismissedNotificationIDs.intersection(active)
+        if id == "error" { lastError = nil }
+        objectWillChange.send()
+    }
+
+    func dismissAllNotifications() {
+        let ids = notifications.map(\.id)
+        if !ids.isEmpty {
+            dismissedNotificationIDs.formUnion(ids)
+            objectWillChange.send()
+        }
+    }
+
+    func markNotificationsViewed() {
+        dismissAllNotifications()
+    }
+
+    var canGoBack: Bool { !navigationHistory.isEmpty }
+    var backDestination: Section? { navigationHistory.last }
+
+    func goBack() {
+        guard let last = navigationHistory.popLast() else { return }
+        isNavigatingBack = true
+        selectedSection = last
+    }
+
+    func clearNavigationHistory() {
+        navigationHistory.removeAll()
+        objectWillChange.send()
+    }
 
     var workFocusPollActive: Bool {
         selectedSection == .work && workFocusTask != nil && interfaceAllowsFocusedRefresh
@@ -544,7 +653,7 @@ final class PressureStore: ObservableObject {
                 guard !Task.isCancelled, gen == self.diskFocusGeneration else { return }
                 guard self.selectedSection == .diskWrites else { return }
                 if self.interfaceAllowsFocusedRefresh {
-                    let historyStale = self.diskHistoryLoadedAt.map { Date().timeIntervalSince($0) > 300 } ?? true
+                    let historyStale = self.diskHistoryLoadedAt.map { Date().timeIntervalSince($0) > PressureFormat.diskHistoryFreshInterval } ?? true
                     await self.refreshDiskWrites(live: true, includeHistory: historyStale)
                 }
                 refreshImmediately = false
@@ -608,18 +717,23 @@ final class PressureStore: ObservableObject {
                     previous: board
                 )
             } else {
-                let richStatus = selectedSection == .overview || selectedSection == .trees || selectedSection == .monitor
+                let wantsFull = selectedSection == .overview || selectedSection == .trees || selectedSection == .monitor
+                let lastFullAge = lastFullStatusRefresh.map { Date().timeIntervalSince($0) } ?? .infinity
+                let needsFull = wantsFull && (lastFullAge > Self.fullStatusMaxAge || board.snapshot.topAgentTrees.isEmpty || board.coverage == nil)
                 board = try await client.refreshBoard(
                     live: live,
                     includeIdle: selectedSection == .storage && storageTab == .idle,
                     includeTelemetry: selectedSection == .telemetry,
-                    fullStatus: richStatus,
+                    fullStatus: needsFull,
                     includePolicy: board.policy == nil || selectedSection == .policy || selectedSection == .settings,
-                    includeMonitor: board.launchd == nil || selectedSection == .monitor || selectedSection == .settings,
-                    includeDoctor: selectedSection == .overview || selectedSection == .monitor,
+                    includeMonitor: board.launchd == nil || selectedSection == .monitor || selectedSection == .settings || (board.coverage == nil && wantsFull && lastFullAge > Self.fullStatusMaxAge),
+                    includeDoctor: (selectedSection == .overview || selectedSection == .monitor) && (board.doctor == nil || lastFullAge > Self.fullStatusMaxAge),
                     includeCalibration: selectedSection == .overview || selectedSection == .work || selectedSection == .telemetry,
                     previous: board
                 )
+                if needsFull {
+                    lastFullStatusRefresh = Date()
+                }
             }
             let errors = board.sectionErrors.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }.joined(separator: "; ")
             let nextError: String? = errors.isEmpty ? nil : errors

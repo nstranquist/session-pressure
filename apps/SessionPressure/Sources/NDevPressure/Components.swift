@@ -359,6 +359,242 @@ struct EmptyHint: View {
     }
 }
 
+// MARK: - Back navigation (fixed slot, no layout jump)
+
+/// Always reserves 28×28 so enabling/disabling never shifts neighbours.
+/// Placed in the toolbar's trailing group before the bell; opacity 0 keeps
+/// the slot when at the root (Overview).
+struct BackButton: View {
+    @EnvironmentObject private var store: PressureStore
+
+    var body: some View {
+        Button {
+            store.goBack()
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(store.canGoBack ? Color.primary : Color.secondary.opacity(0.35))
+                .frame(width: 28, height: 28)
+                .background(Color.primary.opacity(store.canGoBack ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(store.canGoBack ? PressureTheme.hairline : Color.clear, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(!store.canGoBack)
+        .opacity(store.canGoBack ? 1 : 0)
+        .animation(.easeInOut(duration: 0.15), value: store.canGoBack)
+        .help(backHelp)
+        .accessibilityLabel("Back")
+        .accessibilityValue(store.backDestination?.rawValue ?? "Root")
+        .accessibilityHint(store.canGoBack ? "Go back to \(store.backDestination?.rawValue ?? "")" : "Root of navigation")
+        .keyboardShortcut("[", modifiers: [.command])
+    }
+
+    private var backHelp: String {
+        if let dest = store.backDestination {
+            return "Back to \(dest.rawValue) (⌘[)"
+        }
+        return "At root — no back history"
+    }
+}
+
+// MARK: - Notification bell (top-right)
+
+struct NotificationBell: View {
+    @EnvironmentObject private var store: PressureStore
+    @State private var showingPopover = false
+    @State private var popoverIDs: Set<String> = []
+
+    var body: some View {
+        Button {
+            if !showingPopover {
+                popoverIDs = Set(store.notifications.map(\.id))
+            }
+            showingPopover.toggle()
+            if showingPopover {
+                // Marking viewed happens on dismiss so the list stays visible while open.
+            } else {
+                // Dismiss after viewing — clears badge even though the host condition persists.
+                if !popoverIDs.isEmpty {
+                    for id in popoverIDs { store.dismissNotification(id: id) }
+                    popoverIDs.removeAll()
+                }
+            }
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: store.notificationCount > 0 ? "bell.badge.fill" : "bell")
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(store.notificationCount > 0 ? PressureTheme.levelColor(worstSeverity) : .primary)
+                    .symbolRenderingMode(store.notificationCount > 0 ? .multicolor : .monochrome)
+
+                if store.notificationCount > 0 {
+                    Text("\(store.notificationCount)")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 14, minHeight: 14)
+                        .background(PressureTheme.levelColor(worstSeverity), in: Capsule())
+                        .offset(x: 7, y: -6)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(helpText)
+        .accessibilityLabel("Notifications")
+        .accessibilityValue(store.notificationCount > 0 ? "\(store.notificationCount) active" : "No notifications")
+        .popover(isPresented: $showingPopover) {
+            NotificationPopoverBody()
+                .environmentObject(store)
+                .frame(width: 320)
+        }
+        .onChange(of: showingPopover) { _, isShowing in
+            if !isShowing && !popoverIDs.isEmpty {
+                for id in popoverIDs { store.dismissNotification(id: id) }
+                popoverIDs.removeAll()
+            }
+        }
+        .onAppear {
+            // Ensure dismissed set reflects current store; no-op.
+        }
+        .animation(.easeInOut(duration: 0.18), value: store.notificationCount)
+    }
+
+    private var worstSeverity: PressureLevel {
+        store.notifications.map(\.severity).max() ?? .normal
+    }
+
+    private var helpText: String {
+        if store.notificationCount == 0 {
+            return "No active alerts. Pressure is normal."
+        }
+        let titles = store.notifications.map(\.title).joined(separator: " · ")
+        return "\(store.notificationCount) active \(store.notificationCount == 1 ? "alert" : "alerts")\n\(titles)\n\nClick for details."
+    }
+}
+
+struct NotificationPopoverBody: View {
+    @EnvironmentObject private var store: PressureStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Notifications")
+                    .font(.headline)
+                Spacer()
+                if store.notificationCount > 0 {
+                    Text("\(store.notificationCount)")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(PressureTheme.levelColor(maxSeverity), in: Capsule())
+                        .foregroundStyle(.white)
+                }
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Close")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            if store.notifications.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.title2)
+                        .foregroundStyle(PressureTheme.levelColor(.normal))
+                    Text("All clear")
+                        .font(.callout.weight(.medium))
+                    Text("No active pressure, admission, or Day Gate alerts.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 90)
+                .padding(12)
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(store.notifications) { item in
+                            NotificationRow(item: item) {
+                                if let section = item.section {
+                                    store.selectedSection = section
+                                }
+                                // Explicit per-item dismissal on click; onDismiss also clears viewed set.
+                                store.dismissNotification(id: item.id)
+                                if item.id == "error" {
+                                    store.lastError = nil
+                                }
+                                dismiss()
+                            }
+                            if item.id != store.notifications.last?.id {
+                                Divider().opacity(0.4).padding(.horizontal, 12)
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 340)
+            }
+        }
+        .background(PressureTheme.card)
+    }
+
+    private var maxSeverity: PressureLevel {
+        store.notifications.map(\.severity).max() ?? .normal
+    }
+}
+
+private struct NotificationRow: View {
+    let item: PressureStore.NotificationItem
+    var onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: item.systemImage)
+                    .font(.callout)
+                    .foregroundStyle(PressureTheme.levelColor(item.severity))
+                    .frame(width: 20, alignment: .center)
+                    .padding(.top, 1)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.title)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(2)
+                    if let detail = item.detail, !detail.isEmpty {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                if item.section != nil {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 2)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(item.title)
+    }
+}
+
 // MARK: - Capacity bar
 
 struct CapacityBar: View {

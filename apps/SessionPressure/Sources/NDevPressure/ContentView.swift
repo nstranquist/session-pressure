@@ -152,7 +152,18 @@ struct ContentView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        // Back sits on the leading edge (left) where macOS puts navigation — not
+        // buried in the trailing group next to the bell. It reserves its 28×28
+        // slot always (opacity 0 at root) so appearing never nudges the trailing items.
+        ToolbarItem(placement: .navigation) {
+            BackButton()
+                .environmentObject(store)
+        }
+
         ToolbarItemGroup(placement: .primaryAction) {
+            NotificationBell()
+                .environmentObject(store)
+
             if let at = store.selectedSection == .hetzner ? hetzner.ledgerCheckedAt : store.selectedSectionRefreshedAt {
                 ReadAgeView(date: at)
                     .font(.caption.monospacedDigit())
@@ -188,7 +199,10 @@ struct ContentView: View {
                 }
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 13, weight: .medium))
             }
+            .buttonStyle(.plain)
             .disabled(store.selectedSection == .hetzner ? hetzner.refreshing : store.isRefreshing)
             .keyboardShortcut("r", modifiers: [.command])
             .help(PressureHelp.refresh + " (⌘R)")
@@ -198,11 +212,27 @@ struct ContentView: View {
                 Task { await store.refresh(live: true, light: false) }
             } label: {
                 Label("Live sample", systemImage: "bolt.horizontal.circle")
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 13, weight: .medium))
             }
+            .buttonStyle(.plain)
             .disabled(store.isRefreshing)
             .keyboardShortcut("r", modifiers: [.command, .shift])
             .help(PressureHelp.liveSample + " (⌘⇧R)")
             }
+
+            // Help sits farthest right — not buried next to the bell.
+            Button {
+                store.selectedSection = .settings
+                NotificationCenter.default.post(name: Notification.Name("OpenSettingsToAbout"), object: nil)
+            } label: {
+                Image(systemName: "questionmark.circle")
+                    .font(.system(size: 15, weight: .regular))
+            }
+            .buttonStyle(.plain)
+            .help("About & Help — guide, wiki and search (inside Settings)")
+            .accessibilityLabel("About and Help")
+            .accessibilityHint("Open help inside Settings")
         }
     }
 

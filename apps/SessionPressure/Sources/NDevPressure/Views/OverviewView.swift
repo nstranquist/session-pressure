@@ -226,7 +226,8 @@ struct OverviewView: View {
                 subtitle: "of \(PressureFormat.mb(snap.physicalMemoryMB))",
                 accent: freeAccent,
                 progress: Double(100 - snap.freePercent) / 100,
-                help: PressureHelp.freeMemory
+                help: PressureHelp.freeMemory + " Click to open Policy thresholds (⌘6).",
+                action: { store.selectedSection = .policy }
             )
             MetricCard(
                 title: "Host CPU",
@@ -234,14 +235,16 @@ struct OverviewView: View {
                 subtitle: snap.hostCPUAvailable ? "\(snap.logicalCPUCount) logical cores" : "CPU probe unavailable",
                 accent: cpuAccent,
                 progress: min(1, snap.hostCPUPercent / 100),
-                help: PressureHelp.hostCPU
+                help: PressureHelp.hostCPU + " Click to open Monitor (⌘7).",
+                action: { store.selectedSection = .monitor }
             )
             MetricCard(
                 title: "Memory momentum",
                 value: snap.memoryMomentum.displayName,
                 subtitle: memoryMomentumSubtitle,
                 accent: memoryMomentumAccent,
-                help: PressureHelp.memoryMomentum
+                help: PressureHelp.memoryMomentum + " Click to open Telemetry (⌘8).",
+                action: { store.selectedSection = .telemetry }
             )
             MetricCard(
                 title: "Storage available",
@@ -257,7 +260,8 @@ struct OverviewView: View {
                 value: PressureFormat.mb(snap.swapUsedMB),
                 subtitle: swapSubtitle,
                 accent: PressureTheme.levelColor(swapLevel),
-                help: PressureHelp.swap
+                help: PressureHelp.swap + " Click to open Policy thresholds (⌘6).",
+                action: { store.selectedSection = .policy }
             )
             MetricCard(
                 title: "Agent RSS sum",
@@ -265,21 +269,24 @@ struct OverviewView: View {
                 subtitle: "\(snap.agentTreeCount) trees · \(snap.processCount) procs",
                 accent: PressureTheme.levelColor(snap.agentRSSSumMB >= 11264 ? .red : snap.agentRSSSumMB >= 8192 ? .warning : .normal),
                 progress: min(1, snap.agentRSSSumMB / 13312),
-                help: PressureHelp.agentRSS
+                help: PressureHelp.agentRSS + " Click to open Agent Trees (⌘2).",
+                action: { store.selectedSection = .trees }
             )
             MetricCard(
                 title: "Guard RSS",
                 value: PressureFormat.mb(snap.guardRSSMB),
                 subtitle: snap.guardBudgetOK ? "budget ok · \(snap.guardRole ?? "—")" : "budget breach",
                 accent: snap.guardBudgetOK ? PressureTheme.levelColor(.normal) : PressureTheme.levelColor(.red),
-                help: PressureHelp.guardRSS
+                help: PressureHelp.guardRSS + " Click to open Monitor (⌘7).",
+                action: { store.selectedSection = .monitor }
             )
             MetricCard(
                 title: "Sample cost",
                 value: String(format: "%.0f ms", snap.sampleDurationMS),
                 subtitle: "cpu \(String(format: "%.1f", snap.sampleCPUTimeMS)) ms",
                 accent: .secondary,
-                help: PressureHelp.sampleCost
+                help: PressureHelp.sampleCost + " Click to open Monitor (⌘7).",
+                action: { store.selectedSection = .monitor }
             )
         }
     }
