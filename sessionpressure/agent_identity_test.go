@@ -3,6 +3,7 @@ package sessionpressure
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -289,14 +290,88 @@ func TestPeekSessionHintsServesStaleWhileRevalidate(t *testing.T) {
 	t.Cleanup(ResetSessionOwnershipHintCache)
 	dir := t.TempDir()
 	catalog := CompileAgentIdentityCatalog(DefaultAgentIdentityRules())
-	sessionHintMu.Lock()
-	sessionHintCacheDir = dir
-	sessionHintCacheAt = time.Now().Add(-time.Minute)
-	sessionHintCacheData = []SessionOwnershipHint{{SessionID: "s1", Agent: "grok"}}
-	sessionHintMu.Unlock()
-	got := peekSessionOwnershipHints(dir, catalog)
+	residentSessionHints.Lock()
+	residentSessionHints.key = dir + "\x00s1"
+	residentSessionHints.at = time.Now().Add(-time.Minute)
+	residentSessionHints.hints = []SessionOwnershipHint{{SessionID: "s1", Agent: "grok"}}
+	residentSessionHints.Unlock()
+	got := peekSessionOwnershipHints(dir, catalog, []string{"s1"})
 	if len(got) != 1 || got[0].SessionID != "s1" || got[0].Agent != "grok" {
 		t.Fatalf("expired cache must still be served: %+v", got)
+	}
+}
+
+func TestLiveSessionHintIDsAreBoundedAndSafe(t *testing.T) {
+	processes := []Process{{SessionID: "../escape"}, {SessionID: "live"}, {SessionID: "live"}, {Command: "opaque --session 019f5be0-7d38-7271-ba7d-8ade4a407bf0"}}
+	ids := liveSessionHintIDs(processes)
+	if len(ids) != 2 || ids[0] != "019f5be0-7d38-7271-ba7d-8ade4a407bf0" || ids[1] != "live" {
+		t.Fatalf("IDs: %v", ids)
+	}
+	for i := 0; i < maxSessionHintFiles*2; i++ {
+		processes = append(processes, Process{SessionID: fmt.Sprintf("session-%03d", i)})
+	}
+	if got := len(liveSessionHintIDs(processes)); got != maxSessionHintFiles {
+		t.Fatalf("lookup limit: %d", got)
+	}
+}
+
+func TestResidentHintsFindLiveIDBeyondRegistryPrefix(t *testing.T) {
+	ResetSessionOwnershipHintCache()
+	t.Cleanup(ResetSessionOwnershipHintCache)
+	dir := t.TempDir()
+	// Old enumeration stopped after the first 64 valid files, losing live IDs.
+	for i := 0; i < maxSessionHintFiles+1; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("old-%03d.json", i)), []byte(`{"tool":"codex"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "z-live.json"), []byte(`{"session_id":"z-live","tool":"grok"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	catalog := CompileAgentIdentityCatalog(DefaultAgentIdentityRules())
+	_ = peekSessionOwnershipHints(dir, catalog, []string{"z-live"})
+	deadline := time.Now().Add(time.Second)
+	for {
+		residentSessionHints.Lock()
+		done := !residentSessionHints.refreshing
+		residentSessionHints.Unlock()
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("refresh did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	got := peekSessionOwnershipHints(dir, catalog, []string{"z-live"})
+	if len(got) != 1 || got[0].SessionID != "z-live" || got[0].Agent != "grok" {
+		t.Fatalf("live hint: %+v", got)
+	}
+	// Missing entries are negatively cached, rather than reread each tick.
+	_ = peekSessionOwnershipHints(dir, catalog, []string{"missing"})
+	for {
+		residentSessionHints.Lock()
+		done := !residentSessionHints.refreshing
+		residentSessionHints.Unlock()
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("refresh did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "missing.json"), []byte(`{"tool":"grok"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := peekSessionOwnershipHints(dir, catalog, []string{"missing"}); len(got) != 0 {
+		t.Fatalf("empty cache was not retained: %+v", got)
+	}
+	residentSessionHints.Lock()
+	refreshing := residentSessionHints.refreshing
+	residentSessionHints.Unlock()
+	if refreshing {
+		t.Fatal("fresh empty result triggered I/O")
 	}
 }
 

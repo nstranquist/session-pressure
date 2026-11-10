@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,11 +18,10 @@ const (
 )
 
 var (
-	sessionHintMu              sync.Mutex
-	sessionHintCacheDir        string
-	sessionHintCacheAt         time.Time
-	sessionHintCacheData       []SessionOwnershipHint
-	sessionHintRefreshInFlight bool
+	sessionHintMu        sync.Mutex
+	sessionHintCacheDir  string
+	sessionHintCacheAt   time.Time
+	sessionHintCacheData []SessionOwnershipHint
 )
 
 // SessionOwnershipHint is a lightweight session-registry signal: session id →
@@ -32,37 +32,73 @@ type SessionOwnershipHint struct {
 	Agent     string
 }
 
-// peekSessionOwnershipHints returns a cached hint set without I/O. A miss
-// schedules one background refresh so the resident sample never waits on
-// ~/.nicos-session-state (live 2026-08-12: 3.6s in the identity phase).
-func peekSessionOwnershipHints(dir string, catalog *AgentIdentityCatalog) []SessionOwnershipHint {
+// residentSessionHints caches only IDs found in live process evidence. An
+// empty result is a valid cache entry; it must not trigger another disk scan.
+var residentSessionHints struct {
+	sync.Mutex
+	key        string
+	at         time.Time
+	hints      []SessionOwnershipHint
+	refreshing bool
+}
+
+func liveSessionHintIDs(processes []Process) []string {
+	ids := make(map[string]struct{})
+	for _, process := range processes {
+		id := process.SessionID
+		if id == "" {
+			id = sessionIDPattern.FindString(process.Command)
+		}
+		if id != "" && safeSessionStateID.MatchString(id) {
+			ids[id] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(ids))
+	for id := range ids {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	if len(out) > maxSessionHintFiles {
+		out = out[:maxSessionHintFiles]
+	}
+	return out
+}
+
+// peekSessionOwnershipHints never enumerates the session registry. The
+// resident only needs hints for live IDs, and refreshes those bounded files
+// asynchronously so hook storage cannot block host-pressure sampling.
+func peekSessionOwnershipHints(dir string, catalog *AgentIdentityCatalog, ids []string) []SessionOwnershipHint {
 	dir = strings.TrimSpace(dir)
-	if dir == "" || catalog == nil {
+	if dir == "" || catalog == nil || len(ids) == 0 {
 		return nil
 	}
+	key := dir + "\x00" + strings.Join(ids, "\x00")
 	now := time.Now()
-	sessionHintMu.Lock()
-	cached := sessionHintCacheDir == dir && sessionHintCacheData != nil
+	residentSessionHints.Lock()
+	cached := residentSessionHints.key == key && !residentSessionHints.at.IsZero()
 	var out []SessionOwnershipHint
 	if cached {
-		out = append([]SessionOwnershipHint(nil), sessionHintCacheData...)
+		out = append(out, residentSessionHints.hints...)
 	}
-	fresh := cached && now.Sub(sessionHintCacheAt) < sessionHintCacheTTL
-	inFlight := sessionHintRefreshInFlight
-	if !fresh && !inFlight {
-		sessionHintRefreshInFlight = true
+	refresh := (!cached || now.Sub(residentSessionHints.at) >= sessionHintCacheTTL) && !residentSessionHints.refreshing
+	if refresh {
+		residentSessionHints.refreshing = true
 	}
-	sessionHintMu.Unlock()
-	if !fresh && !inFlight {
+	residentSessionHints.Unlock()
+	if refresh {
 		go func() {
-			_ = LoadSessionOwnershipHints(dir, catalog)
-			sessionHintMu.Lock()
-			sessionHintRefreshInFlight = false
-			sessionHintMu.Unlock()
+			hints := make([]SessionOwnershipHint, 0, len(ids))
+			for _, id := range ids {
+				if hint, ok := readSessionOwnershipHint(filepath.Join(dir, id+".json"), id, catalog.agents); ok {
+					hints = append(hints, hint)
+				}
+			}
+			residentSessionHints.Lock()
+			residentSessionHints.key, residentSessionHints.at, residentSessionHints.hints = key, time.Now(), hints
+			residentSessionHints.refreshing = false
+			residentSessionHints.Unlock()
 		}()
 	}
-	// Stale-while-revalidate: sample interval is 120s and TTL is 15s, so a
-	// miss-returns-nil path would drop hints on every resident tick.
 	return out
 }
 
@@ -116,11 +152,22 @@ func LoadSessionOwnershipHints(dir string, catalog *AgentIdentityCatalog) []Sess
 
 // ResetSessionOwnershipHintCache is for tests.
 func ResetSessionOwnershipHintCache() {
+	for {
+		residentSessionHints.Lock()
+		if !residentSessionHints.refreshing {
+			break
+		}
+		residentSessionHints.Unlock()
+		time.Sleep(time.Millisecond)
+	}
+	residentSessionHints.key = ""
+	residentSessionHints.at = time.Time{}
+	residentSessionHints.hints = nil
+	residentSessionHints.Unlock()
 	sessionHintMu.Lock()
 	sessionHintCacheDir = ""
 	sessionHintCacheAt = time.Time{}
 	sessionHintCacheData = nil
-	sessionHintRefreshInFlight = false
 	sessionHintMu.Unlock()
 }
 

@@ -1197,7 +1197,7 @@ func applySessionHints(processes []Process, sessionStateDir string, nonblocking 
 	catalog := ActiveAgentIdentityCatalog()
 	var hints []SessionOwnershipHint
 	if nonblocking {
-		hints = peekSessionOwnershipHints(sessionStateDir, catalog)
+		hints = peekSessionOwnershipHints(sessionStateDir, catalog, liveSessionHintIDs(processes))
 	} else {
 		hints = LoadSessionOwnershipHints(sessionStateDir, catalog)
 	}
