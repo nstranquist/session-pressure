@@ -41,7 +41,7 @@ Subcommands:
   work status                      Show the weighted heavy-work coordinator
   work history [--limit N] [--full]  Compact lifecycle rows (default 20); --full digests/forensics
   work stats|report [--since D] [--full]  Compact calibration counts; full diagnostics opt in
-  work override --operation-id ID --confirm  Run one selected queued operation next without bypassing safety gates
+  work override --operation-id ID --confirm  Run one selected queued operation next; never bypasses host-pressure safety gates (past the weighted cap only when policy work_limits.allow_override_beyond_capacity is on)
   work inspect --operation-id ID             Live process/origin/stall brief (argv is not persisted)
   work cancel --operation-id ID --confirm    Signal the live lease tree and drop the lease
   work reschedule --operation-id ID --confirm  Cancel a scheduled lease, then ndev schedule run-now
@@ -56,6 +56,7 @@ Subcommands:
                                    apply flags: --multi-agent (earlier soft-launch warnings), --with-auto-shed, --dry-run
   policy init [--force]            Write the tuned observe-only default policy
   policy migrate                   Persist filled work defaults and former storage defaults; preserve enforcement
+  policy override-beyond-capacity on|off  Let a work override admit past the weighted cap (never past host-pressure gates)
   policy enable [--with-auto-shed] Block growing work at red; automatic relief requires explicit opt-in
   policy observe                   Keep monitoring but disable admission blocks and automatic shedding
   monitor once                     Sample once and persist a manual telemetry event
@@ -954,6 +955,31 @@ func cmdSessionPressurePolicy(g *Flags, args []string) int {
 		return emitPressure(g, map[string]any{
 			"ok": true, "action": "policy.migrate", "policy": runtime.policy, "path": runtime.path,
 		}, "migrated effective policy weights to "+runtime.path+"\n", 0)
+	case "override-beyond-capacity":
+		if len(args) != 1 || (args[0] != "on" && args[0] != "off") {
+			return sessionPressureError("policy override-beyond-capacity accepts only on or off", 2)
+		}
+		mutation, err := beginPressurePolicyMutation(runtime.dir)
+		if err != nil {
+			return sessionPressureError(err.Error(), 1)
+		}
+		defer mutation.Close()
+		runtime = mutation.Runtime
+		runtime.policy.WorkLimits.AllowOverrideBeyondCapacity = args[0] == "on"
+		if err := sessionpressure.SavePolicy(runtime.path, runtime.policy); err != nil {
+			return sessionPressureError(err.Error(), 1)
+		}
+		if err := restartPressureMonitor(runtime.dir); err != nil {
+			return sessionPressureError("policy saved but resident monitor did not confirm reload: "+err.Error(), 1)
+		}
+		state := "off"
+		if runtime.policy.WorkLimits.AllowOverrideBeyondCapacity {
+			state = "on"
+		}
+		return emitPressure(g, map[string]any{
+			"ok": true, "action": "policy.override_beyond_capacity", "policy": runtime.policy, "path": runtime.path,
+			"allow_override_beyond_capacity": runtime.policy.WorkLimits.AllowOverrideBeyondCapacity,
+		}, "work override beyond weighted capacity: "+state+" (policy at "+runtime.path+")\n", 0)
 	case "enable":
 		withAutoShed := len(args) == 1 && args[0] == "--with-auto-shed"
 		legacyNoAutoShed := len(args) == 1 && args[0] == "--no-auto-shed"

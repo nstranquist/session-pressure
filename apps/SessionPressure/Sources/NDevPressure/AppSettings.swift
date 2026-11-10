@@ -615,6 +615,7 @@ struct PathOverrideRow: View {
 
 struct GuardConfigurationSection: View {
     @EnvironmentObject private var store: PressureStore
+    @State private var confirmOverrideBeyondCapacity = false
 
     var body: some View {
         Section {
@@ -628,6 +629,21 @@ struct GuardConfigurationSection: View {
                 }
                 if let blockAt = policy.blockNewAt, !blockAt.isEmpty {
                     LabeledContent("Block new launches at", value: blockAt.capitalized)
+                }
+                if let limits = policy.workLimits {
+                    Toggle(isOn: Binding(
+                        get: { limits.allowOverrideBeyondCapacity ?? false },
+                        set: { newValue in
+                            if newValue {
+                                confirmOverrideBeyondCapacity = true
+                            } else {
+                                Task { await store.setOverrideBeyondCapacity(false) }
+                            }
+                        }
+                    )) {
+                        Text("Work override beyond capacity")
+                    }
+                    .help(PressureHelp.overrideBeyondCapacity)
                 }
                 LabeledContent("Guard sample interval", value: sampleSummary(policy))
             } else {
@@ -675,6 +691,12 @@ struct GuardConfigurationSection: View {
             Text(PressureHelp.guardConfiguration)
         }
         .help(PressureHelp.guardConfiguration)
+        .confirmationDialog("Allow work overrides past the weighted capacity?", isPresented: $confirmOverrideBeyondCapacity) {
+            Button("Allow past capacity") { Task { await store.setOverrideBeyondCapacity(true) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(PressureHelp.overrideBeyondCapacity)
+        }
     }
 
     private func sampleSummary(_ policy: PressurePolicy) -> String {

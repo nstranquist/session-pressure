@@ -783,6 +783,13 @@ public struct NDevPressureClient: Sendable {
         )
     }
 
+    public func policyOverrideBeyondCapacity(on: Bool) async throws -> PolicyEnvelope {
+        try await runJSON(
+            PolicyEnvelope.self,
+            arguments: ["--json", "session", "pressure", "policy", "override-beyond-capacity", on ? "on" : "off"]
+        )
+    }
+
     public func storageApply(
         autoSafe: Bool,
         provider: String? = nil,

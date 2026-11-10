@@ -55,6 +55,8 @@ public enum PressureHelp {
         "Append-only log of the typed storage apply command and its JSON/text output. This is not an agent terminal and does not capture unrelated process argv."
     public static let storagePolicyEnable =
         "storage policy enable turns on disk-growth admission enforcement so --auto-safe apply is allowed. Observe keeps storage enabled but turns enforcement off. Named provider apply remains available either way."
+    public static let overrideBeyondCapacity =
+        "When on, Run now (work override) admits the selected waiter even when leased weight already fills work_limits.capacity. It never bypasses host-pressure gates: red pressure and the admission latch still block the waiter before selection. Default off - an override then changes queue order only. Sustained oversubscription can hide a misclassified weight, so review weights when this stays on."
     public static let keyboardRemap =
         "Pane keys are Pressure menu items (⌘1–⌘8, plus ⌘R / ⌘⇧R). Remap in System Settings → Keyboard → Keyboard Shortcuts → App Shortcuts. Add NDev Pressure and use the exact menu title (Storage, Work Queue, Live Sample). Idle trees has no global key; it is a tab inside Storage."
     public static let diskWrites =

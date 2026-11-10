@@ -159,6 +159,33 @@ derate's part. If `swap_derate.verdict` is `over_budget`, loosen in
 | Set `swap_thrash_capacity` to `capacity` | Turn the derate off; the latch still reports |
 | Set `swap_thrash_external_release_seconds` to `-1` | Strict: hold work for the whole storm |
 
+### Override beyond capacity
+
+`work override` (Run now) normally changes queue order only: the selected
+waiter still has to fit inside `work_limits.capacity`. Set
+`work_limits.allow_override_beyond_capacity` to `true` in `policy.json`
+(or `session-pressure policy override-beyond-capacity on`) and an explicit
+override also admits its waiter past that weighted ceiling, so leased weight
+can exceed `capacity` until the overridden work finishes.
+
+The toggle widens only the logical cap. The host-pressure admission gate is
+untouched: red-level pressure in any dimension and the shared admission
+latch still block the waiter before selection, and the warning/swap derates
+still govern ordinary admissions.
+
+Default is `false` in the shipped policy template. The live policy on this
+Mac is set to `true` (operator decision, 2026-11-10). Risk: sustained
+oversubscription hides misclassification - a job holding a heavy weight
+while using almost no CPU still blocks the pool for everyone who is *not*
+overridden, and the cap no longer surfaces the mistake. Pair the toggle
+with weight-classification review (`work stats`, `work report`).
+
+Motivating case (2026-11-10): the pool sat at weight 10 of capacity 8 - a
+heavy-classified telemetry job at ~4% CPU, a parked lease whose supervisor
+had died, and a test lease - while a weight-2 waiter whose operator
+override had been requested still could not admit, because the override
+only reordered the queue. It hit its wait bound and died unleased.
+
 Do not copy a live `~/.nicos-dev/session-pressure` tree into issues, fixtures, or pull requests.
 
 ## Troubleshooting
