@@ -5,6 +5,7 @@ struct OverviewView: View {
     @EnvironmentObject private var store: PressureStore
     @State private var confirmApplySuggestion = false
     @State private var suggestionExpanded = false
+    @State private var consumerFilter = ""
 
     private var snap: PressureSnapshot { store.board.snapshot }
     private var health: StatusHealth? { store.board.health }
@@ -404,18 +405,28 @@ struct OverviewView: View {
         return items
     }
 
+    private var filteredHostConsumers: [HostConsumer] {
+        let q = consumerFilter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return snap.topHostConsumers }
+        return snap.topHostConsumers.filter { $0.executable.lowercased().contains(q) || $0.category.lowercased().contains(q) }
+    }
+
     private var hostConsumersPreview: some View {
         SectionCard(
             title: "Top host consumers",
             systemImage: "memorychip",
-            trailing: "\(snap.topHostConsumers.count) shown",
+            trailing: consumerFilter.isEmpty ? "\(snap.topHostConsumers.count) shown" : "\(filteredHostConsumers.count) of \(snap.topHostConsumers.count)",
             help: PressureHelp.hostConsumers
         ) {
-            if snap.topHostConsumers.isEmpty {
-                EmptyHint(title: "No host attribution", systemImage: "memorychip", detail: "Wait for a fresh resident process inventory.")
+            TextField("Filter consumers — try 'claude', 'codex', 'go', 'pnpm' …", text: $consumerFilter)
+                .textFieldStyle(.roundedBorder)
+                .font(.callout)
+                .padding(.bottom, 8)
+            if filteredHostConsumers.isEmpty {
+                EmptyHint(title: snap.topHostConsumers.isEmpty ? "No host attribution" : "No matches", systemImage: "memorychip", detail: snap.topHostConsumers.isEmpty ? "Wait for a fresh resident process inventory." : "Try a different filter — every entry is local.")
             } else {
                 VStack(spacing: 0) {
-                    ForEach(Array(snap.topHostConsumers.prefix(10).enumerated()), id: \.element.id) { index, consumer in
+                    ForEach(Array(filteredHostConsumers.prefix(10).enumerated()), id: \.element.id) { index, consumer in
                         HStack(spacing: 12) {
                             Text("\(index + 1)")
                                 .font(PressureTheme.monoCaption)
@@ -438,7 +449,7 @@ struct OverviewView: View {
                             }
                         }
                         .padding(.vertical, 8)
-                        if index < min(9, snap.topHostConsumers.count - 1) {
+                        if index < min(9, filteredHostConsumers.count - 1) {
                             Divider().opacity(0.5)
                         }
                     }
