@@ -1209,12 +1209,15 @@ func buildAgentTrees(processes []Process) []AgentTree {
 	children := make(map[int][]int, len(processes))
 	candidates := make(map[int]string)
 	executables := make(map[int]string)
+	// One identity snapshot per inventory, rather than checking the overlay
+	// file again for every unrelated host process.
+	catalog := ActiveAgentIdentityCatalog()
 	for _, process := range processes {
 		byPID[process.PID] = process
 		children[process.PPID] = append(children[process.PPID], process.PID)
 		agent, executable, ok := process.Agent, process.Executable, process.Agent != ""
-		if !ok {
-			agent, executable, ok = agentForCommand(process.Command)
+		if !ok && process.Command != "" {
+			agent, executable, ok = catalog.MatchCommand(process.Command)
 		}
 		if ok {
 			candidates[process.PID] = agent

@@ -229,6 +229,7 @@ func nativeDiskProcessCounters(ctx context.Context) (diskProcessSnapshot, error)
 		return diskProcessSnapshot{}, err
 	}
 	result := diskProcessSnapshot{TotalPIDCount: len(rows), Counters: make([]diskProcessCounter, 0, len(rows))}
+	catalog := ActiveAgentIdentityCatalog()
 	for index := range rows {
 		if index%64 == 0 {
 			select {
@@ -248,7 +249,7 @@ func nativeDiskProcessCounters(ctx context.Context) (diskProcessSnapshot, error)
 		executable := privacySafeExecutable(darwinCString(rows[index].Proc.P_comm[:]))
 		result.Counters = append(result.Counters, diskProcessCounter{
 			PID: pid, StartID: usage.ProcessStart, Executable: executable,
-			BytesWritten: usage.DiskIOBytesWritten, AgentOwned: hostConsumerCategory(executable) == "agent",
+			BytesWritten: usage.DiskIOBytesWritten, AgentOwned: hostConsumerCategoryWithCatalog(executable, catalog) == "agent",
 		})
 	}
 	result.AccessibleCount = len(result.Counters)
