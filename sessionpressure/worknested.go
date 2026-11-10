@@ -66,6 +66,22 @@ func withWorkOperationEnv(environ []string, operationID string) []string {
 	return append(out, WorkOperationEnv+"="+operationID)
 }
 
+// The ndev compatibility wrapper marks only its forwarding chain to detect
+// loops through an obsolete forwarder. An admitted workload starts a new
+// invocation chain: keeping that marker would reject legitimate nested ndev
+// commands before they can resolve the product CLI. Lease authority remains
+// in WorkOperationEnv and the coordinator's live process-group checks.
+func withoutPressureWrapperMarker(environ []string) []string {
+	out := make([]string, 0, len(environ))
+	for _, value := range environ {
+		if name, _, found := strings.Cut(value, "="); found && name == "NDEV_PRESSURE_WRAPPER" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
 // nestedWorkParent returns the live lease this process already runs under.
 func nestedWorkParent(coordinator *WorkCoordinator, environ []string) (WorkLeaseStatus, bool) {
 	operationID := strings.TrimSpace(workEnvValue(environ, WorkOperationEnv))
@@ -101,7 +117,7 @@ func runNestedWorkCommand(parent WorkLeaseStatus, options WorkRunOptions, stream
 		fmt.Fprintf(streams.Stderr, "ndev session pressure: nested class=%s runs under parent operation=%s class=%s weight=%d\n",
 			options.Class, parent.OperationID, parent.Class, parent.Weight)
 	}
-	if err := workNestedExec(resolved, options.Command, os.Environ()); err != nil {
+	if err := workNestedExec(resolved, options.Command, withoutPressureWrapperMarker(os.Environ())); err != nil {
 		return 1, fmt.Errorf("exec nested leased command: %w", err)
 	}
 	return 0, nil

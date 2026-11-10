@@ -398,7 +398,7 @@ var workShellBookkeepingEnv = map[string]bool{
 // WorkOperationEnv: a per-run ID that RunWorkCommand appends at launch.
 func WorkEnvironment(base []string, limits WorkLimits, class WorkClass) ([]string, error) {
 	environment := make([]string, 0, len(base)+1)
-	for _, value := range base {
+	for _, value := range withoutPressureWrapperMarker(base) {
 		if key, _, found := strings.Cut(value, "="); found && workShellBookkeepingEnv[key] {
 			continue
 		}

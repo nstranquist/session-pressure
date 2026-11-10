@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixes
+
+- End the ndev compatibility wrapper's recursion marker at the admitted work
+  child boundary. Normal and inline nested workloads can start a new ndev
+  invocation without inheriting a false recursion refusal. Live lease and
+  process-group checks, resource limits, and pinned CLI paths remain intact.
+
 ### Desktop 1.6.0 — Settings
 
 - **NDev Pressure Settings now surfaces the important app settings.** Launch
