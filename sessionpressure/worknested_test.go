@@ -154,3 +154,16 @@ func TestWithoutGoTestGitBindingDropsOnlyForGoTest(t *testing.T) {
 		}
 	}
 }
+
+func TestGatedWorkCommandArgvSeesTheRequestedGoTest(t *testing.T) {
+	command, gate, err := newGatedWorkCommand("sh", []string{"-c", "go test ./..."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gate.Close()
+	defer command.ExtraFiles[0].Close()
+	env := []string{"GIT_INDEX_FILE=/repo/.git/index", "HOME=/h"}
+	if got := withoutGoTestGitBinding(env, requestedWorkArgv(command.Args)); len(got) != 1 || got[0] != "HOME=/h" {
+		t.Fatalf("gated go test kept the git binding: %v (argv %v)", got, command.Args)
+	}
+}

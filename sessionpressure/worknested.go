@@ -160,3 +160,12 @@ func argvRunsGoTest(argv []string) bool {
 	}
 	return i+1 < len(argv) && isGoToolchainBinary(argv[i]) && argv[i+1] == "test"
 }
+
+// requestedWorkArgv returns the requested command from a leased command's
+// argv. The gated helper runs as `<self> <WorkChildMode> <target> args...`.
+func requestedWorkArgv(args []string) []string {
+	if len(args) >= 3 && args[1] == WorkChildMode {
+		return args[2:]
+	}
+	return args
+}
