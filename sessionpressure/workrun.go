@@ -1532,7 +1532,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		}
 		return 1, errors.Join(fmt.Errorf("configure leased command: %w", environmentErr), recordTerminal(WorkEventFailed, "configure_failed", nil))
 	}
-	command.Env = withWorkOperationEnv(environment, operationID)
+	command.Env = withWorkOperationEnv(withoutGoTestGitBinding(environment, command.Args), operationID)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if startErr := command.Start(); startErr != nil {
 		if gate != nil {

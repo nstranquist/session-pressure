@@ -139,3 +139,18 @@ func TestRunWorkCommandExportsOperationToChild(t *testing.T) {
 		t.Fatalf("child saw operation %q; stderr=%q", operation, stderr.String())
 	}
 }
+
+func TestWithoutGoTestGitBindingDropsOnlyForGoTest(t *testing.T) {
+	env := []string{"GIT_INDEX_FILE=/repo/.git/index", "GIT_DIR=/repo/.git", "GIT_AUTHOR_NAME=a", "HOME=/h"}
+	for _, argv := range [][]string{{"go", "test", "./..."}, {"/usr/local/go/bin/go", "test", "-run", "X"}, {"env", "-u", "X", "GOFLAGS=-count=1", "go", "test", "."}, {"sh", "-c", "go build ./... && go test ./x"}} {
+		got := strings.Join(withoutGoTestGitBinding(env, argv), " ")
+		if strings.Contains(got, "GIT_INDEX_FILE") || strings.Contains(got, "GIT_DIR") || !strings.Contains(got, "GIT_AUTHOR_NAME=a") || !strings.Contains(got, "HOME=/h") {
+			t.Fatalf("%v: %s", argv, got)
+		}
+	}
+	for _, argv := range [][]string{{"go", "build", "./..."}, {"make", "test"}, {"sh", "-c", "go vet ./..."}} {
+		if got := withoutGoTestGitBinding(env, argv); len(got) != len(env) {
+			t.Fatalf("%v changed: %v", argv, got)
+		}
+	}
+}
