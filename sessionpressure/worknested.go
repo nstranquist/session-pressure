@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -104,4 +105,58 @@ func runNestedWorkCommand(parent WorkLeaseStatus, options WorkRunOptions, stream
 		return 1, fmt.Errorf("exec nested leased command: %w", err)
 	}
 	return 0, nil
+}
+
+// gitRepositoryBindingEnv names the variables that bind a git process to one
+// repository's index, object store or work tree. Git exports them to hooks.
+var gitRepositoryBindingEnv = map[string]bool{
+	"GIT_INDEX_FILE": true, "GIT_DIR": true, "GIT_WORK_TREE": true, "GIT_COMMON_DIR": true,
+	"GIT_OBJECT_DIRECTORY": true, "GIT_ALTERNATE_OBJECT_DIRECTORIES": true, "GIT_PREFIX": true,
+	"GIT_NAMESPACE": true, "GIT_CEILING_DIRECTORIES": true,
+}
+
+// withoutGoTestGitBinding drops repository-binding git variables from the
+// environment of a go test command. Test fixtures run git in their own
+// temporary repositories; an inherited absolute GIT_INDEX_FILE sent their
+// `git add` into the caller's shared index (nicos-tools, 2026-11-10 01:18Z:
+// the index dropped to 77 entries, five of them fixture paths whose objects
+// lived only in a test repository). Other commands keep the variables.
+func withoutGoTestGitBinding(environ, argv []string) []string {
+	if !argvRunsGoTest(argv) {
+		return environ
+	}
+	out := make([]string, 0, len(environ))
+	for _, value := range environ {
+		if name, _, found := strings.Cut(value, "="); found && gitRepositoryBindingEnv[name] {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+// argvRunsGoTest is true for `go test ...`, also behind an `env` prefix,
+// and for a `sh|bash|zsh -c` script that runs go test.
+func argvRunsGoTest(argv []string) bool {
+	if len(argv) >= 3 && argv[1] == "-c" {
+		switch strings.ToLower(filepath.Base(argv[0])) {
+		case "sh", "bash", "zsh":
+			return strings.Contains(argv[2], "go test")
+		}
+	}
+	i := 0
+	if len(argv) > 0 && strings.ToLower(filepath.Base(argv[0])) == "env" {
+		for i = 1; i < len(argv); i++ {
+			token := argv[i]
+			if token == "-u" || token == "--unset" || token == "-C" || token == "--chdir" {
+				i++ // the option's argument
+				continue
+			}
+			if strings.HasPrefix(token, "-") || strings.Contains(token, "=") {
+				continue
+			}
+			break
+		}
+	}
+	return i+1 < len(argv) && isGoToolchainBinary(argv[i]) && argv[i+1] == "test"
 }
