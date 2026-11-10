@@ -26,6 +26,7 @@ func TestRemoteNestedModuleRetainsRepositoryFixtures(t *testing.T) {
 	write("nested/go.mod", "module example.test/nested\ngo 1.26\n")
 	write("nested/main.go", "package main")
 	write(".claude/hooks/toolguard.sh", "fixture")
+	write(".ndev/commit-delivery.yaml", "policy")
 	write("cmd/fixture.go", "fixture")
 	write(".env", "secret")
 	write(".tmp/generated", "cache")
@@ -42,7 +43,7 @@ func TestRemoteNestedModuleRetainsRepositoryFixtures(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := remoteUploadNames(t, &out)
-	for _, name := range []string{"nested/go.mod", ".claude/hooks/toolguard.sh", "cmd/fixture.go"} {
+	for _, name := range []string{"nested/go.mod", ".claude/hooks/toolguard.sh", ".ndev/commit-delivery.yaml", "cmd/fixture.go"} {
 		if !found[name] {
 			t.Errorf("missing repository input %s", name)
 		}
