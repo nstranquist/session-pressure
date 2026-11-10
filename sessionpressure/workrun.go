@@ -1288,7 +1288,8 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 			eventType = WorkEventCancelled
 			outcome = workCancelOutcome(waitCtx.Err(), 0)
 		}
-		return coordinatorFailureExit(err, 1), errors.Join(fmt.Errorf("acquire %s work lease: %w (used=%d capacity=%d queue=%d)", options.Class, err, status.Used, status.Capacity, status.QueueDepth), recordTerminal(eventType, outcome, nil))
+		code := coordinatorFailureExit(err, 1)
+		return code, errors.Join(admissionRefusal(code, fmt.Errorf("acquire %s work lease: %w (used=%d capacity=%d queue=%d)", options.Class, err, status.Used, status.Capacity, status.QueueDepth)), recordTerminal(eventType, outcome, nil))
 	}
 	postLeaseAdmission := admissionCheck()
 	postLeaseDecision := admissionGate.ObserveOwned(postLeaseAdmission, false)
@@ -1426,7 +1427,8 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 				eventType = WorkEventCancelled
 				outcome = workCancelOutcome(waitCtx.Err(), 0)
 			}
-			return coordinatorFailureExit(reacquireErr, 1), errors.Join(fmt.Errorf("reacquire pressure reservation: %w", reacquireErr), recordTerminal(eventType, outcome, nil))
+			code := coordinatorFailureExit(reacquireErr, 1)
+			return code, errors.Join(admissionRefusal(code, fmt.Errorf("reacquire pressure reservation: %w", reacquireErr)), recordTerminal(eventType, outcome, nil))
 		}
 		lease = reacquired
 		if eventErr := appendEvent(WorkEvent{
@@ -1473,14 +1475,16 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	}
 	if waitCtx.Err() != nil {
 		preStartOutcome := workCancelOutcome(waitCtx.Err(), 0)
+		code := coordinatorFailureExit(waitCtx.Err(), 1)
+		cause := admissionRefusal(code, fmt.Errorf("wait for heavy work: %w", waitCtx.Err()))
 		if releaseErr := release(); releaseErr != nil {
 			stopWaiting()
 			cancel()
-			return coordinatorFailureExit(waitCtx.Err(), 1), errors.Join(fmt.Errorf("release canceled work lease: %w", releaseErr), recordTerminal(WorkEventCancelled, preStartOutcome, nil))
+			return code, errors.Join(cause, fmt.Errorf("release canceled work lease: %w", releaseErr), recordTerminal(WorkEventCancelled, preStartOutcome, nil))
 		}
 		stopWaiting()
 		cancel()
-		return coordinatorFailureExit(waitCtx.Err(), 1), errors.Join(fmt.Errorf("wait for heavy work: %w", waitCtx.Err()), recordTerminal(WorkEventCancelled, preStartOutcome, nil))
+		return code, errors.Join(cause, recordTerminal(WorkEventCancelled, preStartOutcome, nil))
 	}
 	stopWaiting()
 	cancel()
