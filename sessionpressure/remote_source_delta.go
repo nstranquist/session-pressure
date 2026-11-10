@@ -31,13 +31,12 @@ import (
 // The box keeps one pristine base tree per closure key under
 // remoteSourceBaseRoot, with a manifest of every file's hash and mode. The
 // Mac sends only the files whose content or mode differ from a base it
-// knows, a removal list, and the complete new manifest. Under the existing
-// host-wide transfer lock the box checks that its base is the one the Mac
-// diffed against (exit 45 when it is not), applies the change, verifies
-// every byte of the base against the new manifest (exit 46 drops the base),
-// and copies the base into the job's stage. The stage is a copy, never a
-// hard link: a later upload changes the base while the runner may still be
-// snapshotting an earlier stage.
+// knows, a removal list, and the complete new manifest. A shared host lock
+// excludes cleanup while allowing unrelated uploads; a separate exclusive
+// base lock serializes changes to the same closure. The box checks the
+// expected base (exit 45 when stale), applies the change, and makes an
+// immutable hard-link snapshot, then verifies its bytes (exit 46 drops a
+// damaged base). Changed base files always replace their old inodes.
 //
 // The manifest is built from the bytes actually sent, so a file edited
 // during the upload yields a consistent (slightly older or newer) snapshot,
@@ -376,13 +375,15 @@ func writeRemoteSourceDelta(w io.Writer, entries []remoteSourceEntry, send []int
 //
 // Outside the host-wide transfer lock (a slow sender holds no one up): the
 // stream is extracted and every incoming file is checked against the new
-// manifest. Under the lock: the base digest is compared with the one the Mac
+// manifest. Under the shared host lock and exclusive base lock, the base
+// digest is compared with the one the Mac
 // diffed against (exit 45), the base's manifest and digest are removed
 // before any change so an interrupted apply forces a reseed, the change is
 // applied, the file count is checked (exit 46 drops the base), the manifest
 // and digest are written last, and the stage is made as a hard-link snapshot.
-// After the lock is released every byte of the stage is checked against the
-// manifest (exit 46 drops a damaged base).
+// After the base lock is released every byte of the stage is checked against
+// the manifest (exit 46 drops a damaged base). The shared host lock remains
+// held through verification and pruning to exclude host cleanup.
 //
 // The snapshot is safe because the base is never written in place: changed
 // files replace the old inode (cp --remove-destination), removals unlink,
@@ -412,7 +413,9 @@ func remoteSourceDeltaScript(remote, key, request string) string {
 		"  (cd " + tree + " && sha256sum --quiet --strict -c \"$ctl/check\" >/dev/null)",
 		"fi",
 		"exec 9>" + shellQuote(remoteSourceTransferLock),
-		"flock -w 600 9",
+		"flock -s -w 600 9",
+		"exec 8>\"$base.lock\"",
+		"flock -w 600 8",
 		"expect=$(cat \"$ctl/expect\")",
 		"drop() { rm -rf \"$base\" \"$base.manifest\" \"$base.digest\" \"$base.new\"; }",
 		"if [ \"$expect\" = none ]; then",
@@ -433,20 +436,25 @@ func remoteSourceDeltaScript(remote, key, request string) string {
 		"cut -c1-64 \"$ctl/digest\" > \"$base.digest\"",
 		"rm -rf \"$remote/source\"",
 		"cp -al \"$base\" \"$remote/source\"",
-		// Release the lock, then check every byte of the stage. It shares
+		// Release the base lock, then check every byte of the stage. It shares
 		// inodes with the base, so this also catches a base damaged on disk;
 		// a damaged base is dropped (if still current) and the Mac reseeds.
-		"exec 9>&-",
+		"exec 8>&-",
 		"if ! (cd \"$remote/source\" && awk '{print substr($0,1,64) \"  \" substr($0,71)}' \"$ctl/manifest\" | sha256sum --quiet --strict -c - >/dev/null 2>&1); then",
-		"  exec 9>" + shellQuote(remoteSourceTransferLock),
-		"  flock -w 600 9",
+		"  exec 8>\"$base.lock\"",
+		"  flock -w 600 8",
 		"  if [ \"$(cat \"$base.digest\" 2>/dev/null)\" = \"$(cut -c1-64 \"$ctl/digest\")\" ]; then drop; fi",
 		"  rm -rf \"$remote/source\" \"$inc\"",
 		"  exit " + fmt.Sprint(remoteSourceExitBroken),
 		"fi",
 		"rm -rf \"$inc\"",
-		// Keep the newest bases; each is one closure (100 to 400 MB).
-		"ls -1t " + shellQuote(remoteSourceBaseRoot) + "/*.digest 2>/dev/null | tail -n +" + fmt.Sprint(remoteSourceBaseKeep+1) + " | while read -r old; do b=${old%.digest}; rm -rf \"$b\" \"$b.manifest\" \"$b.digest\"; done",
+		// Keep the newest bases, skipping any currently being changed. Keep
+		// lock files stable: unlinking one would create two independent locks.
+		// Recheck age under the base lock in case a listed base was refreshed.
+		"ls -1t " + shellQuote(remoteSourceBaseRoot) + "/*.digest 2>/dev/null | tail -n +" + fmt.Sprint(remoteSourceBaseKeep+1) + " | while read -r old; do",
+		"  b=${old%.digest}",
+		"  (flock -n 8 || exit 0; if ls -1t " + shellQuote(remoteSourceBaseRoot) + "/*.digest 2>/dev/null | head -n " + fmt.Sprint(remoteSourceBaseKeep) + " | grep -Fxq -- \"$old\"; then exit 0; fi; rm -rf \"$b\" \"$b.manifest\" \"$b.digest\") 8>\"$b.lock\"",
+		"done",
 	}, "\n")
 }
 

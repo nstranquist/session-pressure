@@ -1,6 +1,7 @@
 package sessionpressure
 
 import (
+	"bufio"
 	"bytes"
 	"io/fs"
 	"os"
@@ -11,6 +12,105 @@ import (
 	"testing"
 	"time"
 )
+
+func TestRemoteSourceDeltaAlongsideCandidateUpload(t *testing.T) {
+	ssh := deltaBox(t)
+	// Candidate uploads hold the host lock shared to exclude cleanup. An
+	// independent delta must not wait for the entire candidate transfer.
+	holder := exec.Command("flock", "-s", remoteSourceTransferLock, "sh", "-c", "echo ready; cat >/dev/null")
+	in, err := holder.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := holder.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := holder.Start(); err != nil {
+		t.Fatal(err)
+	}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			_ = in.Close()
+			_ = holder.Wait()
+		}
+	}
+	defer release()
+	if ready, err := bufio.NewReader(out).ReadString('\n'); err != nil || ready != "ready\n" {
+		t.Fatalf("lock readiness: %q %v", ready, err)
+	}
+	common, state, jobs := t.TempDir(), t.TempDir(), t.TempDir()
+	module := filepath.Join(common, "mod")
+	writeTree(t, module, map[string]string{"go.mod": "module example.test/mod\n", "a.go": "package mod\n"})
+	done := make(chan error, 1)
+	go func() {
+		_, err := uploadRemoteSourcesDelta(ssh, os.Stderr, state, "box", filepath.Join(jobs, "delta"), "delta", common, []string{module}, remoteScopeModules)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		release()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		t.Fatal("delta waited for an unrelated candidate upload's shared host lock")
+	}
+	sameTree(t, "concurrent delta", treeFiles(t, filepath.Join(jobs, "delta", "source")), treeFiles(t, common))
+}
+
+func TestRemoteSourceDeltaPruneSkipsActiveBase(t *testing.T) {
+	ssh := deltaBox(t)
+	if err := os.MkdirAll(remoteSourceBaseRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Put two old bases outside the retention window. One is being changed.
+	for i := 0; i < remoteSourceBaseKeep+1; i++ {
+		base := filepath.Join(remoteSourceBaseRoot, string(rune('a'+i)))
+		writeTree(t, base, map[string]string{"source": "retained"})
+		if err := os.WriteFile(base+".digest", []byte("digest"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stamp := time.Unix(int64(i+1), 0)
+		if err := os.Chtimes(base+".digest", stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	active := filepath.Join(remoteSourceBaseRoot, "a")
+	holder := exec.Command("flock", active+".lock", "sh", "-c", "echo ready; cat >/dev/null")
+	in, err := holder.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := holder.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := holder.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = in.Close(); _ = holder.Wait() }()
+	if _, err := bufio.NewReader(out).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	common := t.TempDir()
+	module := filepath.Join(common, "mod")
+	writeTree(t, module, map[string]string{"go.mod": "module example.test/mod\n"})
+	if _, err := uploadRemoteSourcesDelta(ssh, os.Stderr, t.TempDir(), "box", filepath.Join(t.TempDir(), "job"), "prune", common, []string{module}, remoteScopeModules); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(active, "source")); err != nil {
+		t.Fatalf("pruned active base: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(remoteSourceBaseRoot, "b")); !os.IsNotExist(err) {
+		t.Fatalf("idle old base survived: %v", err)
+	}
+}
 
 func TestRemoteSourceManifestRoundTrip(t *testing.T) {
 	lines := map[string]remoteSourceLine{
