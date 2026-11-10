@@ -29,10 +29,16 @@ func remoteRepositoryRoots(modules []string) []string {
 	return roots
 }
 
+// remoteExcludedRepositoryInput filters names from Git's inventory. Git
+// already applied the repository's ignore rules to them, so `.ndev/` stays:
+// its tracked policy and hooks are test inputs (nicos-commit-delivery reads
+// .ndev/commit-delivery.yaml; 2026-11-10 two tests failed on every remote
+// run without it). The module walk for out-of-repository modules still skips
+// it, because nothing filters that walk.
 func remoteExcludedRepositoryInput(name string) bool {
 	for _, part := range strings.Split(filepath.ToSlash(name), "/") {
 		switch part {
-		case ".git", ".build", "target", "node_modules", "bin", ".cache", ".ndev", ".next", "dist", ".tmp":
+		case ".git", ".build", "target", "node_modules", "bin", ".cache", ".next", "dist", ".tmp":
 			return true
 		}
 		if part == ".env" || strings.HasPrefix(part, ".env.") || strings.HasSuffix(part, ".pem") || strings.HasSuffix(part, ".key") {
