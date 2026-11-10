@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"container/heap"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -69,9 +70,24 @@ type Cache struct {
 	index      map[string]indexEntry
 	offset     int64
 	journalID  os.FileInfo
+	// journalGen is the key of the journal's first row as last replayed from
+	// byte zero (a compaction marker when compaction wrote the file). Inode
+	// identity alone cannot detect a rewritten journal: inode numbers are
+	// reused, and on a busy cache gaterunner-3 cycled the index through
+	// three inodes (one repeated) inside 18 seconds. Content identity can.
+	journalGen string
 	total      int64
 	eviction   evictionHeap
 }
+
+// Lock patience is a var so tests can shrink it. Startup gets the long
+// deadline: the initial replay runs under the lock, and a new client that
+// cannot start at all fails every request of its Go process.
+var authorityLockTimeout = 15 * time.Second
+var authorityStartupLockTimeout = 60 * time.Second
+
+// compactionMinBytes is a var so tests can exercise compaction cheaply.
+var compactionMinBytes int64 = 8 << 20
 
 // evictionHeap has one node per live entry; touches update in O(log n).
 // A pass examines at most 256 candidates, including pinned candidates. A busy
@@ -152,7 +168,7 @@ func New(dir string, maxBytes int64) (*Cache, error) {
 		return nil, err
 	}
 	c := &Cache{dir: dir, maxBytes: maxBytes, lock: lock, index: map[string]indexEntry{}}
-	err = c.withLock(func() error {
+	err = c.withLockWithin(authorityStartupLockTimeout, func() error {
 		// Client locks are held for the complete protocol lifetime. A dead process
 		// releases its OS lock; PID reuse cannot make an abandoned pin live again.
 		entries, err := os.ReadDir(filepath.Join(dir, "clients"))
@@ -200,7 +216,10 @@ func New(dir string, maxBytes int64) (*Cache, error) {
 	return c, nil
 }
 func (c *Cache) withLock(fn func() error) error {
-	deadline := time.Now().Add(5 * time.Second)
+	return c.withLockWithin(authorityLockTimeout, fn)
+}
+func (c *Cache) withLockWithin(limit time.Duration, fn func() error) error {
+	deadline := time.Now().Add(limit)
 	for {
 		err := unix.Flock(int(c.lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 		if err == nil {
@@ -218,8 +237,43 @@ func (c *Cache) withLock(fn func() error) error {
 	return fn()
 }
 
+func (c *Cache) resetJournal() {
+	c.index = map[string]indexEntry{}
+	c.eviction = evictionHeap{positions: map[string]int{}}
+	c.total = 0
+	c.offset = 0
+	c.journalGen = ""
+}
+
+// peekJournalFirstKey returns the key of the journal's first row. It reads
+// through ReadAt, so it does not disturb the caller's seek position.
+func peekJournalFirstKey(f *os.File) (string, bool) {
+	buf := make([]byte, 4097)
+	n, err := f.ReadAt(buf, 0)
+	if n == 0 || (err != nil && err != io.EOF) {
+		return "", false
+	}
+	line := buf[:n]
+	if i := bytes.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	} else if n > 4096 {
+		return "", false
+	}
+	var head struct {
+		Key string `json:"key"`
+	}
+	if json.Unmarshal(line, &head) != nil || head.Key == "" {
+		return "", false
+	}
+	return head.Key, true
+}
+
 // Replay only journal bytes added since this client last held the authority.
-// Compaction is detected by inode, so concurrent clients cannot miss a reset.
+// A rewrite (compaction) is detected by inode, size, and — decisively — the
+// journal's first-row key: inode numbers are reused under churn, so a client
+// whose recorded inode happens to match a later incarnation of the file
+// would otherwise resume at a stale offset mid-row and fail requests with
+// "invalid cache index: invalid character ..." against a healthy file.
 func (c *Cache) loadIndex() error {
 	f, err := os.OpenFile(filepath.Join(c.dir, "index.jsonl"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
@@ -231,10 +285,12 @@ func (c *Cache) loadIndex() error {
 		return err
 	}
 	if c.journalID == nil || !os.SameFile(info, c.journalID) || info.Size() < c.offset {
-		c.index = map[string]indexEntry{}
-		c.eviction = evictionHeap{positions: map[string]int{}}
-		c.total = 0
-		c.offset = 0
+		c.resetJournal()
+	}
+	if c.offset > 0 {
+		if key, ok := peekJournalFirstKey(f); !ok || key != c.journalGen {
+			c.resetJournal()
+		}
 	}
 	c.journalID = info
 	if _, err = f.Seek(c.offset, io.SeekStart); err != nil {
@@ -257,13 +313,38 @@ func (c *Cache) loadIndex() error {
 		}
 		var row indexEntry
 		if err = json.Unmarshal(line, &row); err != nil {
-			return fmt.Errorf("invalid cache index: %w", err)
+			// A syntactically torn row means the tail past the last good
+			// row cannot be trusted (killed append, or a reader that
+			// resumed mid-journal despite the generation check). Drop
+			// it and serve what replayed cleanly: a cache index must
+			// never fail a build. Rows with valid syntax but invalid
+			// identity still hard-fail below — that is the escape
+			// guard, and it is not reachable from a torn read of a
+			// flat row.
+			if terr := f.Truncate(c.offset); terr != nil {
+				return terr
+			}
+			if c.offset == 0 {
+				c.journalGen = ""
+			}
+			return nil
 		}
 		key := strings.TrimPrefix(row.Key, "action-")
 		decoded, decodeErr := hex.DecodeString(key)
 		action := strings.HasPrefix(row.Key, "action-")
 		if decodeErr != nil || key != strings.ToLower(key) || (!action && len(decoded) != 32) || (action && !validID(decoded)) || row.Size < 0 || row.Size > MaxObjectBytes || row.Access < 0 {
 			return fmt.Errorf("invalid cache index identity or size")
+		}
+		if c.offset == 0 {
+			// First row of a from-zero replay names this incarnation of
+			// the journal. Compaction writes a dedicated marker here:
+			// size 0 with access 0 is unreachable for organic rows,
+			// whose access is always a UnixNano timestamp.
+			c.journalGen = row.Key
+			if row.Size == 0 && row.Access == 0 && !row.Deleted {
+				c.offset += int64(len(line))
+				continue
+			}
 		}
 		c.applyRow(row)
 		c.offset += int64(len(line))
@@ -287,9 +368,25 @@ func (c *Cache) record(row indexEntry) error {
 	if err != nil {
 		return err
 	}
+	if c.offset == 0 {
+		c.journalGen = row.Key
+	}
 	c.applyRow(row)
 	c.offset += int64(len(raw))
 	return nil
+}
+
+// newJournalMarker returns a fresh 64-hex journal generation key. The
+// marker row carries size 0 and access 0, a combination organic rows
+// never have (their access is a UnixNano timestamp), and it passes the
+// journal identity validation, so older binaries sharing the cache treat
+// it as a harmless zero-size entry instead of hard-failing.
+func newJournalMarker() string {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		raw = sha256.Sum256([]byte(fmt.Sprintf("journal-%d-%d", time.Now().UnixNano(), os.Getpid())))
+	}
+	return hex.EncodeToString(raw[:])
 }
 func atomicWrite(path string, raw []byte) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".write-")
@@ -370,7 +467,9 @@ func (c *Cache) get(req Request) Response {
 		return nil
 	})
 	if err != nil {
-		resp.Err = err.Error()
+		// A get must never fail a build: lock contention or a journal
+		// problem degrades to a miss, and the caller recompiles.
+		return Response{ID: req.ID, Miss: true}
 	}
 	return resp
 }
@@ -387,7 +486,12 @@ func (c *Cache) putReader(req Request, body io.Reader) Response {
 	if err != nil {
 		return fail(err)
 	}
-	defer os.Remove(f.Name())
+	keepTemp := false
+	defer func() {
+		if !keepTemp {
+			os.Remove(f.Name())
+		}
+	}()
 	hash := sha256.New()
 	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(body, req.BodySize+1))
 	if err == nil && n != req.BodySize {
@@ -443,7 +547,14 @@ func (c *Cache) putReader(req Request, body io.Reader) Response {
 		return nil
 	})
 	if err != nil {
-		return fail(err)
+		// The object body is already complete and fsynced in this
+		// client's pin directory. If the shared journal could not be
+		// updated (lock contention, journal fault), serve the object
+		// unindexed instead of failing the build: this caller gets
+		// its file, later lookups simply miss. The pin directory is
+		// removed at Close, which bounds the unindexed file's life.
+		keepTemp = true
+		return Response{ID: req.ID, DiskPath: f.Name(), Size: n, OutputID: req.OutputID, Time: &meta.PutAt}
 	}
 	return resp
 }
@@ -518,17 +629,42 @@ func (c *Cache) Close() error {
 		if err := c.evictLocked(); err != nil {
 			return err
 		}
-		// Bound replay costs. Replace the journal atomically while all writers are
-		// excluded; clients detect the new inode on their next request.
-		if c.offset > 8<<20 {
+		// Bound replay costs, but compact rarely: this rewrite runs under
+		// the authority lock, and the previous rule (any close past 8 MiB)
+		// fired on essentially every client close of a busy cache —
+		// gaterunner-3's journal was being rewritten several times a
+		// minute, starving the lock and churning inodes. Rewrite only
+		// when the compacted form at least halves the journal. The new
+		// file opens with a fresh generation marker row; clients detect
+		// the rewrite by that key, not by inode alone.
+		if c.offset > compactionMinBytes {
 			var b bytes.Buffer
 			enc := json.NewEncoder(&b)
+			marker := indexEntry{Key: newJournalMarker()}
+			if err := enc.Encode(marker); err != nil {
+				return err
+			}
 			for _, row := range c.index {
 				if err := enc.Encode(row); err != nil {
 					return err
 				}
 			}
-			return atomicWrite(filepath.Join(c.dir, "index.jsonl"), b.Bytes())
+			if int64(b.Len())*2 >= c.offset {
+				return nil
+			}
+			path := filepath.Join(c.dir, "index.jsonl")
+			if err := atomicWrite(path, b.Bytes()); err != nil {
+				return err
+			}
+			c.offset = int64(b.Len())
+			c.journalGen = marker.Key
+			if nf, err := os.Open(path); err == nil {
+				if st, err := nf.Stat(); err == nil {
+					c.journalID = st
+				}
+				nf.Close()
+			}
+			return nil
 		}
 		return nil
 	})
