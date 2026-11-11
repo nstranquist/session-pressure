@@ -45,7 +45,7 @@ func run(args []string) error {
 		return observe(args[1:])
 	}
 	if len(args) == 0 {
-		return errors.New("usage: release build|install|app-status|install-app [flags]")
+		return errors.New("usage: release build|install|app-status|install-app|app-maintain [flags]")
 	}
 	f := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	out := f.String("out", "", "bundle directory")
@@ -56,6 +56,7 @@ func run(args []string) error {
 	app := f.String("app", "", "signed .app source")
 	destination := f.String("destination", "/Applications/NDev Pressure.app", "app destination")
 	digestOnly := f.Bool("digest-only", false, "print only the app authority digest (app-status)")
+	archiveRoot := f.String("archive-root", "", "existing archive directory; saved for future app installs (app-maintain)")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -69,6 +70,8 @@ func run(args []string) error {
 		return install(*out, *prefix, *expected, *allowRollback)
 	case "install-app":
 		return installApp(*app, *destination, *expected, *allowRollback)
+	case "app-maintain":
+		return maintainApp(*destination, *archiveRoot)
 	case "app-status":
 		identity, err := readAppIdentity(*app)
 		if err != nil {
@@ -495,15 +498,16 @@ func installApp(source, destination, expected string, allowRollback bool) error 
 	if source == "" || !filepath.IsAbs(destination) || !strings.HasSuffix(destination, ".app") {
 		return errors.New("--app and absolute .app destination required")
 	}
-	lock, e := os.OpenFile(destination+".install.lock", os.O_CREATE|os.O_RDWR, 0600)
+	history, e := openAppHistory(destination)
 	if e != nil {
 		return e
 	}
-	defer lock.Close()
-	if e = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
-		return fmt.Errorf("app install already active: %w", e)
+	defer history.db.Close()
+	unlock, e := history.lock()
+	if e != nil {
+		return e
 	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	defer unlock()
 	current, e := readAppIdentity(destination)
 	if e != nil {
 		return e
@@ -544,7 +548,11 @@ func installApp(source, destination, expected string, allowRollback bool) error 
 	if e = validateAppPromotion(latest, staged, expected, allowRollback); e != nil {
 		return e
 	}
-	backup := destination + ".rollback-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+	rollbackDir := filepath.Join(history.dir, "rollbacks")
+	if e = os.MkdirAll(rollbackDir, 0700); e != nil {
+		return e
+	}
+	backup := filepath.Join(rollbackDir, filepath.Base(destination)+".rollback-"+time.Now().UTC().Format("20060102T150405.000000000Z"))
 	prior := false
 	if _, e = os.Lstat(destination); e == nil {
 		if e = os.Rename(destination, backup); e != nil {
@@ -567,13 +575,22 @@ func installApp(source, destination, expected string, allowRollback bool) error 
 		}
 		return e
 	}
-	receipt := map[string]any{"installed_at": time.Now().UTC(), "app": staged, "previous_app": current, "expected_current": expected, "allow_rollback": allowRollback, "backup": backup}
-	if e = writeJSON(destination+".install-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".json", receipt); e != nil {
+	receipt := appReceipt{InstalledAt: time.Now().UTC(), App: staged, Previous: current, Expected: expected, AllowRollback: allowRollback, Backup: backup}
+	raw, e := json.Marshal(receipt)
+	if e == nil {
+		e = history.recordReceipt("install-app", raw)
+	}
+	if e != nil {
 		_ = os.Rename(destination, next)
 		if prior {
 			_ = os.Rename(backup, destination)
 		}
 		return e
+	}
+	// Installation has committed. Archive failure must not undo a working app:
+	// retain every extra local copy and expose a retryable maintenance warning.
+	if e = history.maintain(""); e != nil {
+		fmt.Fprintln(os.Stderr, "Installed app; backup maintenance pending. Mount the archive disk and run session-pressure-release app-maintain.")
 	}
 	fmt.Println("Installed", destination, "rollback", backup)
 	return nil

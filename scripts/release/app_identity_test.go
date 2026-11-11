@@ -56,6 +56,7 @@ func TestAppAuthorityBindsWholeBundle(t *testing.T) {
 }
 
 func TestAppPromotionRejectsStaleIntentAndDowngradesBeforeMutation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	currentPath := fixtureApp(t, "1.3.0", "5")
 	oldPath := fixtureApp(t, "1.1.0", "3")
 	current, err := readAppIdentity(currentPath)

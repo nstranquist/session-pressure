@@ -1,7 +1,7 @@
 # Verified release and acceptance
 
-Build Go binaries on an inventory-selected active runner (runner-2 or
-runner-3) from a clean committed checkout. Keep runner-1 as explicit
+Build Go binaries on the inventory-selected active runner (currently
+runner-3; runner-2 is retired) from a clean committed checkout. Keep runner-1 as explicit
 reserve; use the canonical remote verification wrapper to bind one host:
 
 ```text
@@ -38,8 +38,10 @@ and `--allow-rollback`. Do not rewrite a running executable. Old preserved
 installer executables predate this guard; always use the current installer.
 
 The native Makefile uses `install-app` to stage and verify a signed app before
-promotion. It preserves the prior app beside the destination with `.rollback-`
-and a UTC timestamp. Concurrent app and CLI installations use kernel locks.
+promotion. It preserves the prior app in private history under
+`~/.nicos-dev/session-pressure/app-installs/<destination-sha256>/rollbacks`.
+Installation receipts are committed to owner-only `history.sqlite` in that
+directory. Concurrent app and CLI installations use kernel locks.
 Before building an app, capture `session-pressure-release app-status --app
 "/Applications/NDev Pressure.app" --digest-only`. Pass that digest to
 `install-app --expected-current DIGEST`. First installation uses `none`.
@@ -49,6 +51,18 @@ rejects a lower SemVer version or, at the same version, a lower numeric build.
 An intentional rollback needs the actual current digest and `--allow-rollback`.
 Both native install targets capture the authority before their build. A signed
 older app alone is not authority to overwrite the current installation.
+
+Configure an existing external archive directory once with
+`session-pressure-release app-maintain --archive-root "/Volumes/X10 Pro/NDev Pressure app history"`.
+This imports legacy receipts without changing their bytes, archives older
+rollbacks and retains the newest one locally. It verifies every copy and a
+consistent external SQLite snapshot before removing originals. Subsequent app
+installs reuse this setting. If the disk is unavailable or verification fails,
+installation retains extra local copies and reports maintenance pending;
+mount the disk and run `session-pressure-release app-maintain` to retry.
+It never deletes external history. A legacy empty `.install.lock` beside the
+app is intentionally retained for older-installer coordination. See the
+[migration decisions and proof](../../corpus/app-install-history.md).
 
 Run installed integration checks with `PRESSURE_CONTRACT_BIN` set to the
 absolute installed CLI, then `swift test --filter InstalledContractTests` from

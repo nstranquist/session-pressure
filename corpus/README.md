@@ -6,6 +6,8 @@ Owner: codex. Status: active, 2026-11-10.
   source provenance, proof and remaining installation checks.
 - [Scheduler replay](scheduler-replay.md): WORK-3 baseline, seven-day window,
   validation and open installed acceptance.
+- [App installation history](app-install-history.md): SQLite receipt preservation,
+  X10 archival and one local rollback, with migration and installer proof.
 - Architecture and environment: [runner fleet](../docs/runner-fleet.md) and
   [release contract](../scripts/release/README.md).
 
