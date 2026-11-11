@@ -34,7 +34,7 @@ Subcommands:
   history [--since DURATION] [--limit N] [--class CLASS] [--event EVENT] [--operation-id ID] [--full]
   stats [--since DURATION] [--full]
   report [--since DURATION] [--full]
-  evaluate
+  evaluate [--since DURATION]     Replay defaults to 24h; use 168h for seven days
   override (--operation-id <ID> [--operation-id <ID>...] | --all | --clear) --confirm
   inspect --operation-id ID        Live process/origin/stall brief (argv is not persisted)
   cancel --operation-id ID --confirm  Signal the live lease tree and release the lease
@@ -197,11 +197,20 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 	case "report":
 		return cmdSessionPressureWorkReport(g, runtime.dir, runtime.policy, args)
 	case "evaluate":
-		if len(args) != 0 {
-			return sessionPressureError("work evaluate accepts no arguments", 2)
+		window := 24 * time.Hour
+		if len(args) > 0 {
+			if len(args) != 2 || args[0] != "--since" {
+				return sessionPressureError("work evaluate accepts only --since DURATION (for example, 168h for seven days)", 2)
+			}
+			var err error
+			window, err = time.ParseDuration(args[1])
+			if err != nil || window <= 0 {
+				return sessionPressureError("work evaluate --since must be a positive duration such as 24h or 168h", 2)
+			}
 		}
+		since := time.Now().Add(-window)
 		report := sessionpressure.EvaluateWorkSystem(runtime.policy)
-		events, replayErr := sessionpressure.NewWorkEventStore(runtime.dir).Read(sessionpressure.WorkEventFilter{Since: time.Now().Add(-24 * time.Hour)})
+		events, diagnostics, replayErr := sessionpressure.NewWorkEventStore(runtime.dir).ReadWithDiagnostics(sessionpressure.WorkEventFilter{Since: since})
 		if replayErr != nil {
 			return sessionPressureError("read work events for replay: "+replayErr.Error(), 1)
 		}
@@ -212,8 +221,10 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 			report.OK = false
 			report.ReviewSignals = append(report.ReviewSignals, "live trace replay has not cleared every scheduler promotion gate")
 		}
-		payload := map[string]any{"ok": report.OK, "action": "work.evaluate", "work_evaluation": report}
+		payload := map[string]any{"ok": report.OK, "action": "work.evaluate", "since": since, "window": window.String(), "work_evaluation": report}
+		addWorkEventDiagnostics(payload, diagnostics)
 		text := fmt.Sprintf("work evaluation ok=%v scenarios=%d passed=%d failed=%d runtime=%s monitor_projection=%dB/day total_projection=%dB/day max_work_event=%dB\n", report.OK, report.ScenarioCount, report.Passed, report.Failed, time.Duration(report.RuntimeMilliseconds)*time.Millisecond, report.ProjectedMonitorBytesDay, report.ProjectedTelemetryBytesDay, report.MaximumWorkEventBytes)
+		text += workEventDiagnosticsText(diagnostics)
 		exit := 0
 		if !report.OK {
 			exit = 1
