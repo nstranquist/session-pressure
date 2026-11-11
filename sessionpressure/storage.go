@@ -91,17 +91,12 @@ func (sampler *Sampler) sampleStorage(policy Policy, previous Level) StorageSnap
 }
 
 // StorageAdmissionForClass evaluates only storage authority for a calibrated
-// work class. Reclaim is the relief path and can never be storage-blocked.
-// Install is network/disk-bound and deliberately admitted under storage-red
-// (KEP P2). Express classes deliberately admit under storage-red as the
-// sanctioned degraded-mode packing path (KEP P3).
+// work class. Reclaim must remain possible at every level. Express and install
+// may progress under red pressure, but not through the critical reserve or its
+// recovery hysteresis. Diagnostic warning targets are not admission targets.
 func StorageAdmissionForClass(snapshot StorageSnapshot, policy Policy, class WorkClass, source string) Admission {
-	if !policy.Storage.Enabled || !policy.Storage.EnforceAdmission || class == WorkClassReclaim || class == WorkClassInstall || !storageGrowingClass(class) {
+	if !policy.Storage.Enabled || !policy.Storage.EnforceAdmission || class == WorkClassReclaim || !storageGrowingClass(class) {
 		return Admission{Allowed: true, Level: snapshot.Level, Source: source, Snapshot: &Snapshot{Storage: snapshot}}
-	}
-	// P3: express classes are the sanctioned degraded-mode path under storage-red.
-	if class == WorkClassExpressTest || class == WorkClassExpressBuild {
-		return Admission{Allowed: true, Level: snapshot.Level, Source: source + "+express-degraded", Snapshot: &Snapshot{Storage: snapshot}}
 	}
 	if !snapshot.Available {
 		warning := "storage sampling unavailable; storage admission failed open"
@@ -110,39 +105,69 @@ func StorageAdmissionForClass(snapshot StorageSnapshot, policy Policy, class Wor
 		}
 		return Admission{Allowed: true, Level: LevelNormal, Source: "fail-open", Warning: warning, Snapshot: &Snapshot{Storage: snapshot}}
 	}
-	allowed := !snapshot.Level.AtLeast(policy.Storage.BlockNewAt)
+	blockAt := policy.Storage.BlockNewAt
+	if storageRedDegradedClass(class) {
+		blockAt = LevelCritical
+		source += "+red-degraded"
+	}
+	allowed := !snapshot.Level.AtLeast(blockAt)
+	if !allowed {
+		// A critical diagnostic may recover to red before a broad build can
+		// start. Return the release needed by THIS admission, not merely the
+		// currently latched diagnostic band's release.
+		snapshot.ReleaseBytes = max(snapshot.ReleaseBytes, storageAdmissionReleaseBytes(policy.Storage, blockAt), storageAdmissionReleaseBytes(policy.Storage, snapshot.Level))
+	}
 	return Admission{Allowed: allowed, Level: snapshot.Level, Source: source, Reasons: append([]string(nil), snapshot.Reasons...), Snapshot: &Snapshot{Storage: snapshot}}
 }
 
-// storageGrowingClass is true for compiler/test-shaped work that grows disk
-// under storage-red enforcement. Express and install are intentionally excluded
-// so package-scoped and I/O-bound work can progress under a latched red.
+func storageRedDegradedClass(class WorkClass) bool {
+	return class == WorkClassExpressTest || class == WorkClassExpressBuild || class == WorkClassInstall
+}
+
+// Even package-scoped compilation and installation can grow disk. They have
+// a different admission band, not an exemption from the emergency reserve.
 func storageGrowingClass(class WorkClass) bool {
 	switch class {
-	case WorkClassTest, WorkClassBuild, WorkClassEmulator, WorkClassBrowser, WorkClassHeavy, WorkClassBenchmark, WorkClassBenchmarkExclusive:
+	case WorkClassTest, WorkClassBuild, WorkClassEmulator, WorkClassBrowser, WorkClassHeavy, WorkClassBenchmark, WorkClassBenchmarkExclusive,
+		WorkClassExpressTest, WorkClassExpressBuild, WorkClassInstall:
 		return true
 	default:
-		// express-test, express-build, install, reclaim → not storage-growing for gate purposes
 		return false
 	}
 }
 
-// FormatStorageDeadlockAdvice returns a single actionable line for storage-red
-// waiters (KEP P1): free bytes, release threshold, and the lowest-cost typed
-// reclaim levers before the high-rebuild-cost Go cache.
-func FormatStorageDeadlockAdvice(snapshot StorageSnapshot, policy StoragePolicy) string {
-	free := snapshot.AvailableBytes
-	release := policy.RedReleaseBytes
-	if release <= 0 {
-		release = 30 << 30
+func storageAdmissionReleaseBytes(policy StoragePolicy, blockAt Level) int64 {
+	switch blockAt {
+	case LevelCritical:
+		return max(policy.CriticalFreeBytes, policy.CriticalReleaseBytes)
+	case LevelWarning:
+		return max(policy.WarningFreeBytes, policy.WarningReleaseBytes)
+	default:
+		return max(policy.RedFreeBytes, policy.RedReleaseBytes)
 	}
-	need := release - free
-	if need < 0 {
-		need = 0
+}
+
+// FormatStorageDeadlockAdvice asks only for the headroom needed to resume this
+// admission. The separate cleanup target is not a prerequisite. Keep this a
+// read-only plan: deleting personal data or expensive caches is not an implied
+// next step, and report-only providers must never be advertised as apply paths.
+func FormatStorageDeadlockAdvice(snapshot StorageSnapshot, policy StoragePolicy) string {
+	if !snapshot.Available {
+		return "storage capacity unavailable; cannot calculate recovery shortage; run ndev session pressure storage status before planning reclaim"
+	}
+	free := snapshot.AvailableBytes
+	release := snapshot.ReleaseBytes
+	if release <= 0 {
+		release = storageAdmissionReleaseBytes(policy, policy.BlockNewAt)
+	}
+	need := max(int64(0), release-free)
+	target := fmt.Sprintf("%d", release)
+	if release > 0 && release%(1<<30) == 0 {
+		target = fmt.Sprintf("%dGiB", release>>30)
 	}
 	return fmt.Sprintf(
-		"storage-red deadlock: free=%s release=%s need≈%s; reclaim levers: load skill storage-reclaim; ndev session pressure storage status; ndev session pressure storage plan --target-free 50GiB; ndev session pressure storage apply --auto-safe --apply; ndev session pressure storage apply --provider user-trash --target-free 50GiB --apply; ndev session pressure storage apply --provider app-updater-caches --target-free 50GiB --apply; ndev session pressure storage apply --provider browser-media-caches --target-free 50GiB --apply; ndev session pressure storage apply --provider ios-simulator-runtime --target-free 50GiB --apply; ndev session pressure storage apply --provider brew-cache --target-free 50GiB --apply; ndev session pressure storage apply --provider go-build-cache --full-wipe --target-free 50GiB --apply (last resort); catalog skill.storage-reclaim",
-		formatBytesIEC(free), formatBytesIEC(release), formatBytesIEC(need),
+		"storage admission blocked: physical_free=%s (%.1f GB) release=%s need≈%s; cleanup target=%s is optional, not an admission requirement; inspect ndev session pressure storage status; load skill storage-reclaim; preview ndev session pressure storage plan --target-free %s; review provider eligibility and deletion authority before apply; catalog skill.storage-reclaim",
+		formatBytesIEC(free), float64(free)/1e9, formatBytesIEC(release), formatBytesIEC(need), formatBytesIEC(policy.TargetFreeBytes), target,
 	)
 }
 

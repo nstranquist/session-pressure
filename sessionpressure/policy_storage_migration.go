@@ -1,19 +1,24 @@
 package sessionpressure
 
-// MigrateLegacyStorageThresholds upgrades only the exact former shipped
-// threshold set. Operator-specific thresholds and authority switches survive.
-// This runs only for the explicit policy migrate command.
+// MigrateLegacyStorageThresholds upgrades only exact former shipped threshold
+// sets. It runs only for the explicit policy migrate command, never LoadPolicy.
+// Custom thresholds/cleanup targets and all authority switches survive.
 func MigrateLegacyStorageThresholds(policy *Policy) bool {
 	s := &policy.Storage
-	if s.WarningFreeBytes != 20<<30 || s.RedFreeBytes != 10<<30 || s.CriticalFreeBytes != 5<<30 || s.WarningReleaseBytes != 25<<30 || s.RedReleaseBytes != 15<<30 || s.CriticalReleaseBytes != 8<<30 || s.TargetFreeBytes != 25<<30 {
+	original := s.WarningFreeBytes == 20<<30 && s.RedFreeBytes == 10<<30 && s.CriticalFreeBytes == 5<<30 && s.WarningReleaseBytes == 25<<30 && s.RedReleaseBytes == 15<<30 && s.CriticalReleaseBytes == 8<<30 && s.TargetFreeBytes == 25<<30
+	previous := s.WarningFreeBytes == 50<<30 && s.RedFreeBytes == 25<<30 && s.CriticalFreeBytes == 10<<30 && s.WarningReleaseBytes == 60<<30 && s.RedReleaseBytes == 30<<30 && s.CriticalReleaseBytes == 20<<30 && (s.TargetFreeBytes == 50<<30 || s.TargetFreeBytes == 60<<30)
+	if !original && !previous {
 		return false
 	}
-	s.WarningFreeBytes = 50 << 30
-	s.RedFreeBytes = 25 << 30
-	s.CriticalFreeBytes = 10 << 30
-	s.WarningReleaseBytes = 60 << 30
-	s.RedReleaseBytes = 30 << 30
-	s.CriticalReleaseBytes = 20 << 30
-	s.TargetFreeBytes = 60 << 30
+	if original {
+		s.WarningFreeBytes = 50 << 30
+		s.RedFreeBytes = 25 << 30
+		s.CriticalFreeBytes = 10 << 30
+		s.WarningReleaseBytes = 60 << 30
+		s.RedReleaseBytes = 30 << 30
+		s.TargetFreeBytes = 60 << 30
+	}
+	// Operating heuristic, not an empirically proven per-job space budget.
+	s.CriticalReleaseBytes = 15 << 30
 	return true
 }

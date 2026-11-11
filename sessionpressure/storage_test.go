@@ -26,13 +26,14 @@ func TestEvaluateStorageThresholdsAndReleaseHysteresis(t *testing.T) {
 		{"warning entry", 49, LevelNormal, LevelWarning, LevelWarning, false},
 		{"red entry", 24, LevelNormal, LevelRed, LevelRed, false},
 		{"critical entry", 9, LevelNormal, LevelCritical, LevelCritical, false},
+		{"critical entry boundary", 10, LevelNormal, LevelRed, LevelRed, false},
 		{"warning held", 55, LevelWarning, LevelWarning, LevelNormal, true},
 		{"warning released", 60, LevelWarning, LevelNormal, LevelNormal, false},
 		// P4 narrowed band: red trip 25 GiB, release 30 GiB (was 35).
 		{"red held", 29, LevelRed, LevelRed, LevelWarning, true},
 		{"red released to warning", 30, LevelRed, LevelWarning, LevelWarning, false},
-		{"critical held", 15, LevelCritical, LevelCritical, LevelRed, true},
-		{"critical released to red", 20, LevelCritical, LevelRed, LevelRed, false},
+		{"critical held", 14, LevelCritical, LevelCritical, LevelRed, true},
+		{"critical released to red", 15, LevelCritical, LevelRed, LevelRed, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := EvaluateStorage(sample(tc.freeGiB), policy, tc.previous)
@@ -127,23 +128,90 @@ func TestStorageAdmissionIsClassAwareAndReclaimAlwaysAvailable(t *testing.T) {
 	}
 }
 
-func TestFormatStorageDeadlockAdviceActionable(t *testing.T) {
-	policy := DefaultPolicy(16 << 10).Storage
-	snap := StorageSnapshot{Available: true, AvailableBytes: 28 << 30, TotalBytes: 100 << 30, Level: LevelRed}
-	line := FormatStorageDeadlockAdvice(snap, policy)
-	if !strings.Contains(line, "storage-red deadlock") || !strings.Contains(line, "storage plan") || !strings.Contains(line, "release=") {
-		t.Fatalf("advice not actionable: %s", line)
-	}
-	for _, want := range []string{"skill storage-reclaim", "--auto-safe --apply", "--provider user-trash", "--provider app-updater-caches", "--provider browser-media-caches", "--provider ios-simulator-runtime", "--provider brew-cache", "--full-wipe", "catalog skill.storage-reclaim"} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("advice missing %q: %s", want, line)
+func TestStorageCriticalReserveAndClassSpecificRecovery(t *testing.T) {
+	policy := DefaultPolicy(16 << 10)
+	policy.Storage.EnforceAdmission = true
+	for _, class := range AllWorkClasses() {
+		for _, tc := range []struct {
+			name     string
+			free     int64
+			previous Level
+		}{
+			{"critical entry", 9 << 30, LevelNormal},
+			{"critical latched", 14 << 30, LevelCritical},
+		} {
+			t.Run(string(class)+"/"+tc.name, func(t *testing.T) {
+				snapshot := EvaluateStorage(StorageSnapshot{Available: true, TotalBytes: 100 << 30, AvailableBytes: tc.free}, policy.Storage, tc.previous)
+				got := StorageAdmissionForClass(snapshot, policy, class, "test")
+				if got.Allowed != (class == WorkClassReclaim) {
+					t.Fatalf("critical admission = %+v", got)
+				}
+				if !got.Allowed {
+					want := int64(30 << 30)
+					if storageRedDegradedClass(class) {
+						want = 15 << 30
+					}
+					if got.Snapshot.Storage.ReleaseBytes != want {
+						t.Fatalf("release=%d, want %d", got.Snapshot.Storage.ReleaseBytes, want)
+					}
+				}
+			})
+		}
+		for _, free := range []int64{20 << 30, 29 << 30, 30 << 30} {
+			snapshot := EvaluateStorage(StorageSnapshot{Available: true, TotalBytes: 100 << 30, AvailableBytes: free}, policy.Storage, LevelRed)
+			got := StorageAdmissionForClass(snapshot, policy, class, "test")
+			want := class == WorkClassReclaim || storageRedDegradedClass(class) || free >= 30<<30
+			if got.Allowed != want {
+				t.Fatalf("%s at %d: allowed=%v want %v", class, free, got.Allowed, want)
+			}
 		}
 	}
-	if strings.Index(line, "--auto-safe --apply") > strings.Index(line, "--provider go-build-cache") {
-		t.Fatalf("go-build-cache was not last reclaim lever: %s", line)
+	// Custom recovery bands need not be ordered across severity. A broad
+	// build cannot recover before a larger critical latch has cleared.
+	policy.Storage.CriticalReleaseBytes = 40 << 30
+	critical := EvaluateStorage(StorageSnapshot{Available: true, AvailableBytes: 9 << 30}, policy.Storage, LevelNormal)
+	if got := StorageAdmissionForClass(critical, policy, WorkClassBuild, "test"); got.Snapshot.Storage.ReleaseBytes != 40<<30 {
+		t.Fatalf("custom critical latch omitted: %+v", got)
 	}
-	if strings.Index(line, "--provider ios-simulator-runtime") > strings.Index(line, "--provider go-build-cache") {
-		t.Fatalf("ios-simulator-runtime must precede go-build-cache: %s", line)
+	for _, enabled := range []bool{false, true} {
+		policy.Storage.Enabled = enabled
+		policy.Storage.EnforceAdmission = false
+		got := StorageAdmissionForClass(StorageSnapshot{Available: true, Level: LevelCritical}, policy, WorkClassInstall, "test")
+		if !got.Allowed {
+			t.Fatal("observe/disabled policy must not enforce")
+		}
+	}
+}
+
+func TestFormatStorageDeadlockAdviceActionable(t *testing.T) {
+	policy := DefaultPolicy(16 << 10).Storage
+	policy.TargetFreeBytes = 60 << 30
+	snap := StorageSnapshot{Available: true, AvailableBytes: 28 << 30, TotalBytes: 100 << 30, Level: LevelRed}
+	line := FormatStorageDeadlockAdvice(snap, policy)
+	for _, want := range []string{"physical_free=28.0 GiB (30.1 GB)", "release=30.0 GiB", "need≈2.0 GiB", "cleanup target=60.0 GiB is optional", "storage plan --target-free 30GiB", "skill storage-reclaim", "review provider eligibility"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("missing %q: %s", want, line)
+		}
+	}
+	for _, unwanted := range []string{"--apply", "--full-wipe", "--provider user-trash", "--provider ios-simulator-runtime", "--target-free 50GiB"} {
+		if strings.Contains(line, unwanted) {
+			t.Fatalf("unsafe or excessive advice %q: %s", unwanted, line)
+		}
+	}
+	// A class-specific admission carries the actual required release; a
+	// critical express job needs 15 GiB, not the broad-work 30 GiB.
+	snap.AvailableBytes = 9 << 30
+	snap.ReleaseBytes = 15 << 30
+	if line = FormatStorageDeadlockAdvice(snap, policy); !strings.Contains(line, "--target-free 15GiB") || !strings.Contains(line, "need≈6.0 GiB") {
+		t.Fatal(line)
+	}
+	// Custom byte thresholds must not be rounded down in copyable commands.
+	snap.ReleaseBytes = (31 << 30) + 7
+	if line = FormatStorageDeadlockAdvice(snap, policy); !strings.Contains(line, "--target-free 33285996551") {
+		t.Fatal(line)
+	}
+	if line = FormatStorageDeadlockAdvice(StorageSnapshot{}, policy); strings.Contains(line, "need≈") || !strings.Contains(line, "capacity unavailable") {
+		t.Fatal(line)
 	}
 }
 
@@ -155,5 +223,22 @@ func TestDefaultStorageRedReleaseHysteresisNarrowed(t *testing.T) {
 	}
 	if p.Storage.RedReleaseBytes-p.Storage.RedFreeBytes != 5<<30 {
 		t.Fatalf("hysteresis band want 5GiB got %d", p.Storage.RedReleaseBytes-p.Storage.RedFreeBytes)
+	}
+}
+
+func TestLoadPolicyDoesNotSilentlyMigrateCriticalRecovery(t *testing.T) {
+	p := DefaultPolicy(16 << 10)
+	p.Storage.CriticalReleaseBytes = 20 << 30
+	body, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "policy.json")
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, persisted, err := LoadPolicy(path, 16<<10)
+	if err != nil || !persisted || got.Storage.CriticalReleaseBytes != 20<<30 {
+		t.Fatalf("existing policy silently changed: %+v %v", got.Storage, err)
 	}
 }

@@ -527,8 +527,10 @@ func DefaultPolicy(physicalMemoryMB float64) Policy {
 			WarningReleaseBytes: 60 << 30,
 			// P4: narrower hysteresis (25→30 GiB) so latched red is escapable
 			// by normal in-flight completion without a 10 GiB reclaim cliff.
-			RedReleaseBytes:        30 << 30,
-			CriticalReleaseBytes:   20 << 30,
+			RedReleaseBytes: 30 << 30,
+			// A 5 GiB recovery band matches red hysteresis without doubling
+			// the provisional 10 GiB emergency reserve for lightweight work.
+			CriticalReleaseBytes:   15 << 30,
 			TargetFreeBytes:        50 << 30,
 			ProviderMinAgeSeconds:  2 * 60 * 60,
 			ReclaimCooldownSeconds: 60 * 60,

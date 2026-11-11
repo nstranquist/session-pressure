@@ -25,7 +25,7 @@ func TestCmdSessionPressurePolicyMigrateStorage(t *testing.T) {
 		t.Fatalf("migrate rc=%d stderr=%s", rc, stderr)
 	}
 	got, _, err := sessionpressure.LoadPolicy(sessionpressure.PolicyPath(dir), 16*1024)
-	if err != nil || got.Storage.WarningFreeBytes != 50<<30 || got.Storage.TargetFreeBytes != 60<<30 || !got.EnforceAdmission || !got.Storage.EnforceAdmission || got.AutoShedCritical {
+	if err != nil || got.Storage.WarningFreeBytes != 50<<30 || got.Storage.CriticalReleaseBytes != 15<<30 || got.Storage.TargetFreeBytes != 60<<30 || !got.EnforceAdmission || !got.Storage.EnforceAdmission || got.AutoShedCritical {
 		t.Fatalf("policy=%+v err=%v", got, err)
 	}
 }
