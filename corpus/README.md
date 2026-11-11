@@ -15,3 +15,4 @@ This index starts with the remote input work; it does not claim that older
 product decisions have all been reconstructed.
 
 - [Admission reservation recovery](admission-reservation-recovery.md): WORK-3 owned-lease regression and WORK-220 explicit policy migration.
+- [Work-event SQLite read index](work-event-sqlite-index.md): WORK-103 indexed reads, compatible writes, fallback recovery and installed acceptance.

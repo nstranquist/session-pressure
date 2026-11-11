@@ -230,3 +230,33 @@ func TestWorkEventIndexScopesDiagnosticsToReadWindow(t *testing.T) {
 		t.Fatalf("ledger read events=%d diagnostics=%+v err=%v", len(events), diagnostics, err)
 	}
 }
+
+// The fallback is a supported recovery path, so both data and diagnostics
+// must retain the index's operation scope, including invalid lifecycles.
+func TestWorkEventIndexFallbackKeepsScopedDiagnostics(t *testing.T) {
+	store, now := indexFixtureStore(t)
+	good, bad := indexTestOperation(1), indexTestOperation(9)
+	appendIndexFixtureOperation(t, store, now, good, WorkClassTest)
+	for _, eventType := range []WorkEventType{WorkEventQueued, WorkEventFailed, WorkEventCancelled} {
+		event := validWorkEvent(now.Add(-72*time.Hour), eventType)
+		event.OperationID = bad
+		if err := store.AppendDurable(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, filter := range []WorkEventFilter{
+		{}, {Since: now.Add(-24 * time.Hour)}, {Event: WorkEventCompleted},
+		{OperationID: good}, {OperationID: bad}, {Event: WorkEventFailed},
+	} {
+		store.scanOnly = false
+		indexed, indexDiagnostics, indexErr := store.ReadWithDiagnostics(filter)
+		store.scanOnly = true
+		scanned, scanDiagnostics, scanErr := store.ReadWithDiagnostics(filter)
+		if indexErr != nil || scanErr != nil {
+			t.Fatalf("filter %+v: index=%v scan=%v", filter, indexErr, scanErr)
+		}
+		if !reflect.DeepEqual(indexed, scanned) || !reflect.DeepEqual(indexDiagnostics, scanDiagnostics) {
+			t.Fatalf("filter %+v: indexed events=%d diagnostics=%+v, scanned events=%d diagnostics=%+v", filter, len(indexed), indexDiagnostics, len(scanned), scanDiagnostics)
+		}
+	}
+}

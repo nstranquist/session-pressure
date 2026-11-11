@@ -560,8 +560,36 @@ func (store *WorkEventStore) readAll(filter WorkEventFilter) ([]WorkEvent, WorkE
 		if err != nil {
 			return nil, WorkEventDiagnostics{}, err
 		}
+		rows = scopeWorkEventRows(rows, filter)
 	}
 	return finishWorkEventRead(rows, filter)
+}
+
+// Match the index's whole-operation selection before lifecycle validation.
+// An unavailable index must not add unrelated lifecycle warnings to an
+// otherwise identical filtered read. Structural ledger faults are still
+// checked globally by scanWorkEventRows before this selection.
+func scopeWorkEventRows(rows []WorkEvent, filter WorkEventFilter) []WorkEvent {
+	if filter.Since.IsZero() && filter.Class == "" && filter.Event == "" && filter.OperationID == "" {
+		return rows
+	}
+	matching := make(map[string]struct{})
+	for _, event := range rows {
+		if (!filter.Since.IsZero() && event.Timestamp.Before(filter.Since)) ||
+			(filter.Class != "" && event.Class != filter.Class) ||
+			(filter.Event != "" && event.Event != filter.Event) ||
+			(filter.OperationID != "" && event.OperationID != filter.OperationID) {
+			continue
+		}
+		matching[event.OperationID] = struct{}{}
+	}
+	selected := rows[:0]
+	for _, event := range rows {
+		if _, ok := matching[event.OperationID]; ok {
+			selected = append(selected, event)
+		}
+	}
+	return selected
 }
 
 // isWorkEventLedgerFault separates a structural fault in the ledger itself
