@@ -8,6 +8,15 @@ reserve; use the canonical remote verification wrapper to bind one host:
 go run ./scripts/release build --platform darwin/arm64 --out /absolute/export
 ```
 
+For a native Darwin cross-build from a Linux runner, compile the release driver
+for the runner first with `CGO_ENABLED=0 GOFLAGS= go build -o /absolute/release-builder
+./scripts/release`. Then run that driver from the clean source checkout with
+`CC=/srv/build/opt/pressure-darwin-clang` and
+`GOFLAGS="'-ldflags=-s -w -linkmode=external'"`. The inner quotes keep all linker
+options in one Go flag token; quoting only the value after `-ldflags=` splits
+`-linkmode` into an invalid Go command flag. Keep the driver and release output
+outside the source checkout so its clean-source check remains meaningful.
+
 Before admitting a sealed bundle to the runner, run `git bundle verify BUNDLE`
 and `git bundle list-heads BUNDLE`. Clone its named ref explicitly with
 `git clone --branch main BUNDLE DESTINATION`, then check that `git rev-parse HEAD`
