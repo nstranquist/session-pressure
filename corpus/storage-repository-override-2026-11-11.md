@@ -86,11 +86,51 @@ automated here.
   (35.6 s each), and all six new tests passed 3/3. Recorded as a load-timing
   flake of that test under the full parallel suite, not fixed here.
 
+## Publication, installation and live proof
+
+- Guarded publication: `072e4d6744e2a392802e58846c98beb07e81ed38`,
+  publication `7d499daac61861e7b0c0739c3722c3f2` (local main; no remote push
+  claimed).
+- Native Darwin arm64/CGO release built on runner-3 from a verified
+  bundle of committed main, clean clone, Linux-built release driver, clang
+  external-link profile: job cf124828-f6f0-4cef-b3eb-ae2469c707b2, exit 0.
+  Copied bundle SHA-256 values matched `release.json` for all six files.
+- Installed 2026-11-11 ~23:50 UTC via `promote-session-pressure` with
+  `--expected-current ca9e784e8444dc5f03c583500dfab028e9d81ba8`. Resident
+  restarted (pid 30997) and reports source 072e4d6744e2. Prior release kept.
+  `session pressure doctor` reports ok.
+- Front door: `artifact status` reports `front_door=378c08b5c35d` against
+  `cli/helper=072e4d6744e2`. The front door only links session-pressure for
+  in-process agent-launch admission; `work run` and `storage` commands exec
+  the installed standalone CLI and helper. `LoadPolicy` ignores unknown
+  fields, so the older front door reads the new policy. The mismatch clears on
+  the next committed `ndev` build; it was not rebuilt here because that build
+  also promotes unrelated nicos-tools changes.
+- Override set with the installed CLI:
+  `ndev --json session pressure storage policy repository set /Users/user/dev/garrid --critical-free 5GiB --reason "..."`.
+  A JSON diff of `policy.json` before/after showed only
+  `storage.repository_overrides` added. `storage status` JSON shows the
+  override and `repository_admission` with `exists: true, admits_now: true`
+  (17.1 GiB free, level red at the time).
+- Live installed-path proof with the real policy and coordinator, pointing
+  only the storage probe (`NDEV_STORAGE_VOLUME_PATH`) at hidden sparse APFS
+  images, `work run --class test --wait 8s --no-reuse -- true`:
+  - 7.78 GiB free, cwd = Garrid commit-delivery candidate slot0: admitted, exit 0.
+  - 7.78 GiB free, cwd = `/Users/user/dev/garrid`: admitted, exit 0.
+  - 7.78 GiB free, cwd = session-pressure repository: held,
+    `pressure=critical/storage reason=storage available 7.8 GiB is critical`, exit 124.
+  - 3.79 GiB free, cwd = Garrid candidate slot0: held, `reason=storage
+    available 3.8 GiB is below repository floor 5.0 GiB for
+    /Users/user/dev/garrid`, exit 124.
+  Images were detached and removed afterwards.
+
 ## Open items
 
 - [x] Remote full suite on the active runner (one unrelated timing flake; see above).
+- [x] Guarded publication.
+- [x] Native Darwin release build, install with the expected-current fence.
+- [x] Set the Garrid override to 5 GiB and confirm `storage status` JSON.
 - [ ] Follow-up: `TestGoReuseSingleflightAndExplicitExecution` 20 s wait budget
   flakes under full-suite runner load.
-- [ ] Guarded publication.
-- [ ] Native Darwin release build, install with the expected-current fence.
-- [ ] Set the Garrid override to 5 GiB and confirm `storage status` JSON.
+- [ ] Front door realigns on the next committed `ndev` build.
+- [ ] Cache clearing below 5 GiB remains a manual last-resort operator step.
