@@ -124,3 +124,25 @@ runner-3 build passed SDK identity validation but failed readonly module
 validation (go.mod requires updates). This shared producer failure is under
 repair. WORK-3 remains open for front-door alignment, replay tradeoff analysis,
 and the real seven-day shadow decision; no reserve/burst policy was enabled.
+
+## Aligned installed bundle acceptance (2026-11-11 06:41 UTC)
+
+Runner-3 job `0e078b99-c4be-4bbc-9678-a7a9a278ddf7` built the clean
+Darwin/arm64 CGO release from `84b378cdbe3009fa88a10288d9a3b0e856d2c326`.
+Canonical promotion fenced the prior installed revision `1596f7a80d01`.
+Resident PID 98048 reported healthy; the CLI, front door and helper agree,
+and doctor reports `source_revisions.mismatch=false`. Helper SHA-256 is
+`e1d91ccc8dd810913a6ea4f975a82eb6149eb72e8737600e8d452adcb18a8968`.
+The installed lifecycle rerun passed all four cases: release wakeup 70 ms,
+owned cancellation, persisted dead-owner recovery, and four-owner concurrent
+release 101 ms. Final private usage was zero; live policy was unchanged.
+Receipts: this session's `work3-aligned-lifecycle-acceptance/result.json`,
+`work3-aligned-native-release/release.json`, and
+`work3-aligned-installed-doctor.json`.
+
+The first resident sample is insufficient to establish a new daily-driver
+baseline. The 24-hour swap-derate observation remains 53 minutes/day; its
+30-minute target is diagnostic, not a reason to weaken admission blindly.
+WORK-3 remains open for the real seven-day shadow, reserve/burst decision,
+and the documented build-latency tradeoff. Counterfactual replay does not
+establish that the shadow window elapsed.
