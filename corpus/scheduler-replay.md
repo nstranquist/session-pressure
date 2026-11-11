@@ -38,6 +38,46 @@ verify that only the longer window includes both; invalid windows are refused.
 - [ ] Demonstrate installed release wakeups, cancellation and dead-owner recovery.
 - [ ] Use seven-day evidence to accept, revise or reject reserve/burst policy.
 
+## Installed seven-day replay and cancellation repair
+
+2026-11-11: committed 714347b2046c was built as a clean native bundle on
+runner 3 and promoted through the expected-current release contract. The
+installed CLI and helper matched that revision; the factory front door still
+had an older embedded product stamp and requires its separate clean build.
+The resident reported healthy after promotion. No live policy changed.
+
+The installed 168h replay retained 7,446 operations and passed 22 deterministic
+scenarios. Candidate queue p95 versus FIFO: test 91,986 to 56,231 ms; build
+218,346 to 233,909 ms; browser 82,672 to 401 ms. Short jobs with long waits
+fell from 300 to 218. Capacity and protected-bypass violations were zero.
+Build wait worsened by 7.13%; passing promotion diagnostics does not erase
+that tradeoff. This counterfactual uses retained arrivals/runtimes, excludes
+host pressure, and mixes historical versions. It is not an elapsed shadow
+rollout or sufficient evidence to enable reserve/burst.
+
+The installed private-state lifecycle fixture passed release/wakeup, then
+failed explicit cancellation twice. The owner had handled SIGTERM and
+released its lease before CancelWork called DropLease. Cancellation had
+succeeded, but the command returned the missing-lease error. Preserve initial
+live inspection and all other errors; only a missing lease after signaling
+is reconciled with current coordinator status. Unknown operations still fail.
+No automatic cancellation was added.
+
+The regression uses a separate process that releases its lease on SIGTERM and
+exits successfully. Three race-detector repetitions passed on runner 3, job
+f09740f6-cc4c-4ed7-bf4a-3f742038b0bc (10.873s). Full sessionpressure and
+sessionpressurecmd race suites passed job 65b28df1-2648-45a9-8493-f7b7d25eb810
+(98.693s and 3.114s). The installed lifecycle script retains exact helper
+provenance, unchanged policy, and private state. It checks observed accounting
+through release, owned cancellation, persisted dead-owner recovery, and
+concurrent release. Its final installed rerun remains pending the repaired
+native bundle; historical failed receipts are retained.
+
+Private receipts: work3-installed-7d-evaluation.json,
+work3-lifecycle-acceptance-1/, work3-lifecycle-acceptance-2/,
+work3-cancel-race.log and work3-cancel-full-race.log under this session's
+session-workspaces directory.
+
 ## Session journal
 
 - 2026-11-11: Installed baseline exposed a performance tradeoff; WORK-3 stays

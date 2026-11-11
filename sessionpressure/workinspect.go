@@ -462,6 +462,11 @@ func CancelWork(ctx context.Context, coordinator *WorkCoordinator, operationID s
 	}
 	signalProcessPIDs(pids, syscall.SIGKILL)
 	status, err := coordinator.DropLease(ctx, operationID)
+	// A cooperative owner may release its lease while handling SIGTERM.
+	// Initial inspection already established that this operation was live.
+	if errors.Is(err, errWorkInspectNotFound) {
+		status, err = coordinator.Status(ctx)
+	}
 	if err != nil {
 		return WorkCancelResult{}, err
 	}
