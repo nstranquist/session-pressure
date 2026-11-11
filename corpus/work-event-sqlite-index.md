@@ -1,7 +1,7 @@
 # Work-event SQLite read index
 
 Owner: codex / 01a1c82a-4cc8-7950-ad12-380eb2d1ecce.
-Status: source recovery fix verified; installed acceptance pending, 2026-11-11.
+Status: installed acceptance verified, 2026-11-11.
 Work: WORK-103.
 
 ## Contract and decisions
@@ -53,11 +53,46 @@ identity under `work103-installed/`, original failing frozen snapshots under
 receipts `work103-remote-index.log` / `work103-fallback-race.log`. No live ledger,
 lease, policy or running monitor was changed by those replay attempts.
 
-## Open acceptance
+## Installed acceptance and limits
+
+Clean guarded source `a4d3a0e01fb7256b3eba12f8481162412476e064` built with
+native Darwin CGO on runner 3 (`2ef8c94e-0d4e-4e95-85c9-70456e9093fe`). The
+installer compared its observed previous revision before promotion. The resident
+helper is verified at the same revision. The rebuilt factory front door
+`40e8cfbc991109b993300343ffb9131525597eb9` embeds that product revision;
+installed doctor reports all three identities equal and the monitor fresh and
+healthy. The existing swap-derate warning (121 minutes/day versus its
+30-minute diagnostic budget) remains visible; no admission-policy recovery is claimed.
+
+The hash-bound installed replay passed 16 checks on 55,757 records / 15 shards,
+including fallback, filters, shrink, append, prune, rebuild and corrupt-ledger
+refusal. Warm exact-operation median was 30 ms indexed versus 371 ms scanning;
+warm 24-hour statistics median was 230 ms versus 417 ms. Cold construction was
+2,103 ms versus a 465 ms scan; rebuild was 2,026 ms versus 462 ms. Full history
+was 407 versus 423 ms and event filtering 392 versus 372 ms. Index maintenance
+and cold construction have a real cost; these observations support faster warm
+lookups, not a universal speedup. The scan remains a compatible recovery path.
+Avoiding cold import would sacrifice recovery or require a separate maintenance
+lifecycle; the current read cache preserves old-writer compatibility and
+durable-log authority. Measurements compare paths in the same executable,
+not causal fleet results or an old/new version benchmark.
+
+The first successful installed replay emitted 30 successful Work commands and two
+intentional malformed-private-ledger refusals in a 17-second window, plus one
+successful monitor install. These negative fixtures remain expected refusals.
+The second replay binds one resolved executable by SHA-256 before and after the
+batch, with a two-minute command deadline. Machine-readable counts, timings,
+identities, source jobs and limits are in [the acceptance report](research/2026-11-11-work-event-index-acceptance.json).
+No private ledger rows or arbitrary command text are committed. The catalog
+contract landed as `40e8cfbc991109b993300343ffb9131525597eb9`; its owned delivery
+doctor passed. The verifier improvement prevents concurrent installation from
+silently mixing revisions.
+
+## Acceptance
 
 - [x] Source SQLite import, parity, lifecycle and recovery regression checks.
 - [x] Identify installed baseline and reproduce the actual fallback defect.
-- [ ] Guarded source capture and clean committed native-CGO remote release.
-- [ ] Guarded installation and installed frozen-ledger acceptance.
-- [ ] Fresh installed telemetry and indexed/scan comparison measurements.
-- [ ] Catalog storage contract delivered; final proof and closure linked.
+- [x] Guarded source capture and clean committed native-CGO remote release.
+- [x] Guarded installation and installed frozen-ledger acceptance.
+- [x] Fresh installed telemetry and indexed/scan comparison measurements.
+- [x] Catalog storage contract delivered; final proof and closure linked.

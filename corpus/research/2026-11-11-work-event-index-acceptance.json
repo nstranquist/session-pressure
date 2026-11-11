@@ -1,0 +1,162 @@
+{
+  "binary": "/Users/user/.local/bin/.session-pressure-releases/a4d3a0e01fb7256b3eba12f8481162412476e064/session-pressure",
+  "binary_sha256": "dd17b601756fe60643836f7f1814261591b5f8fc3f195756d0cd91a48e3df669",
+  "binary_unchanged": true,
+  "captured_at": "2026-11-11T18:03:16.396784Z",
+  "checks": [
+    {
+      "name": "cold full stats",
+      "passed": true,
+      "index_ms": 2103,
+      "scan_ms": 465
+    },
+    {
+      "name": "history",
+      "passed": true,
+      "index_ms": 407,
+      "scan_ms": 423
+    },
+    {
+      "name": "event filter",
+      "passed": true,
+      "index_ms": 392,
+      "scan_ms": 372
+    },
+    {
+      "name": "class filter",
+      "passed": true,
+      "index_ms": 294,
+      "scan_ms": 365
+    },
+    {
+      "name": "operation filter",
+      "passed": true,
+      "index_ms": 31,
+      "scan_ms": 364
+    },
+    {
+      "name": "shrunk shard",
+      "passed": true,
+      "index_ms": 544,
+      "scan_ms": 352
+    },
+    {
+      "name": "old writer appended records",
+      "passed": true,
+      "index_ms": 889,
+      "scan_ms": 456
+    },
+    {
+      "name": "pruned shard",
+      "passed": true,
+      "index_ms": 473,
+      "scan_ms": 462
+    },
+    {
+      "name": "warm stats 1",
+      "passed": true,
+      "index_ms": 252,
+      "scan_ms": 430
+    },
+    {
+      "name": "warm operation 1",
+      "passed": true,
+      "index_ms": 30,
+      "scan_ms": 371
+    },
+    {
+      "name": "warm stats 2",
+      "passed": true,
+      "index_ms": 230,
+      "scan_ms": 379
+    },
+    {
+      "name": "warm operation 2",
+      "passed": true,
+      "index_ms": 28,
+      "scan_ms": 363
+    },
+    {
+      "name": "warm stats 3",
+      "passed": true,
+      "index_ms": 227,
+      "scan_ms": 417
+    },
+    {
+      "name": "warm operation 3",
+      "passed": true,
+      "index_ms": 31,
+      "scan_ms": 408
+    },
+    {
+      "name": "rebuilt index",
+      "passed": true,
+      "index_ms": 2026,
+      "scan_ms": 462
+    },
+    {
+      "name": "malformed ledger fails closed through index and scan",
+      "passed": true,
+      "index_ms": 0,
+      "scan_ms": 0
+    }
+  ],
+  "clock_tolerance": "1e-5 relative/absolute for only interrupt_projection.window_hours, interrupt_projection.wrapper_interrupt_rate_per_hour and swap_derate.wait_minutes_per_day; all other fields exact",
+  "frozen_records": 55757,
+  "frozen_shards": 15,
+  "ledger_digest": "sha256:6e8b85e5fe6e7a79cd986897ef5fdd569ba5e289d13d0f406e2d2bf4d9d60312",
+  "live_ledger_modified": false,
+  "normalization": [
+    "since",
+    "generated_at"
+  ],
+  "ok": true,
+  "requested_binary": "/Users/user/.local/bin/session-pressure",
+  "schema": "session-pressure.installed-work-index-acceptance.v1",
+  "timing_scope": "same installed binary, frozen ledger; scan forced by unavailable index; not an old-version comparison",
+  "release": {
+    "version": "0.7.1",
+    "source_revision": "a4d3a0e01fb7256b3eba12f8481162412476e064",
+    "remote_job": "2ef8c94e-0d4e-4e95-85c9-70456e9093fe",
+    "darwin_native_cgo": true,
+    "installed_helper_sha256": "31980ae53e9b8af884b6f098addc4089e62ef52273608b5391e341eaefeaea5f"
+  },
+  "installed_health": {
+    "ok": true,
+    "source_revisions": {
+      "cli": "a4d3a0e01fb7256b3eba12f8481162412476e064",
+      "front_door": "a4d3a0e01fb7256b3eba12f8481162412476e064",
+      "installed_helper": "a4d3a0e01fb7256b3eba12f8481162412476e064",
+      "checked": true,
+      "mismatch": false
+    },
+    "monitor": {
+      "healthy": true,
+      "fresh": true,
+      "age_seconds": 9.91214,
+      "pid": 77906,
+      "loaded": true,
+      "running": true
+    },
+    "coverage_status": "ready-with-explicit-boundaries",
+    "remaining_warning": "Existing swap-derate wait is 121 min/day versus its 30-minute diagnostic budget; no admission-policy recovery claimed."
+  },
+  "front_door": {
+    "source_revision": "40e8cfbc991109b993300343ffb9131525597eb9",
+    "binary_sha256": "5c0bb5d5ba8f3fdf1623a341422525f561e9b757cb93c398039a1e90e596249c",
+    "remote_job": "b9677970-ac52-442e-bb2d-554e82ca199f"
+  },
+  "telemetry": {
+    "window": "2026-11-11T17:59:55Z/2026-11-11T18:00:12Z",
+    "rows": 33,
+    "work_command_successes": 30,
+    "intentional_malformed_ledger_refusals": 2,
+    "monitor_install_successes": 1,
+    "scope": "First installed replay only; two corrupt private fixtures intentionally emit exit 1. Not a production reliability trend."
+  },
+  "catalog": {
+    "delivery_id": "876c4a1a-f709-4622-afb5-5c1aa2a7525d",
+    "landed_revision": "40e8cfbc991109b993300343ffb9131525597eb9",
+    "doctor_ok": true
+  }
+}

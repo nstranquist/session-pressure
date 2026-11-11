@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -85,7 +86,9 @@ func equivalent(a, b any, path string) bool {
 }
 
 func invoke(bin, home string, args ...string) (any, int64, error) {
-	c := exec.Command(bin, append([]string{"--json", "work"}, args...)...)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	c := exec.CommandContext(ctx, bin, append([]string{"--json", "work"}, args...)...)
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, "NDEV_SESSION_PRESSURE_HOME=") && !strings.HasPrefix(e, "SESSION_PRESSURE_HOME=") {
 			c.Env = append(c.Env, e)
@@ -116,6 +119,13 @@ func main() {
 	if !filepath.IsAbs(*bin) || !filepath.IsAbs(*ledger) || !filepath.IsAbs(*out) {
 		panic("absolute binary, ledger and out paths required")
 	}
+	requestedBinary := *bin
+	resolvedBinary, err := filepath.EvalSymlinks(requestedBinary)
+	must(err)
+	before, err := os.ReadFile(resolvedBinary)
+	must(err)
+	binaryHash := sha256.Sum256(before)
+	*bin = resolvedBinary
 	must(os.Mkdir(*out, 0700))
 	indexed, scanned := filepath.Join(*out, "indexed"), filepath.Join(*out, "scan")
 	must(os.Mkdir(indexed, 0700))
@@ -228,7 +238,12 @@ func main() {
 	if stat.Mode().Perm() != 0600 {
 		panic("index permissions are not owner only")
 	}
-	report := map[string]any{"schema": "session-pressure.installed-work-index-acceptance.v1", "captured_at": time.Now().UTC(), "binary": *bin, "frozen_shards": len(paths), "frozen_records": lines, "ledger_digest": "sha256:" + hex.EncodeToString(hash.Sum(nil)), "checks": checks, "ok": true, "live_ledger_modified": false, "normalization": []string{"since", "generated_at"}, "clock_tolerance": "1e-5 relative/absolute for only interrupt_projection.window_hours, interrupt_projection.wrapper_interrupt_rate_per_hour and swap_derate.wait_minutes_per_day; all other fields exact", "timing_scope": "same installed binary, frozen ledger; scan forced by unavailable index; not an old-version comparison"}
+	after, err := os.ReadFile(resolvedBinary)
+	must(err)
+	if sha256.Sum256(after) != binaryHash {
+		panic("installed binary changed during acceptance")
+	}
+	report := map[string]any{"requested_binary": requestedBinary, "binary_sha256": hex.EncodeToString(binaryHash[:]), "binary_unchanged": true, "schema": "session-pressure.installed-work-index-acceptance.v1", "captured_at": time.Now().UTC(), "binary": *bin, "frozen_shards": len(paths), "frozen_records": lines, "ledger_digest": "sha256:" + hex.EncodeToString(hash.Sum(nil)), "checks": checks, "ok": true, "live_ledger_modified": false, "normalization": []string{"since", "generated_at"}, "clock_tolerance": "1e-5 relative/absolute for only interrupt_projection.window_hours, interrupt_projection.wrapper_interrupt_rate_per_hour and swap_derate.wait_minutes_per_day; all other fields exact", "timing_scope": "same installed binary, frozen ledger; scan forced by unavailable index; not an old-version comparison"}
 	b, err := json.MarshalIndent(report, "", "  ")
 	must(err)
 	must(os.WriteFile(filepath.Join(*out, "acceptance.json"), append(b, '\n'), 0600))
