@@ -121,7 +121,7 @@ func evaluateFastLane(inputs fastLaneInputs) (bool, fastLaneRefusal) {
 // fastLaneDecision applies the predicate to one live admission observation. The
 // bool reports whether the fast lane owned the decision; when false the caller
 // falls through to the unchanged confirm-and-latch path.
-func (gate *workAdmissionGate) fastLaneDecision(admission Admission, dimension string) (workAdmissionDecision, bool) {
+func (gate *workAdmissionGate) fastLaneDecision(admission Admission, dimension string, ownsLease bool) (workAdmissionDecision, bool) {
 	if gate == nil || !gate.limits.FastLaneEnabled || gate.class == "" {
 		return workAdmissionDecision{}, false
 	}
@@ -133,6 +133,17 @@ func (gate *workAdmissionGate) fastLaneDecision(admission Admission, dimension s
 	free, freeKnown := gate.freeCapacity()
 	if !freeKnown {
 		return workAdmissionDecision{}, false
+	}
+	// Evaluate the same contention before and after acquiring this operation's
+	// lease. It has not started its child yet, so its own reservation is neither
+	// new CPU load nor competing capacity. Counting it twice can revoke an
+	// admission solely because acquisition succeeded, causing an endless
+	// reserve/reacquire loop. Capacity consumed by other operations still counts.
+	if ownsLease {
+		free += weight
+		if free > gate.limits.Capacity {
+			free = gate.limits.Capacity
+		}
 	}
 	available, cpuAvailable, cpuPercent, _, _, _ := coordinatedWorkEvidence(admission)
 	admitted, refusal := evaluateFastLane(fastLaneInputs{

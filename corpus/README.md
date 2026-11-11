@@ -13,3 +13,5 @@ Owner: codex. Status: active, 2026-11-10.
 
 This index starts with the remote input work; it does not claim that older
 product decisions have all been reconstructed.
+
+- [Admission reservation recovery](admission-reservation-recovery.md): WORK-3 owned-lease regression and WORK-220 explicit policy migration.

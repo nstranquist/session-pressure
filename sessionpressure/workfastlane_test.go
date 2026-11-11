@@ -66,6 +66,40 @@ func TestFastLaneAdmitsLightShortWorkWhenCapacityIsFree(t *testing.T) {
 	}
 }
 
+func TestFastLaneOwnedLeaseDoesNotCountAsNewContention(t *testing.T) {
+	limits := testWorkLimits()
+	limits.FastLaneEnabled = true
+	limits.FastLaneMaxWeight = 2
+	limits.FastLaneMaxRuntimeMS = 60_000
+	free := 4
+	gate := &workAdmissionGate{
+		limits: limits, class: WorkClassExpressBuild,
+		classRuntimeP95MS:    func() (int64, bool) { return 5_000, true },
+		freeWeightedCapacity: func() (int, bool) { return free, true },
+	}
+	red := Admission{Allowed: false, Level: LevelRed,
+		Reasons: []string{"host CPU 99.0% >= red 95.0%"},
+		Snapshot: &Snapshot{HostCPUAvailable: true, HostCPUPercent: 99,
+			HostCPURollingAvailable: true, HostCPURollingPercent: 99}}
+	if decision := gate.Observe(red, false); !decision.Allowed {
+		t.Fatalf("reservation should qualify before acquisition: %+v", decision)
+	}
+	free -= limits.ExpressBuildWeight
+	if decision := gate.ObserveOwned(red, false); !decision.Allowed {
+		t.Fatalf("acquiring its own lease must not revoke admission: %+v", decision)
+	}
+	// A different operation consuming capacity must still revoke admission.
+	free--
+	if decision := gate.ObserveOwned(red, false); decision.Allowed {
+		t.Fatalf("additional contention must fail closed: %+v", decision)
+	}
+	// Unleased callers cannot credit themselves with capacity they do not own.
+	free = 2
+	if decision := gate.Observe(red, false); decision.Allowed {
+		t.Fatalf("unleased admission must use actual free capacity: %+v", decision)
+	}
+}
+
 // TestFastLaneAdmitsThisHostsMeasuredWorkload pins the shipped defaults against
 // the real distribution they were calibrated from. The first implementation was
 // inert against exactly these numbers — a 60 s ceiling refused every class
@@ -193,7 +227,7 @@ func TestFastLaneGateFallsThroughWithoutWiring(t *testing.T) {
 			classRuntimeP95MS: func() (int64, bool) { return 5_000, true }}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			if _, owned := testCase.gate.fastLaneDecision(Admission{}, "cpu"); owned {
+			if _, owned := testCase.gate.fastLaneDecision(Admission{}, "cpu", false); owned {
 				t.Fatal("unwired fast lane owned the decision instead of failing closed")
 			}
 		})

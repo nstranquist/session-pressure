@@ -716,7 +716,7 @@ func (gate *workAdmissionGate) observe(admission Admission, immediate, ownsLease
 	// them before this was caught, which read as "the fast lane keeps declining"
 	// when in truth it had never been asked a real question.
 	if dimension == "cpu" {
-		if decision, ok := gate.fastLaneDecision(admission, dimension); ok {
+		if decision, ok := gate.fastLaneDecision(admission, dimension, ownsLease); ok {
 			return decision
 		}
 	}
