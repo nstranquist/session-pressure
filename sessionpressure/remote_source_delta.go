@@ -401,7 +401,7 @@ func remoteSourceDeltaScript(remote, key, request string) string {
 		"inc=\"$remote/.incoming\"",
 		"mkdir -p \"$inc\" " + shellQuote(remoteSourceBaseRoot),
 		"printf '%s\\n' " + shellQuote(request) + " > \"$remote.request\"",
-		"tar -xzf - -C \"$inc\"",
+		"tar --same-permissions -xzf - -C \"$inc\"",
 		"ctl=\"$inc/" + remoteSourceControlDir + "\"",
 		"test \"$(sha256sum < \"$ctl/manifest\" | cut -c1-64)\" = \"$(cut -c1-64 \"$ctl/digest\")\"",
 		// Removal entries come from a manifest the box accepted; refuse any

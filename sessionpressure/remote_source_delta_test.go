@@ -307,6 +307,13 @@ func TestRemoteSourceDeltaKeepsFileModes(t *testing.T) {
 	if _, err := uploadRemoteSourcesDelta(ssh, os.Stderr, state, "box", filepath.Join(jobs, "a"), "a", common, []string{module}, remoteScopeModules); err != nil {
 		t.Fatal(err)
 	}
+	regular, err := os.Stat(filepath.Join(jobs, "a", "source", "mod", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regular.Mode().Perm() != 0o644 {
+		t.Fatalf("seed lost regular permissions: %v", regular.Mode())
+	}
 	if err := os.Chmod(filepath.Join(module, "run.sh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +328,7 @@ func TestRemoteSourceDeltaKeepsFileModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm()&0o100 == 0 {
+	if info.Mode().Perm() != 0o755 {
 		t.Fatalf("executable bit lost: %v", info.Mode())
 	}
 }

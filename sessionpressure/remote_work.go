@@ -588,7 +588,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		}
 	}
 	if !useDelta {
-		upload := ssh("timeout 600 flock -w 600 /srv/build/input-transfer.lock sh -c " + shellQuote("umask 077; mkdir -p "+shellQuote(remote+"/source")+" && printf '%s\n' "+shellQuote("pressure-"+job)+" > "+shellQuote(remote+".request")+" && tar -xzf - -C "+shellQuote(remote+"/source")))
+		upload := ssh("timeout 600 flock -w 600 /srv/build/input-transfer.lock sh -c " + shellQuote("umask 077; mkdir -p "+shellQuote(remote+"/source")+" && printf '%s\n' "+shellQuote("pressure-"+job)+" > "+shellQuote(remote+".request")+" && tar --same-permissions -xzf - -C "+shellQuote(remote+"/source")))
 		pipe, err := upload.StdinPipe()
 		if err != nil {
 			return true, 1, err
