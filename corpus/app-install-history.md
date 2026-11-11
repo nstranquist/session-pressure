@@ -1,8 +1,7 @@
 # App installation history and rollback retention
 
 Owner: codex/01a1c9d7-d194-7222-9a81-49fbbdb020fc.
-Status: migration independently verified; installed retry bookkeeping correction
-in progress, 2026-11-11.
+Status: completed and independently verified, 2026-11-11.
 
 ## Intent and baseline
 
@@ -99,8 +98,8 @@ external history is not authorized by this task.
   reconnection and idempotent receipt preservation without adjacent clutter.
 - [x] Ran real migration; independently verified all 42 backup identities, all
   34 receipt bytes, database integrity, external snapshot and unchanged live app.
-- [ ] Install and verify the retry bookkeeping correction; final state must
-  contain 42 backup records, 34 receipts, one local and 41 external app copies.
+- [x] Installed and independently verified the retry bookkeeping correction: 42
+  backup records, 34 receipts, one local and 41 external app copies.
 
 ## Journal and measurement
 
@@ -123,3 +122,18 @@ copy (43 records for 42 artifacts). No app copy or receipt was duplicated or
 lost. The correction follows each original provenance row across moves, adds
 a unique stored-location index, consolidates only identical duplicate locations
 and digests, and adds explicit backup-count and early-schema repair regressions.
+
+2026-11-11 final acceptance: correction `2111345c` passed race tests and vet
+(job `383e2762-caf0-4b6a-b539-a5159f2a04a9`); clean Darwin arm64 cross-build
+passed (job `e45f4617-cc0e-48c9-90a6-f7cc973135a5`). Installed helper SHA-256:
+`94baf7fb516f9f48a75578af99a151019ccbaf49fe02a1df496f6efff66d989c`.
+Native correction acceptance repaired the initial fixture, installed another
+signed app, moved the previous local rollback externally and verified two
+stable retries (four backup records, five receipts, one local copy).
+Two real installed maintenance runs both returned 42 backup records and 34
+receipts. Final independent verification repeated all 42 baseline tree hashes
+and signature checks, both SQLite integrity checks, all 34 original receipt
+byte comparisons in both databases, and unchanged live app identity. Retained
+local rollback: `NDev Pressure.app.rollback-20261110T125544.412255000Z`.
+X10 holds 41 older copies, 663,958,246 logical bytes. No open items remain
+within this authorized migration and installer scope.
