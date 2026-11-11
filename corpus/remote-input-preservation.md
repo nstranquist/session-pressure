@@ -1,7 +1,7 @@
 # Remote input preservation — WORK-254
 
 Owner: codex, session 01a1c547-f41d-7d02-ac3b-a539d1ff6de5.
-Status: source verified; native promotion in progress, 2026-11-10.
+Status: landed, installed and automatic behavior verified, 2026-11-10.
 User request (summarised, not verbatim): fix catalog packaging and expand useful
 runner work while preserving delivery throughput.
 
@@ -64,9 +64,12 @@ package and vet passed: 8c70f336-0a05-489b-ad9f-a3d5aecdedc5.
 ## Open proof items
 
 - [x] Full package + vet: 5a62e98d-6381-4c76-a51d-643ea3b3bb0f (gr3, exit 0).
-- [ ] Guarded source publication and native bundle/helper promotion.
-- [ ] Automatic processtree passing receipt with installed permission correction.
-- [ ] Final fleet enrollment documented in nicos-ops corpus.
+- [x] Guarded publication 036dc8d4: source 0f9f5340; native bundle 82eed293 passed.
+  CLI/helper match source, ready resident; policy unchanged, artifact drift false.
+- [x] Installed-helper full automatic processtree 41885446 and catalog 4788ca36.
+  Installed default without inventory override: processtree 716a97a9, catalog 039261a9-73aa-44ed-9d31-c3dca1f69a4b.
+- [x] Final inventory generation 2026-11-10-runner3-extended-verified installed;
+  enrollment and Node/Python proof documented in nicos-ops corpus.
 
 The nicos-ops corpus owns the cross-repository trial ledger and delivery-admission
 measurements. This change does not assert native Windows, browser or GPU proof.
