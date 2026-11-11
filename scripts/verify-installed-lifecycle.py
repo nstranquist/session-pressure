@@ -143,7 +143,9 @@ def main():
         assert recovered["used"] == 0 and not recovered.get("leases")
         receipts.append({"case": "persisted_dead_owner", "capacity_recovered": True})
 
-        owners = [start("concurrent-" + str(i), "browser") for i in range(4)]
+        # Browser jobs also hold a separate serial execution lock. Test
+        # fixtures exercise concurrent weighted admission without that lock.
+        owners = [start("concurrent-" + str(i), "test") for i in range(4)]
         wait_for(lambda s: s["used"] == 8 and len(s.get("leases", [])) == 4,
                  "concurrent fixtures did not fill the live capacity")
         follower = start("concurrent-follower", "heavy")

@@ -35,7 +35,7 @@ verify that only the longer window includes both; invalid windows are refused.
 - [x] Runner-3 command-package race checks pass for the exact final source.
 - [ ] Delivery lands; a clean installed CLI supports the option.
 - [ ] Run the installed seven-day replay and investigate class regressions.
-- [ ] Demonstrate installed release wakeups, cancellation and dead-owner recovery.
+- [x] Demonstrate installed release wakeups, cancellation and dead-owner recovery.
 - [ ] Use seven-day evidence to accept, revise or reject reserve/burst policy.
 
 ## Installed seven-day replay and cancellation repair
@@ -94,3 +94,33 @@ session-workspaces directory.
   Added skipped-lifecycle diagnostics to text output as well as JSON, then
   repeated the full race suite for the exact final source on runner 3:
   c63f6aed-e1c0-46ba-a434-fdad80e4728a, exit 0, 3.177s. No live policy was changed.
+
+## Installed cancellation repair acceptance
+
+2026-11-11: clean native revision 1596f7a80d01ffe06bd4c11026d772e0b745e250
+was built on runner 3 (job 191bb1b0-2b6f-4593-bc5b-6ae70c4e99e3) and
+promoted with expected-current 714347b2046cfdf05a304fbb0e4a07c0d8ab0406.
+The resident reported healthy. Installed helper SHA-256:
+a2578ee64c3928f2d66be3a0f8c2fea2dd97e8e83cccb1e4648e714810705a69.
+
+The installed CLI/helper private-state fixture passed all four cases: release
+woke its follower in 65 ms; explicit cancellation recovered capacity; restoring
+a persisted lease for a dead fixture owner was pruned; four concurrent test
+owners released capacity and woke the heavy follower in 71 ms. Every sampled
+accounting check stayed within capacity, final usage and queue were zero, and
+the copied live policy remained byte-identical. These are fixture observations,
+not production latency guarantees or an observed operating-system crash.
+Receipt: work3-lifecycle-acceptance-4/result.json in this session workspace.
+
+Correction: acceptance-3 incorrectly used four browser jobs to fill capacity.
+Browser jobs also require a serial execution lock; three correctly refused.
+The final fixture uses test jobs for weighted concurrency. Earlier cancellation
+failures remain retained. Two native setup attempts failed because bundle verify
+ran outside a Git repository; cloning before verifying fixed setup, and neither
+failed attempt reached product compilation.
+
+The factory front door remains on its older embedded Pressure stamp. Its clean
+runner-3 build passed SDK identity validation but failed readonly module
+validation (go.mod requires updates). This shared producer failure is under
+repair. WORK-3 remains open for front-door alignment, replay tradeoff analysis,
+and the real seven-day shadow decision; no reserve/burst policy was enabled.
