@@ -16,3 +16,5 @@ product decisions have all been reconstructed.
 
 - [Admission reservation recovery](admission-reservation-recovery.md): WORK-3 owned-lease regression and WORK-220 explicit policy migration.
 - [Work-event SQLite read index](work-event-sqlite-index.md): WORK-103 indexed reads, compatible writes, fallback recovery and installed acceptance.
+
+- [Resident memory-budget accounting](resident-budget-2026-11-11.md): WORK-604 fresh self RSS, preserved budget windows and current CPU investigation.

@@ -47,6 +47,7 @@ type Sampler struct {
 	role               string
 	cpuNow             func() time.Duration
 	peakRSS            func() float64
+	currentRSS         func() (float64, error)
 	logicalCPUCount    func() int
 	processSource      func(context.Context) ([]Process, string, error)
 	hostCPUSource      func() (hostCPUTicks, error)
@@ -110,11 +111,11 @@ const (
 const maxProjectedAgentTrees = 24
 
 func NewSampler() *Sampler {
-	return &Sampler{runner: execRunner{}, now: time.Now, pid: os.Getpid(), role: "operator", cpuNow: processCPUTime, peakRSS: processPeakRSSMB, logicalCPUCount: runtime.NumCPU, processSource: nativeProcesses, hostCPUSource: nativeHostCPUTicks, physicalSource: nativePhysicalMemoryMB, swapSource: nativeSwapUsedMB, swapIOSource: defaultSwapIOSource, freePercentSource: defaultFreePercentSource, powerThermalSource: func(ctx context.Context) (PowerThermalStatus, error) { return probePowerThermal(ctx, execRunner{}) }, storageSource: nativeStorageCapacity, sessionStateDir: defaultSessionStateDir()}
+	return &Sampler{runner: execRunner{}, now: time.Now, pid: os.Getpid(), role: "operator", cpuNow: processCPUTime, peakRSS: processPeakRSSMB, currentRSS: platformCurrentRSSSource(), logicalCPUCount: runtime.NumCPU, processSource: nativeProcesses, hostCPUSource: nativeHostCPUTicks, physicalSource: nativePhysicalMemoryMB, swapSource: nativeSwapUsedMB, swapIOSource: defaultSwapIOSource, freePercentSource: defaultFreePercentSource, powerThermalSource: func(ctx context.Context) (PowerThermalStatus, error) { return probePowerThermal(ctx, execRunner{}) }, storageSource: nativeStorageCapacity, sessionStateDir: defaultSessionStateDir()}
 }
 
 func NewResidentSampler() *Sampler {
-	return &Sampler{runner: execRunner{}, now: time.Now, pid: os.Getpid(), role: "resident", cpuNow: processCPUTime, peakRSS: processPeakRSSMB, logicalCPUCount: runtime.NumCPU, processSource: nativeProcesses, hostCPUSource: nativeHostCPUTicks, physicalSource: nativePhysicalMemoryMB, swapSource: nativeSwapUsedMB, swapIOSource: defaultSwapIOSource, freePercentSource: defaultFreePercentSource, powerThermalSource: func(ctx context.Context) (PowerThermalStatus, error) { return probePowerThermal(ctx, execRunner{}) }, storageSource: nativeStorageCapacity, sessionStateDir: defaultSessionStateDir(), binarySHA256: currentExecutableSHA256()}
+	return &Sampler{runner: execRunner{}, now: time.Now, pid: os.Getpid(), role: "resident", cpuNow: processCPUTime, peakRSS: processPeakRSSMB, currentRSS: platformCurrentRSSSource(), logicalCPUCount: runtime.NumCPU, processSource: nativeProcesses, hostCPUSource: nativeHostCPUTicks, physicalSource: nativePhysicalMemoryMB, swapSource: nativeSwapUsedMB, swapIOSource: defaultSwapIOSource, freePercentSource: defaultFreePercentSource, powerThermalSource: func(ctx context.Context) (PowerThermalStatus, error) { return probePowerThermal(ctx, execRunner{}) }, storageSource: nativeStorageCapacity, sessionStateDir: defaultSessionStateDir(), binarySHA256: currentExecutableSHA256()}
 }
 
 // SessionStateDir returns the hook session-state directory used for semantic
@@ -425,6 +426,19 @@ func (sampler *Sampler) Sample(ctx context.Context, policy Policy) (Snapshot, er
 			snapshot.GuardRSSMB = float64(process.RSSKB) / 1024
 			snapshot.GuardCPUPercent = process.CPUPercent
 		}
+	}
+	// Guard health must use this heartbeat, not the sparse whole-host inventory.
+	// A cached spike otherwise occupies multiple slots in the rolling budget
+	// window even after this process has released those pages.
+	if sampler.currentRSS != nil {
+		rss, err := sampler.currentRSS()
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("sample current guard RSS: %w", err)
+		}
+		if math.IsNaN(rss) || math.IsInf(rss, 0) || rss <= 0 {
+			return Snapshot{}, fmt.Errorf("sample current guard RSS: invalid counter")
+		}
+		snapshot.GuardRSSMB = rss
 	}
 	for _, tree := range allTrees {
 		snapshot.AgentRSSSumMB += tree.RSSSumMB

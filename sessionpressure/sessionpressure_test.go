@@ -2083,3 +2083,65 @@ func TestLaunchdRestartRejectsAbsentService(t *testing.T) {
 		t.Fatalf("Restart error=%v, want ErrLaunchAgentNotRunning", err)
 	}
 }
+
+func TestGuardRSSIsFreshWhileHostInventoryIsCached(t *testing.T) {
+	now := time.Date(2026, 11, 11, 22, 0, 0, 0, time.UTC)
+	sampler := testSampler(now)
+	sampler.now = func() time.Time { return now }
+	reads := 0
+	sampler.processSource = func(context.Context) ([]Process, string, error) {
+		reads++
+		return []Process{{PID: 999, PPID: 1, RSSKB: 40 * 1024}}, "fixture", nil
+	}
+	rss := 40.0
+	sampler.currentRSS = func() (float64, error) { return rss, nil }
+	policy := DefaultPolicy(16 * 1024)
+	first, err := sampler.Sample(context.Background(), policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(15 * time.Second)
+	rss = 12
+	second, err := sampler.Sample(context.Background(), policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reads != 1 || second.ProcessInventoryFresh || first.GuardRSSMB != 40 || second.GuardRSSMB != 12 {
+		t.Fatalf("reads=%d firstRSS=%v secondRSS=%v fresh=%v", reads, first.GuardRSSMB, second.GuardRSSMB, second.ProcessInventoryFresh)
+	}
+	// A genuine spike remains in the rolling window, but is not copied into
+	// later slots. It expires after exactly the configured number of samples.
+	stats := monitorStats{}
+	stats.add(first, 15)
+	for i := 0; i < monitorStatsWindow-1; i++ {
+		stats.add(second, 15)
+	}
+	stats.apply(&second, policy)
+	if second.GuardRSSMaxMB != 40 {
+		t.Fatalf("genuine spike disappeared early: %v", second.GuardRSSMaxMB)
+	}
+	stats.add(second, 15)
+	stats.apply(&second, policy)
+	if second.GuardRSSMaxMB != 12 {
+		t.Fatalf("expired RSS spike remains: %v", second.GuardRSSMaxMB)
+	}
+}
+
+func TestGuardRSSCounterFailureCannotReuseStaleHealthyValue(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rss  float64
+		err  error
+	}{
+		{"read", 0, errors.New("counter unavailable")},
+		{"zero", 0, nil}, {"nan", math.NaN(), nil}, {"infinity", math.Inf(1), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sampler := testSampler(time.Now())
+			sampler.currentRSS = func() (float64, error) { return tc.rss, tc.err }
+			if _, err := sampler.Sample(context.Background(), DefaultPolicy(16*1024)); err == nil {
+				t.Fatal("invalid self counter silently used cached RSS")
+			}
+		})
+	}
+}
