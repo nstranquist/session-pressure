@@ -146,3 +146,13 @@ baseline. The 24-hour swap-derate observation remains 53 minutes/day; its
 WORK-3 remains open for the real seven-day shadow, reserve/burst decision,
 and the documented build-latency tradeoff. Counterfactual replay does not
 establish that the shadow window elapsed.
+
+## Current aligned release and resident baseline, 2026-11-11 08:55 UTC
+
+The previously prepared native release `86aa23ffcb0725bf3fc19c11d3a25807a0f04961` was promoted through the canonical expected-current contract after an observed idle live lease inventory. Prior revision `84b378cdbe3009fa88a10288d9a3b0e856d2c326` was fenced; earlier busy-state refusals were respected. Native runner-3 factory job `f4cf5166` produced the sealed bundle. The resident restarted as PID 322 and reported matching source. Installed front-door doctor confirms CLI, front door and helper all agree at 86aa23ff, mismatch=false, protection_mode=admission-only and auto_shed_critical=false. No reserve/burst or automatic cancellation policy was enabled.
+
+Installed private-state lifecycle acceptance passed all four cases using the actual helper SHA-256 `ec1fc5eb102425dadb87a5ad29dcad92aeb55702c77433374f122195aed9ecf6`: release wakeup 117 ms, explicit owned cancellation recovering capacity, persisted dead-owner pruning, and four-owner concurrent release in 113 ms. Final usage zero; live policy byte-identical. These are fixture observations rather than production latency guarantees.
+
+The fresh resident baseline has 27 samples, 14 normal, exceeding its four-normal-sample diagnostic. Doctor reports monitor_healthy, daily_driver_ready and operator_ready true. Observed RSS 17.703 MiB; idle duty 0.174%; sample CPU p95 10.525 ms and maximum 59.425 ms. The 24-hour swap-derate warning remains about 55 minutes/day; no limit was loosened to remove the warning. Readiness describes this observed baseline, not seven elapsed shadow days. WORK-3 remains open for the actual shadow and evidence-based reserve/burst decision, including the retained build p95 regression.
+
+Private evidence in session 01a1c82a: `work3-86-install-idle.log`, `work3-86-installed-doctor.json`, `work3-86-frontdoor-doctor.json`, and `work3-86-installed-lifecycle/result.json`. Earlier acceptance and failure records above remain historical evidence.
