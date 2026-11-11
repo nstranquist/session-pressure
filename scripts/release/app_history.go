@@ -87,6 +87,15 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 		db.Close()
 		return nil, err
 	}
+	// Early history helpers could index a retained artifact again under its
+	// new local path. Consolidate only identical locations and digests, keeping
+	// the first provenance row, then fence future duplicate locations.
+	_, err = db.Exec(`DELETE FROM backups WHERE rowid NOT IN (SELECT min(rowid) FROM backups GROUP BY stored_path,digest);
+CREATE UNIQUE INDEX IF NOT EXISTS backups_stored_path ON backups(stored_path);`)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &appHistory{db: db, dir: dir, destination: destination}, nil
 }
 
@@ -194,6 +203,7 @@ func validBackupPath(path, destination, dir string) bool {
 type backupMove struct {
 	source, target string
 	identity       appIdentity
+	recordKey      string
 }
 type receiptImport struct {
 	path string
@@ -440,23 +450,25 @@ func (h *appHistory) maintain(configuredRoot string) error {
 		} else if e = verifyAppCopy(target, identity); e != nil {
 			return e
 		}
-		if _, e = h.db.Exec(`INSERT INTO backups (source_path,digest,version,build,stored_path,verified_at) VALUES (?,?,?,?,?,?) ON CONFLICT(source_path) DO UPDATE SET stored_path=excluded.stored_path, verified_at=excluded.verified_at, source_removed=0 WHERE backups.digest=excluded.digest`, source, identity.Digest, identity.Version, identity.Build, target, time.Now().UTC().Format(time.RFC3339Nano)); e != nil {
+		// Follow the first provenance row across moves, rather than mistaking
+		// its new filesystem location for another backup on every retry.
+		recordKey := source
+		e = h.db.QueryRow(`SELECT source_path FROM backups WHERE source_path=? OR stored_path=? OR stored_path=? LIMIT 1`, source, source, target).Scan(&recordKey)
+		if e != nil && !errors.Is(e, sql.ErrNoRows) {
+			return e
+		}
+		if _, e = h.db.Exec(`INSERT INTO backups (source_path,digest,version,build,stored_path,verified_at) VALUES (?,?,?,?,?,?) ON CONFLICT(source_path) DO UPDATE SET stored_path=excluded.stored_path, verified_at=excluded.verified_at WHERE backups.digest=excluded.digest`, recordKey, identity.Digest, identity.Version, identity.Build, target, time.Now().UTC().Format(time.RFC3339Nano)); e != nil {
 			return e
 		}
 		var savedDigest, savedPath string
-		if e = h.db.QueryRow(`SELECT digest,stored_path FROM backups WHERE source_path=?`, source).Scan(&savedDigest, &savedPath); e != nil {
+		if e = h.db.QueryRow(`SELECT digest,stored_path FROM backups WHERE source_path=?`, recordKey).Scan(&savedDigest, &savedPath); e != nil {
 			return e
 		}
 		if savedDigest != identity.Digest || savedPath != target {
 			return errors.New("backup history readback mismatch")
 		}
-		// Older provenance rows must continue pointing to the artifact when a
-		// previously retained local rollback moves to the external archive.
-		if _, e = h.db.Exec(`UPDATE backups SET stored_path=?,verified_at=? WHERE digest=? AND stored_path=?`, target, time.Now().UTC().Format(time.RFC3339Nano), identity.Digest, source); e != nil {
-			return e
-		}
 		if source != target {
-			moves = append(moves, backupMove{source, target, identity})
+			moves = append(moves, backupMove{source, target, identity, recordKey})
 		}
 	}
 	var imports []receiptImport
@@ -511,7 +523,7 @@ func (h *appHistory) maintain(configuredRoot string) error {
 		if err = os.RemoveAll(move.source); err != nil {
 			return err
 		}
-		if _, err = h.db.Exec(`UPDATE backups SET source_removed=1 WHERE source_path=? AND digest=?`, move.source, move.identity.Digest); err != nil {
+		if _, err = h.db.Exec(`UPDATE backups SET source_removed=1 WHERE source_path=? AND digest=?`, move.recordKey, move.identity.Digest); err != nil {
 			return err
 		}
 	}

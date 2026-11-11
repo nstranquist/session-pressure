@@ -1,7 +1,8 @@
 # App installation history and rollback retention
 
 Owner: codex/01a1c9d7-d194-7222-9a81-49fbbdb020fc.
-Status: implementation and migration verification in progress, 2026-11-11.
+Status: migration independently verified; installed retry bookkeeping correction
+in progress, 2026-11-11.
 
 ## Intent and baseline
 
@@ -87,11 +88,19 @@ external history is not authorized by this task.
 - [x] Inventory unique backups and receipts; verify source signatures.
 - [x] Race-enabled release-package tests passed on runner-3, job
   `ca9d212e-b819-4ab7-afd8-1c0940d883c3` (initial candidate).
-- [ ] Final candidate tests/vet and native cross-build.
-- [ ] Commit and install immutable helper; native temporary installation proof.
-- [ ] Run real migration; independently verify all 42 backup identities, all
+- [x] Candidate race tests/vet passed on runner-3, job
+  `e29cbe1f-d9c1-4c7d-b41a-7d94870c5b33`.
+- [x] Committed `d2549143`, native cross-build passed on runner-3, job
+  `f802b2b8-cb8e-4304-a9e1-6f5f2f09c075` (clean VCS stamp). A prior build request
+  failed before compiling because `git bundle verify` requires a repository;
+  the corrected request created a verification repository first.
+- [x] Installed immutable helper; native temporary installation proof covered
+  four signed-app installs, SQLite filtered queries, archival, offline retention,
+  reconnection and idempotent receipt preservation without adjacent clutter.
+- [x] Ran real migration; independently verified all 42 backup identities, all
   34 receipt bytes, database integrity, external snapshot and unchanged live app.
-- [ ] Confirm an idempotent retry and document final measured state.
+- [ ] Install and verify the retry bookkeeping correction; final state must
+  contain 42 backup records, 34 receipts, one local and 41 external app copies.
 
 ## Journal and measurement
 
@@ -103,3 +112,14 @@ configuration, re-archival of the former local rollback and concurrent locks.
 Seven-day telemetry lookup for `session-pressure-release` returned zero rows;
 this is a coverage limitation, not proof of zero use or zero failures. The
 file/database inventory and native dogfood provide direct acceptance evidence.
+
+2026-11-11 installed check: all 41 external copies (633.20 MiB logical file
+bytes) matched an independently captured baseline and passed signature checks.
+The newest rollback is retained privately; no dated app backups or receipts
+remain in Applications. The empty legacy lock remains. Both SQLite databases
+passed integrity checks and preserved all 34 original receipt byte strings.
+The first installed retry exposed a duplicate index row for the retained local
+copy (43 records for 42 artifacts). No app copy or receipt was duplicated or
+lost. The correction follows each original provenance row across moves, adds
+a unique stored-location index, consolidates only identical duplicate locations
+and digests, and adds explicit backup-count and early-schema repair regressions.

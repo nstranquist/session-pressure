@@ -109,6 +109,9 @@ func TestAppHistoryMigrationPreservesBytesAndOneLocalRollback(t *testing.T) {
 	if err = h.db.QueryRow(`SELECT count(*) FROM receipts`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("receipt duplicated: %d %v", n, err)
 	}
+	if err = h.db.QueryRow(`SELECT count(*) FROM backups`).Scan(&n); err != nil || n != 3 {
+		t.Fatalf("backup index duplicated on retry: %d %v", n, err)
+	}
 	db, err := sql.Open("sqlite", filepath.Join(root, filepath.Base(h.dir), "history.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -190,6 +193,36 @@ func TestAppHistoryRearchivesFormerLocalRollbackAndUpdatesIndex(t *testing.T) {
 	}
 	if _, err := os.Stat(newest); err != nil {
 		t.Fatal("newest local rollback lost")
+	}
+	var n int
+	if err := h.db.QueryRow(`SELECT count(*) FROM backups`).Scan(&n); err != nil || n != 4 {
+		t.Fatalf("backup provenance duplicated after archival: %d %v", n, err)
+	}
+}
+
+func TestAppHistoryConsolidatesEarlyDuplicateIndexRows(t *testing.T) {
+	h, root, backups, _, _ := historyFixture(t)
+	if err := h.maintain(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.Exec(`DROP INDEX backups_stored_path;
+INSERT INTO backups SELECT stored_path,digest,version,build,stored_path,verified_at,0 FROM backups WHERE source_path=?`, backups[2]); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := openAppHistoryAt(h.destination, h.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.db.Close()
+	if err = reopened.maintain(""); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err = reopened.db.QueryRow(`SELECT count(*) FROM backups`).Scan(&n); err != nil || n != 3 {
+		t.Fatalf("duplicate migration failed: %d %v", n, err)
 	}
 }
 
