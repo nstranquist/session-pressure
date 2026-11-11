@@ -185,7 +185,7 @@ func cmdSessionPressureSelfTest(g *Flags, args []string) int {
 	if err != nil {
 		return fail("reload policy after work probe: " + err.Error())
 	}
-	if afterRuntime.persisted != runtime.persisted || afterRuntime.policy != runtime.policy {
+	if afterRuntime.persisted != runtime.persisted || !afterRuntime.policy.Equal(runtime.policy) {
 		return fail("pressure policy changed during the work probe")
 	}
 	afterCoordinator := sessionpressure.NewWorkCoordinator(afterRuntime.dir, afterRuntime.policy.WorkLimits)

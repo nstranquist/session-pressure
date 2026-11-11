@@ -39,7 +39,12 @@ func CommandLeaf(args []string) string {
 	case "storage":
 		leaf := AllowedLeaf("storage", args[1:], "help", []string{"help", "status", "providers", "plan", "apply", "history", "policy"})
 		if leaf == "storage.policy" {
-			return AllowedLeaf("storage.policy", args[2:], "unknown", []string{"enable", "observe"})
+			policyLeaf := AllowedLeaf("storage.policy", args[2:], "unknown", []string{"enable", "observe", "repository"})
+			if policyLeaf == "storage.policy.repository" {
+				// Never the repository path: only the verb is categorical.
+				return AllowedLeaf(policyLeaf, args[3:], "unknown", []string{"set", "clear"})
+			}
+			return policyLeaf
 		}
 		return leaf
 	case "io":

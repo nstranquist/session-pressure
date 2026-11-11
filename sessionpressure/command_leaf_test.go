@@ -15,6 +15,10 @@ func TestCommandLeafVocabulary(t *testing.T) {
 		{[]string{"work", "cancel"}, "work.cancel"},
 		{[]string{"cleanup", "claim", "heartbeat"}, "cleanup.claim.heartbeat"},
 		{[]string{"policy", "profile", "show"}, "policy.profile.show"},
+		{[]string{"storage", "policy", "enable"}, "storage.policy.enable"},
+		{[]string{"storage", "policy", "repository", "set", "/Users/example/dev/garrid", "--critical-free", "5GiB"}, "storage.policy.repository.set"},
+		{[]string{"storage", "policy", "repository", "clear", "/Users/example/dev/garrid"}, "storage.policy.repository.clear"},
+		{[]string{"storage", "policy", "repository", "/Users/example/dev/garrid"}, "storage.policy.repository.unknown"},
 		{[]string{"not-real"}, "unknown"},
 	}
 	for _, tc := range cases {

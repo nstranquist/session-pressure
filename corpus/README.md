@@ -20,3 +20,5 @@ product decisions have all been reconstructed.
 - [Resident memory-budget accounting](resident-budget-2026-11-11.md): WORK-604 fresh self RSS, preserved budget windows and current CPU investigation.
 
 - [Kernel, display and swap profile](kernel-display-swap-2026-11-11.md): WORK-619 current paging attribution and protected Cowork investigation.
+
+- [Per-repository storage floor](storage-repository-override-2026-11-11.md): Garrid-only 5 GiB admission floor, repository resolution through the Git object store, fail-closed policy reads.

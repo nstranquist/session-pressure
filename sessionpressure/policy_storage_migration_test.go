@@ -1,6 +1,9 @@
 package sessionpressure
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestExplicitLegacyStorageThresholdMigration(t *testing.T) {
 	p := DefaultPolicy(16 * 1024)
@@ -38,7 +41,7 @@ func TestExplicitCriticalRecoveryMigrationPreservesOperatorSettings(t *testing.T
 			t.Fatal("former shipped threshold set not migrated")
 		}
 		before.Storage.CriticalReleaseBytes = 15 << 30
-		if p.Storage != before.Storage || p.AutoShedCritical != before.AutoShedCritical {
+		if !reflect.DeepEqual(p.Storage, before.Storage) || p.AutoShedCritical != before.AutoShedCritical {
 			t.Fatalf("operator settings changed: %+v", p.Storage)
 		}
 		if MigrateLegacyStorageThresholds(&p) {
@@ -61,7 +64,7 @@ func TestExplicitCriticalRecoveryMigrationPreservesOperatorSettings(t *testing.T
 		p.Storage.CriticalReleaseBytes = 20 << 30
 		mutate(&p.Storage)
 		before := p.Storage
-		if MigrateLegacyStorageThresholds(&p) || p.Storage != before {
+		if MigrateLegacyStorageThresholds(&p) || !reflect.DeepEqual(p.Storage, before) {
 			t.Fatalf("custom values changed: %+v", p.Storage)
 		}
 	}

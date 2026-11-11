@@ -124,6 +124,11 @@ Subcommands:
                                       --full-wipe is required for go-build-cache; it is a rebuild tax
   history [--since D] [--limit N]     Read bounded private reclaim receipts
   policy enable|observe               Toggle disk-growth admission independently
+  policy repository set PATH --critical-free SIZE [--reason TEXT]
+                                      Hold disk-growing work for PATH's repository
+                                      only below SIZE; other repositories keep the
+                                      machine-wide bands
+  policy repository clear PATH        Remove a repository override
 
 Sizes accept GiB, GB, MiB, MB, KiB, KB, or raw bytes.
 `)
@@ -169,8 +174,16 @@ func cmdSessionPressureStorageStatus(g *Flags, args []string) int {
 	if err != nil {
 		return sessionPressureError(err.Error(), 1)
 	}
-	payload := map[string]any{"ok": sample.Available, "action": "storage.status", "storage": sample, "storage_policy": runtime.policy.Storage, "policy_persisted": runtime.persisted}
+	repositories := sessionpressure.StorageRepositoryAdmissionStatuses(runtime.policy.Storage, sample)
+	payload := map[string]any{"ok": sample.Available, "action": "storage.status", "storage": sample, "storage_policy": runtime.policy.Storage, "repository_admission": repositories, "policy_persisted": runtime.persisted}
 	text := fmt.Sprintf("storage effective=%s instantaneous=%s hysteresis=%v available=%.1fGiB total=%.1fGiB path=%s enforcement=%v\n", sample.Level, sample.InstantaneousLevel, sample.HysteresisActive, bytesToGiB(sample.AvailableBytes), bytesToGiB(sample.TotalBytes), sample.VolumePath, runtime.policy.Storage.EnforceAdmission)
+	for _, repository := range repositories {
+		admits := "unknown"
+		if repository.AdmitsNow != nil {
+			admits = strconv.FormatBool(*repository.AdmitsNow)
+		}
+		text += fmt.Sprintf("  repository %s floor=%.1fGiB admits_now=%s exists=%v\n", repository.Repository, bytesToGiB(repository.CriticalFreeBytes), admits, repository.Exists)
+	}
 	exit := 0
 	if !sample.Available {
 		exit = 1
@@ -1083,8 +1096,11 @@ func cmdSessionPressureStorageHistory(g *Flags, args []string) int {
 }
 
 func cmdSessionPressureStoragePolicy(g *Flags, args []string) int {
+	if len(args) > 0 && args[0] == "repository" {
+		return cmdSessionPressureStorageRepositoryPolicy(g, args[1:])
+	}
 	if len(args) != 1 || (args[0] != "enable" && args[0] != "observe") {
-		return sessionPressureError("storage policy requires enable or observe", 2)
+		return sessionPressureError("storage policy requires enable, observe, or repository", 2)
 	}
 	dir, err := sessionpressure.DataDir()
 	if err != nil {

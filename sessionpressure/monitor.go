@@ -103,7 +103,7 @@ func (signaler osProcessSignaler) Terminate(tree AgentTree, policy Policy) (term
 	if policyErr != nil {
 		return result, reliefRevalidationError{reason: "persisted action policy could not be read"}
 	}
-	if !persisted || persistedPolicy != policy {
+	if !persisted || !persistedPolicy.Equal(policy) {
 		return result, reliefRevalidationError{reason: "persisted action policy changed during final revalidation"}
 	}
 	if len(current.PIDs) == 0 {
@@ -787,7 +787,7 @@ func (monitor *Monitor) maybeRelieveExcluding(snapshot Snapshot, lastAction, las
 		return Action{}, false
 	}
 	persistedPolicy, persisted, err := LoadPolicy(PolicyPath(monitor.Store.Dir), snapshot.PhysicalMemoryMB)
-	if err != nil || !persisted || persistedPolicy != monitor.Policy {
+	if err != nil || !persisted || !persistedPolicy.Equal(monitor.Policy) {
 		return Action{}, false
 	}
 	tree, ok := selectReliefCandidateExcluding(snapshot.TopAgentTrees, monitor.Policy, rejected)

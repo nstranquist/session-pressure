@@ -95,6 +95,14 @@ func (sampler *Sampler) sampleStorage(policy Policy, previous Level) StorageSnap
 // may progress under red pressure, but not through the critical reserve or its
 // recovery hysteresis. Diagnostic warning targets are not admission targets.
 func StorageAdmissionForClass(snapshot StorageSnapshot, policy Policy, class WorkClass, source string) Admission {
+	return StorageAdmissionForRepository(snapshot, policy, class, source, "")
+}
+
+// StorageAdmissionForRepository is StorageAdmissionForClass for work whose
+// canonical repository root is known. A matching repository override
+// replaces the machine-wide band for that work only; "" or an unmatched root
+// keeps the machine-wide policy.
+func StorageAdmissionForRepository(snapshot StorageSnapshot, policy Policy, class WorkClass, source, repository string) Admission {
 	if !policy.Storage.Enabled || !policy.Storage.EnforceAdmission || class == WorkClassReclaim || !storageGrowingClass(class) {
 		return Admission{Allowed: true, Level: snapshot.Level, Source: source, Snapshot: &Snapshot{Storage: snapshot}}
 	}
@@ -104,6 +112,9 @@ func StorageAdmissionForClass(snapshot StorageSnapshot, policy Policy, class Wor
 			warning += ": " + snapshot.Error
 		}
 		return Admission{Allowed: true, Level: LevelNormal, Source: "fail-open", Warning: warning, Snapshot: &Snapshot{Storage: snapshot}}
+	}
+	if override, ok := StorageRepositoryOverrideFor(policy.Storage, repository); ok {
+		return storageRepositoryAdmission(snapshot, repository, override, source)
 	}
 	blockAt := policy.Storage.BlockNewAt
 	if storageRedDegradedClass(class) {
@@ -202,20 +213,55 @@ func ConfiguredWorkAdmission(ctx context.Context, class WorkClass) Admission {
 	return host
 }
 
+// ConfiguredStorageAdmission scopes storage admission to the repository of
+// the current working directory. Delivery checks keep their candidate's
+// working directory, and StorageRepositoryRoot maps a candidate to the
+// repository that owns its object store.
 func ConfiguredStorageAdmission(ctx context.Context, class WorkClass) Admission {
 	dir, err := DataDir()
 	if err != nil {
 		return Admission{Allowed: true, Level: LevelNormal, Source: "fail-open", Warning: err.Error()}
 	}
+	return configuredStorageAdmission(dir, class, NewSampler(), currentStorageRepository)
+}
+
+func currentStorageRepository() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return StorageRepositoryRoot(cwd)
+}
+
+func configuredStorageAdmission(dir string, class WorkClass, sampler *Sampler, repository func() (string, error)) Admission {
 	policy, persisted, err := LoadPolicy(PolicyPath(dir), 0)
-	if err != nil || !persisted {
+	if err != nil {
+		// A persisted policy that cannot be read cannot prove which
+		// repository floor applies. Hold disk-growing work rather than
+		// admitting it under an unverified override.
+		if class == WorkClassReclaim || !storageGrowingClass(class) {
+			return Admission{Allowed: true, Level: LevelNormal, Source: "policy-unreadable"}
+		}
+		return Admission{
+			Allowed: false, Level: LevelCritical, Source: "policy-unreadable", Dimension: "storage",
+			Reasons: []string{"storage policy unreadable; storage admission failed closed: " + boundedText(err.Error(), 512)},
+		}
+	}
+	if !persisted {
 		return Admission{Allowed: true, Level: LevelNormal, Source: "unconfigured"}
 	}
 	previous := LevelNormal
 	if latest, ok := NewTelemetryStore(dir).ReadLatest(); ok {
 		previous = latest.Storage.Level
 	}
-	sample := NewSampler().sampleStorage(policy, previous)
-	storage := StorageAdmissionForClass(sample, policy, class, "live-storage-probe")
-	return storage
+	sample := sampler.sampleStorage(policy, previous)
+	root := ""
+	if len(policy.Storage.RepositoryOverrides) > 0 && repository != nil {
+		// An unresolved repository keeps the machine-wide policy: it never
+		// grants an override's floor.
+		if resolved, resolveErr := repository(); resolveErr == nil {
+			root = resolved
+		}
+	}
+	return StorageAdmissionForRepository(sample, policy, class, "live-storage-probe", root)
 }

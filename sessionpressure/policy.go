@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"time"
@@ -74,6 +76,10 @@ type StoragePolicy struct {
 	ReclaimCooldownSeconds int   `json:"reclaim_cooldown_seconds"`
 	WorkWaitGraceSeconds   int   `json:"work_wait_grace_seconds"`
 	BlockNewAt             Level `json:"block_new_at"`
+	// RepositoryOverrides keys canonical repository roots (see
+	// StorageRepositoryRoot) to their own admission floor. Absent keys keep
+	// the machine-wide bands above.
+	RepositoryOverrides map[string]StorageRepositoryOverride `json:"repository_overrides,omitempty"`
 }
 
 const DiskWriteProfileQuietAdaptiveV1 = "quiet-adaptive-v1"
@@ -677,6 +683,9 @@ func (policy Policy) Validate() error {
 			return errors.New("storage block_new_at must be red or critical")
 		}
 	}
+	if err := validateStorageRepositoryOverrides(s.RepositoryOverrides); err != nil {
+		return err
+	}
 	disk := policy.DiskWrite
 	if disk.Profile != DiskWriteProfileQuietAdaptiveV1 {
 		return fmt.Errorf("disk-write profile must be %q", DiskWriteProfileQuietAdaptiveV1)
@@ -874,7 +883,9 @@ func LoadPolicy(path string, physicalMemoryMB float64) (Policy, bool, error) {
 	// block. Migrate them to observation-only defaults without silently granting
 	// new admission or reclaim authority.
 	if policy.Storage.WarningFreeBytes == 0 {
+		overrides := policy.Storage.RepositoryOverrides
 		policy.Storage = defaults.Storage
+		policy.Storage.RepositoryOverrides = overrides
 	}
 	if policy.Storage.WorkWaitGraceSeconds == 0 {
 		policy.Storage.WorkWaitGraceSeconds = defaults.Storage.WorkWaitGraceSeconds
@@ -899,6 +910,16 @@ func LoadPolicy(path string, physicalMemoryMB float64) (Policy, bool, error) {
 		return Policy{}, true, fmt.Errorf("validate policy: %w", err)
 	}
 	return policy, true, nil
+}
+
+// Equal reports whether two policies are identical. Policy holds a map, so
+// it cannot use ==; nil and empty repository overrides are equal.
+func (policy Policy) Equal(other Policy) bool {
+	if !maps.Equal(policy.Storage.RepositoryOverrides, other.Storage.RepositoryOverrides) {
+		return false
+	}
+	policy.Storage.RepositoryOverrides, other.Storage.RepositoryOverrides = nil, nil
+	return reflect.DeepEqual(policy, other)
 }
 
 func SavePolicy(path string, policy Policy) error {

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Guard - per-repository storage floor
+
+- **`storage_policy.repository_overrides`.** A typed, persisted override keyed
+  by canonical repository root gives one repository its own storage admission
+  floor (`critical_free_bytes`, at least 1 GiB, optional one-line `reason`).
+  Disk-growing work for that repository is held only below its floor; every
+  other repository keeps the machine-wide bands and hysteresis. The repository
+  is the checkout that owns the Git object store of the work's directory, so
+  linked worktrees and commit-delivery candidate slots resolve to their real
+  repository. Set and clear with `storage policy repository set PATH
+  --critical-free SIZE [--reason TEXT]` and `storage policy repository clear
+  PATH`; `storage status` reports each floor with `repository_admission`.
+  An unreadable persisted policy now holds disk-growing work instead of
+  failing open. Memory, CPU and thermal admission are unchanged.
+
 ### Fixes
 
 - End the ndev compatibility wrapper's recursion marker at the admitted work
