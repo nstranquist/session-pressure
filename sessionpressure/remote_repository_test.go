@@ -111,3 +111,66 @@ func TestRemoteBuildScopeSendsOnlyModuleFiles(t *testing.T) {
 		t.Fatal("tests and vet must keep repository fixtures")
 	}
 }
+
+// Committed generated assets are source inputs even when an ignore pattern
+// also covers them. Untracked artifacts and credentials must stay excluded.
+func TestRemoteTrackedEmbedAssetsSurviveSourceSnapshot(t *testing.T) {
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+	run("init", "-q")
+	write := func(name, body string) {
+		t.Helper()
+		p := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module example.test/embed\ngo 1.26\n")
+	write("explorer/embed.go", "package explorer\nimport \"embed\"\n//go:embed all:dist\nvar Assets embed.FS\n")
+	write(".gitignore", "explorer/dist/\n")
+	write("explorer/dist/index.html", "committed")
+	write("explorer/dist/.env", "credential fixture")
+	write("explorer/dist/private.key", "credential fixture")
+	write("explorer/dist/link-target", "regular")
+	run("add", "-f", "go.mod", "explorer/embed.go", ".gitignore", "explorer/dist/index.html", "explorer/dist/.env", "explorer/dist/private.key")
+	write("explorer/dist/ignored.js", "ignored")
+	write("other/dist/untracked.js", "untracked artifact")
+	if err := os.Symlink("index.html", filepath.Join(root, "explorer/dist/link")); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "-f", "explorer/dist/link")
+	for _, scope := range []remoteInputScope{remoteScopeRepository, remoteScopeModules} {
+		var out bytes.Buffer
+		if err := writeRemoteSources(&out, []string{root}, root, scope); err != nil {
+			t.Fatal(err)
+		}
+		found := remoteUploadNames(t, &out)
+		for _, name := range []string{"go.mod", "explorer/embed.go", "explorer/dist/index.html"} {
+			if !found[name] {
+				t.Errorf("scope %v missing committed compiler input %s", scope, name)
+			}
+		}
+		for _, name := range []string{"explorer/dist/.env", "explorer/dist/private.key", "explorer/dist/ignored.js", "explorer/dist/link-target", "explorer/dist/link", "other/dist/untracked.js"} {
+			if found[name] {
+				t.Errorf("scope %v uploaded excluded input %s", scope, name)
+			}
+		}
+		size, err := remoteSourceSize([]string{root}, root, scope, 1<<20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var expected int64
+		err = walkRemoteSources([]string{root}, root, scope, func(_, _ string, info os.FileInfo) error { expected += info.Size(); return nil })
+		if err != nil || size != expected {
+			t.Fatalf("size=%d expected=%d err=%v", size, expected, err)
+		}
+	}
+}

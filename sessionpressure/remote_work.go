@@ -341,7 +341,7 @@ func walkRemoteSources(modules []string, common string, scope remoteInputScope, 
 		// ceiling killed it and refused a delivery gate (2026-11-09). A slow
 		// enumeration is cheaper than a refused job, so bound it loosely.
 		ctx, cancel := context.WithTimeout(context.Background(), remoteEnumerateTimeout)
-		args := []string{"-C", repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z"}
+		args := []string{"-C", repo, "ls-files", "--cached", "--others", "--exclude-standard", "-t", "-z"}
 		if scope == remoteScopeModules {
 			// Let git skip untracked scans outside the closure modules.
 			args = append(args, "--")
@@ -357,8 +357,14 @@ func walkRemoteSources(modules []string, common string, scope remoteInputScope, 
 		if err != nil {
 			return fmt.Errorf("enumerate repository inputs: %w", err)
 		}
-		for _, name := range strings.Split(string(body), "\x00") {
-			if name == "" || remoteExcludedRepositoryInput(name) {
+		for _, entry := range strings.Split(string(body), "\x00") {
+			if len(entry) < 3 {
+				continue
+			}
+			// -t emits a two-byte status prefix; '?' is untracked. Keep
+			// the distinction so committed embed assets survive filtering.
+			name := entry[2:]
+			if remoteExcludedRepositoryInput(name, entry[0] != '?') {
 				continue
 			}
 			path := filepath.Join(repo, name)

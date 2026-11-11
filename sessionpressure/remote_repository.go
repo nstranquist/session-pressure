@@ -35,11 +35,17 @@ func remoteRepositoryRoots(modules []string) []string {
 // .ndev/commit-delivery.yaml; 2026-11-10 two tests failed on every remote
 // run without it). The module walk for out-of-repository modules still skips
 // it, because nothing filters that walk.
-func remoteExcludedRepositoryInput(name string) bool {
+func remoteExcludedRepositoryInput(name string, tracked bool) bool {
 	for _, part := range strings.Split(filepath.ToSlash(name), "/") {
 		switch part {
-		case ".git", ".build", "target", "node_modules", "bin", ".cache", ".next", "dist", ".tmp":
+		case ".git":
 			return true
+		case ".build", "target", "node_modules", "bin", ".cache", ".next", "dist", ".tmp":
+			// Tracked generated files can be compiler inputs (for example,
+			// go:embed all:dist). Only exclude untracked artifacts here.
+			if !tracked {
+				return true
+			}
 		}
 		if part == ".env" || strings.HasPrefix(part, ".env.") || strings.HasSuffix(part, ".pem") || strings.HasSuffix(part, ".key") {
 			return true
