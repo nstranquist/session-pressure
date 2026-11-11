@@ -331,6 +331,29 @@ func TestRemoteSourceDeltaKeepsFileModes(t *testing.T) {
 	if info.Mode().Perm() != 0o755 {
 		t.Fatalf("executable bit lost: %v", info.Mode())
 	}
+	// A base seeded by an older uploader can have correct content and a
+	// correct manifest, but permissions masked by its extraction umask.
+	// Detect the actual inode modes and reseed; trusting the manifest alone
+	// would keep serving the broken tree indefinitely.
+	bases, err := filepath.Glob(filepath.Join(remoteSourceBaseRoot, "*.digest"))
+	if err != nil || len(bases) != 1 {
+		t.Fatalf("bases = %v, error = %v", bases, err)
+	}
+	base := strings.TrimSuffix(bases[0], ".digest")
+	if err := os.Chmod(filepath.Join(base, "mod", "go.mod"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	up, err = uploadRemoteSourcesDelta(ssh, os.Stderr, state, "box", filepath.Join(jobs, "recovered"), "recovered", common, []string{module}, remoteScopeModules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up.mode != remoteUploadSeed {
+		t.Fatalf("damaged mode recovery = %+v, want seed", up)
+	}
+	regular, err = os.Stat(filepath.Join(jobs, "recovered", "source", "mod", "go.mod"))
+	if err != nil || regular.Mode().Perm() != 0o644 {
+		t.Fatalf("recovered regular permissions: %v, error = %v", regular, err)
+	}
 }
 
 func TestRemoteSourceStatCacheSkipsUnchangedFiles(t *testing.T) {

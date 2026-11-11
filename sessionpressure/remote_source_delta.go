@@ -440,7 +440,7 @@ func remoteSourceDeltaScript(remote, key, request string) string {
 		// inodes with the base, so this also catches a base damaged on disk;
 		// a damaged base is dropped (if still current) and the Mac reseeds.
 		"exec 8>&-",
-		"if ! (cd \"$remote/source\" && awk '{print substr($0,1,64) \"  \" substr($0,71)}' \"$ctl/manifest\" | sha256sum --quiet --strict -c - >/dev/null 2>&1); then",
+		"if ! (cd \"$remote/source\" && awk '{print substr($0,1,64) \"  \" substr($0,71)}' \"$ctl/manifest\" | sha256sum --quiet --strict -c - >/dev/null 2>&1) || ! (cd \"$remote/source\" && find . -type f -printf '%m %P\\n' | awk 'NR==FNR{m[substr($0,71)]=substr($0,66,4)+0; next} {p=substr($0,index($0,\" \")+1); if (!(p in m) || $1+0 != m[p]) exit 1}' \"$ctl/manifest\" -); then",
 		"  exec 8>\"$base.lock\"",
 		"  flock -w 600 8",
 		"  if [ \"$(cat \"$base.digest\" 2>/dev/null)\" = \"$(cut -c1-64 \"$ctl/digest\")\" ]; then drop; fi",

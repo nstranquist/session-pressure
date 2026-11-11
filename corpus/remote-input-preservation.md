@@ -54,6 +54,13 @@ exact 0644 seed permissions and 0755 executable delta permissions, rather than
 only checking an executable bit. All results are host-bound to gr3; runner 2 is
 retired and runner 1 remains explicit reserve.
 
+Installed f3074a2e matched CLI/helper hashes with unchanged policy. Automatic
+processtree retry 1090f9d7-10ca-4898-9699-31414fce436a still failed: a cached
+base had correct bytes and manifest but damaged actual modes. Stage verification
+now checks actual modes as well as content and drops/reseeds damaged bases. The
+mode regression corrupts an existing base and proves automatic reseeding. Full
+package and vet passed: 8c70f336-0a05-489b-ad9f-a3d5aecdedc5.
+
 ## Open proof items
 
 - [x] Full package + vet: 5a62e98d-6381-4c76-a51d-643ea3b3bb0f (gr3, exit 0).
