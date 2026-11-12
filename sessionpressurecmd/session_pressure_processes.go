@@ -58,7 +58,7 @@ func cmdSessionPressureProcesses(g *Flags, args []string) int {
 		if err != nil {
 			return sessionPressureError(err.Error(), 1)
 		}
-		return emitPressure(g, map[string]any{"ok": true, "report": report}, fmt.Sprintf("%d retained process incidents\n", len(report.Incidents)), 0)
+		return emitPressure(g, map[string]any{"ok": true, "action": "processes.list", "report": report}, fmt.Sprintf("%d retained process incidents\n", len(report.Incidents)), 0)
 	case "stop":
 		id := ""
 		confirm, force := false, false
@@ -87,7 +87,7 @@ func cmdSessionPressureProcesses(g *Flags, args []string) int {
 		if err != nil {
 			return sessionPressureError(err.Error(), 1)
 		}
-		return emitPressure(g, map[string]any{"ok": true, "incident": incident}, fmt.Sprintf("PID %d: %s\n", incident.PID, incident.State), 0)
+		return emitPressure(g, map[string]any{"ok": true, "action": "processes.stop", "incident": incident}, fmt.Sprintf("PID %d: %s\n", incident.PID, incident.State), 0)
 	case "record":
 		if len(args) != 3 || args[1] != "--receipt" {
 			return sessionPressureError("processes record requires --receipt FILE", 2)
@@ -114,7 +114,7 @@ func cmdSessionPressureProcesses(g *Flags, args []string) int {
 		if err != nil {
 			return sessionPressureError(err.Error(), 1)
 		}
-		return emitPressure(g, map[string]any{"ok": true, "incident": incident}, fmt.Sprintf("Recorded historical exit of PID %d (operator report)\n", incident.PID), 0)
+		return emitPressure(g, map[string]any{"ok": true, "action": "processes.record", "incident": incident}, fmt.Sprintf("Recorded historical exit of PID %d (operator report)\n", incident.PID), 0)
 	case "run":
 		if len(args) < 5 || args[1] != "--timeout" || args[3] != "--" {
 			return sessionPressureError("processes run requires --timeout D -- COMMAND [ARGS...]", 2)

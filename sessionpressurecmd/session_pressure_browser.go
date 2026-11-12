@@ -40,13 +40,13 @@ func cmdSessionPressureBrowser(g *Flags, args []string) int {
 		}
 	}
 	body, _ := json.MarshalIndent(state, "", "  ")
-	return emitPressure(g, map[string]any{"ok": true, "browser": state}, fmt.Sprintln(string(body)), 0)
+	return emitPressure(g, map[string]any{"ok": true, "action": "browser", "browser": state}, fmt.Sprintln(string(body)), 0)
 }
 
 func cmdSessionPressureRemote(g *Flags, args []string) int {
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" || arg == "help" {
-			return emitPressure(g, map[string]any{"ok": true}, "Usage: session-pressure remote status|enable [--host HOST] [--user USER] [--fleet PATH]|disable\n       session-pressure remote inspect [--host HOST] [--user USER] [--no-box] [--known-ledger SHA256]\n       session-pressure remote job-log [--host HOST] [--user USER] --id JOB\n", 0)
+			return emitPressure(g, map[string]any{"ok": true, "action": "remote.help"}, "Usage: session-pressure remote status|enable [--host HOST] [--user USER] [--fleet PATH]|disable\n       session-pressure remote inspect [--host HOST] [--user USER] [--no-box] [--known-ledger SHA256]\n       session-pressure remote job-log [--host HOST] [--user USER] --id JOB\n", 0)
 		}
 	}
 	if len(args) > 0 && (args[0] == "inspect" || args[0] == "job-log") {
@@ -99,5 +99,5 @@ func cmdSessionPressureRemote(g *Flags, args []string) int {
 	if err != nil {
 		return sessionPressureError(err.Error(), 1)
 	}
-	return emitPressure(g, map[string]any{"ok": true, "remote": map[string]any{"enabled": policy.Enabled, "host": policy.Host, "user": policy.User, "fleet": policy.Fleet, "parallelism": 2}}, fmt.Sprintf("Automatic Hetzner Go routing: %t (%s@%s, fleet=%s)\n", policy.Enabled, policy.User, policy.Host, policy.Fleet), 0)
+	return emitPressure(g, map[string]any{"ok": true, "action": "remote", "remote": map[string]any{"enabled": policy.Enabled, "host": policy.Host, "user": policy.User, "fleet": policy.Fleet, "parallelism": 2}}, fmt.Sprintf("Automatic Hetzner Go routing: %t (%s@%s, fleet=%s)\n", policy.Enabled, policy.User, policy.Host, policy.Fleet), 0)
 }
