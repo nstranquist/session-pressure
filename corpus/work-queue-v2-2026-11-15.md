@@ -440,6 +440,12 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
   the same way, and the loop corrects a wrong call because each run adds a
   sample. History starts empty: rows before this release carry no family key.
 - Not changed: the headroom predictor still uses the exact key tier.
+- Shipped: commit 8753188, helper installed and promoted (drift false,
+  observe policy kept). Tests and vet passed on runner-3. Live check at
+  about 18:10Z: a real `go test` produced a decision with `history_scope:
+  key` and the family digest, and its `remote_work_finished` and work events
+  carry `placement_family_key`. The Mac was at warning, so the decision was
+  `mac_busy: host level warning`, which is the observe-mode level fix working.
 
 ## 5. Open items
 
