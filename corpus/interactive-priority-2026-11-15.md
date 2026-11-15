@@ -1,7 +1,7 @@
 # Interactive priority and the interactive red lane (2026-11-15)
 
 Owner: claude/140b6102-38d5-49df-b599-984e22e11b5a.
-Status: 2026-11-15, implemented and tested on runner-3; not yet installed.
+Status: 2026-11-15, committed (`71b826d`, `31ab374`), installed in release `5fe6609`, live-verified.
 
 Nico: "this queue is wasting everyone's time. is there anyway we can have
 overrides for our agent chats?" He chose "light work under red", then
@@ -89,9 +89,29 @@ once, so three concurrent arrivals settle back to the cap. Telemetry label:
 - Not covered: darwin-only code paths (the runner is Linux), and installed
   behavior on this Mac.
 
+## Installed acceptance (2026-11-15 15:23Z)
+
+- Release `5fe6609` (contains `71b826d`, `31ab374` and the light-command
+  classification `5fe6609`). Bundle cloned on runner-3 under
+  `/srv/build/exports/sp-5fe6609`, clean HEAD checked, `go vet ./...` and
+  `go test ./... -count=1` passed there, darwin/arm64 built with Go 1.27.4
+  and `pressure-darwin-clang`.
+- CLI: `session-pressure-release install --expected-current 5f02c87…`;
+  `current` reads `5fe6609`. Helper: `session-pressure monitor install`
+  (enforcement comes from the persisted policy); `artifact status` reports
+  `5fe6609`, drift false.
+- Live, from an attended Claude Code chat, host at red memory (swap about
+  9 GB): `ndev session pressure work run --class express-test --wait 3m --
+  go version` queued with `pressure_dimension=memory` and was admitted in
+  79 ms; all four events carry `interactive: true` and
+  `admission_decision=interactive_red_light_admitted`.
+- Live, same moment: `NDEV_INTERACTIVE=0 … --class build --wait 0 -- true`
+  was refused with `ndev-work-refused/v1 kind=admission: NOT RUN: …
+  heavy work blocked at red/memory`. Background heavy work stays held.
+
 ## Open items
 
-- [ ] Install, then confirm `interactive: true` and an
+- [x] Install, then confirm `interactive: true` and an
       `interactive_red_light_admitted` event in live history during red.
 - [ ] Review after one day of events: red-lane admissions, any swap-out
       increase while they ran, and background wait change.
