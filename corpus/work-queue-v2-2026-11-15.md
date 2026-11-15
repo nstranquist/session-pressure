@@ -368,7 +368,12 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
   overrides the resident level with the admission level. Test:
   `TestMacIdleProbeUsesTheResidentLevel`.
 
-### Slice 6, app (2026-11-15)
+### Slice 6, app (landed 2026-11-15, commits 89e394b, fa0d828)
+
+- Shipped: helper fa0d828 installed and promoted (drift false, observe
+  policy preserved). The app was installed with `make install-headless`, so
+  a running app picks it up at its next launch. Go tests and vet passed on
+  runner-3. The Swift suite passed locally (150 tests).
 
 - Helper: `session-pressure --json work placement [--window D]
   [--no-runners]` (`work_placement_view.go`). It is one read-only join:
