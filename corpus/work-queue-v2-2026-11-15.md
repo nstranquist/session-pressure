@@ -325,6 +325,18 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
 
 ## 5. Open items
 
+- [ ] Memory-headroom admission (request from the commit-delivery session,
+  2026-11-15, parallel-landing note P4, delivery 3b9a7f2c: remove slots,
+  admit by predicted peak memory against measured headroom). Nico decided in
+  chat on 2026-11-15: the capped red lane stays (attended chat work and
+  `delivery-darwin`); "admit nothing new at red" does not apply to it. Our
+  conditions: charge in-flight predicted peaks against headroom, keep a
+  coarse CPU concurrency bound until shadow data shows it is not needed, and
+  run the headroom admitter in shadow before it replaces the capacity units.
+  Exposure: one read-only `session-pressure --json work headroom` for the
+  delivery worker (headroom inputs plus p50/p90 peak RSS per class, workload
+  and placement key, with sample counts). Status: not started. Owner: claude
+  (work queue v2).
 - [x] Delivery Darwin ordering (request from the commit-delivery session,
   2026-11-15, design note nicos-commit-delivery
   `docs/11-15-parallel-landing/parallel-landing-kep.md` P5, recorded there in
