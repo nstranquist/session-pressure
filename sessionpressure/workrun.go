@@ -1082,7 +1082,8 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	commandDigest := CommandShapeDigest(resolvedExecutable, len(options.Command)-1)
 	toolFamily := WorkToolFamily(options.Command)
 	placementCwd, _ := os.Getwd()
-	placementKey := PlacementKey(placementCwd, options.Command)
+	placementKeys := NewPlacementKeys(placementCwd, options.Command)
+	placementKey := placementKeys.Exact
 	sessionDigest := DetectedAgentSessionDigest(os.Environ())
 	// Declared ahead of appendEvent so every persisted row can carry the gate's
 	// admission decision; it is constructed once the storage/reclaim probes below
@@ -1102,6 +1103,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		event.CommandDigest = commandDigest
 		event.ToolFamily = toolFamily
 		event.PlacementKey = placementKey
+		event.PlacementFamilyKey = placementKeys.Family
 		if event.BatchStepCount == 0 {
 			event.BatchStepCount = options.BatchStepCount
 		}

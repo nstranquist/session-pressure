@@ -98,28 +98,30 @@ const (
 // (work_placer.go). The placer matches it against remote_work_finished rows to
 // learn local and remote durations for the same check; it is never reversed.
 type WorkEvent struct {
-	HostID                              string                    `json:"host_id,omitempty"`
-	HostOS                              string                    `json:"host_os,omitempty"`
-	HostArch                            string                    `json:"host_arch,omitempty"`
-	LogicalCPUs                         int                       `json:"logical_cpus,omitempty"`
-	SourceRevision                      string                    `json:"source_revision,omitempty"`
-	Workload                            string                    `json:"workload,omitempty"`
-	Cohort                              string                    `json:"cohort,omitempty"`
-	SchemaVersion                       int                       `json:"schema_version"`
-	EventID                             string                    `json:"event_id"`
-	RequestID                           string                    `json:"request_id,omitempty"`
-	Timestamp                           time.Time                 `json:"timestamp"`
-	Event                               WorkEventType             `json:"event"`
-	OperationID                         string                    `json:"operation_id"`
-	LeaseID                             string                    `json:"lease_id,omitempty"`
-	Class                               WorkClass                 `json:"class"`
-	RequestedClass                      WorkClass                 `json:"requested_class,omitempty"`
-	Weight                              int                       `json:"weight"`
-	PID                                 int                       `json:"pid,omitempty"`
-	SessionDigest                       string                    `json:"session_digest,omitempty"`
-	CommandDigest                       string                    `json:"command_digest,omitempty"`
-	ToolFamily                          string                    `json:"tool_family,omitempty"`
-	PlacementKey                        string                    `json:"placement_key,omitempty"`
+	HostID         string        `json:"host_id,omitempty"`
+	HostOS         string        `json:"host_os,omitempty"`
+	HostArch       string        `json:"host_arch,omitempty"`
+	LogicalCPUs    int           `json:"logical_cpus,omitempty"`
+	SourceRevision string        `json:"source_revision,omitempty"`
+	Workload       string        `json:"workload,omitempty"`
+	Cohort         string        `json:"cohort,omitempty"`
+	SchemaVersion  int           `json:"schema_version"`
+	EventID        string        `json:"event_id"`
+	RequestID      string        `json:"request_id,omitempty"`
+	Timestamp      time.Time     `json:"timestamp"`
+	Event          WorkEventType `json:"event"`
+	OperationID    string        `json:"operation_id"`
+	LeaseID        string        `json:"lease_id,omitempty"`
+	Class          WorkClass     `json:"class"`
+	RequestedClass WorkClass     `json:"requested_class,omitempty"`
+	Weight         int           `json:"weight"`
+	PID            int           `json:"pid,omitempty"`
+	SessionDigest  string        `json:"session_digest,omitempty"`
+	CommandDigest  string        `json:"command_digest,omitempty"`
+	ToolFamily     string        `json:"tool_family,omitempty"`
+	PlacementKey   string        `json:"placement_key,omitempty"`
+	// PlacementFamilyKey is the coarse fallback digest (work_placement_family.go).
+	PlacementFamilyKey                  string                    `json:"placement_family_key,omitempty"`
 	Blocker                             WorkBlocker               `json:"blocker,omitempty"`
 	QueuePosition                       int                       `json:"queue_position,omitempty"`
 	QueueDepth                          int                       `json:"queue_depth,omitempty"`
@@ -241,6 +243,9 @@ func (event WorkEvent) Validate() error {
 	}
 	if event.PlacementKey != "" && !validSHA256Digest(event.PlacementKey) {
 		return errors.New("work placement_key must be an opaque sha256 digest")
+	}
+	if event.PlacementFamilyKey != "" && !validSHA256Digest(event.PlacementFamilyKey) {
+		return errors.New("work placement_family_key must be an opaque sha256 digest")
 	}
 	if event.ToolFamily != "" && !ValidToolFamily(event.ToolFamily) {
 		return fmt.Errorf("work event tool_family %q is not in the closed vocabulary", event.ToolFamily)

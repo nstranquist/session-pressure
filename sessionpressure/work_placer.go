@@ -109,23 +109,41 @@ func decidePlacement(idle bool, busyReason string, history placementHistory) pla
 }
 
 // readPlacementHistory collects the most recent successful durations of one
-// check: local runtimes from work events, remote durations from
-// remote_work_finished control events. A read error yields no samples, which
-// keeps the check remote.
-func readPlacementHistory(dir, key string, now time.Time) placementHistory {
+// check, by exact key and by family key: local runtimes from work events,
+// remote durations from remote_work_finished control events. A read error
+// yields no samples, which keeps the check remote.
+func readPlacementHistory(dir string, keys PlacementKeys, now time.Time) (exact, family placementHistory) {
 	since := now.Add(-placementHistoryWindow)
-	var history placementHistory
 	if events, err := NewWorkEventStore(dir).completedRowsSince(since); err == nil {
 		for _, event := range events {
-			if event.Event == WorkEventCompleted && event.PlacementKey == key && event.RuntimeMillis > 0 {
-				history.localMS = append(history.localMS, event.RuntimeMillis)
+			if event.Event != WorkEventCompleted || event.RuntimeMillis <= 0 {
+				continue
+			}
+			if keys.Exact != "" && event.PlacementKey == keys.Exact {
+				exact.localMS = append(exact.localMS, event.RuntimeMillis)
+			}
+			if keys.Family != "" && event.PlacementFamilyKey == keys.Family {
+				family.localMS = append(family.localMS, event.RuntimeMillis)
 			}
 		}
 	}
-	history.remoteMS = readRemoteDurations(filepath.Join(dir, "work-control-events.jsonl"), key, since)
-	history.localMS = lastSamples(history.localMS)
-	history.remoteMS = lastSamples(history.remoteMS)
-	return history
+	exact.remoteMS, family.remoteMS = readRemoteDurations(filepath.Join(dir, "work-control-events.jsonl"), keys, since)
+	for _, h := range []*placementHistory{&exact, &family} {
+		h.localMS, h.remoteMS = lastSamples(h.localMS), lastSamples(h.remoteMS)
+	}
+	return exact, family
+}
+
+// chooseHistory prefers the exact check. The family stands in only when the
+// exact key lacks samples on either side.
+func chooseHistory(exact, family placementHistory) (placementHistory, string) {
+	if len(exact.localMS) >= placementMinSamples && len(exact.remoteMS) >= placementMinSamples {
+		return exact, "key"
+	}
+	if len(family.localMS) >= placementMinSamples || len(family.remoteMS) >= placementMinSamples {
+		return family, "family"
+	}
+	return exact, "key"
 }
 
 func lastSamples(values []int64) []int64 {
@@ -135,39 +153,44 @@ func lastSamples(values []int64) []int64 {
 	return values
 }
 
-func readRemoteDurations(path, key string, since time.Time) []int64 {
+func readRemoteDurations(path string, keys PlacementKeys, since time.Time) (exact, family []int64) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer file.Close()
-	var durations []int64
-	needle := []byte(key)
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
+	matches := func(line []byte, key string) bool { return key != "" && bytes.Contains(line, []byte(key)) }
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		if !bytes.Contains(line, needle) {
+		if !matches(line, keys.Exact) && !matches(line, keys.Family) {
 			continue
 		}
 		var row struct {
 			Event string    `json:"event"`
 			TS    time.Time `json:"ts"`
 			Attrs struct {
-				DurationMS   int64  `json:"duration_ms"`
-				Failed       bool   `json:"failed"`
-				PlacementKey string `json:"placement_key"`
+				DurationMS         int64  `json:"duration_ms"`
+				Failed             bool   `json:"failed"`
+				PlacementKey       string `json:"placement_key"`
+				PlacementFamilyKey string `json:"placement_family_key"`
 			} `json:"attrs"`
 		}
-		if json.Unmarshal(line, &row) != nil || row.Event != "remote_work_finished" || row.Attrs.PlacementKey != key {
+		if json.Unmarshal(line, &row) != nil || row.Event != "remote_work_finished" {
 			continue
 		}
 		if row.Attrs.Failed || row.Attrs.DurationMS <= 0 || row.TS.Before(since) {
 			continue
 		}
-		durations = append(durations, row.Attrs.DurationMS)
+		if keys.Exact != "" && row.Attrs.PlacementKey == keys.Exact {
+			exact = append(exact, row.Attrs.DurationMS)
+		}
+		if keys.Family != "" && row.Attrs.PlacementFamilyKey == keys.Family {
+			family = append(family, row.Attrs.DurationMS)
+		}
 	}
-	return durations
+	return exact, family
 }
 
 // macIdleProbe answers "could this command start on the Mac right now". It
@@ -212,14 +235,15 @@ func macIdleProbe(coordinator *WorkCoordinator, class WorkClass, admission func(
 // placeLocally runs the placer for an eligible auto-placed command. True
 // means the caller returns "not handled" so the command takes local
 // admission. Every decision is recorded.
-func placeLocally(dir string, policy RemoteWorkPolicy, options WorkRunOptions, key, family string, stderr io.Writer) bool {
+func placeLocally(dir string, policy RemoteWorkPolicy, options WorkRunOptions, keys PlacementKeys, family string, stderr io.Writer) bool {
 	if !policy.Placer || options.Placement != WorkPlacementAuto || options.placementProbe == nil {
 		return false
 	}
 	idle, busy := options.placementProbe()
 	var history placementHistory
+	scope := "key"
 	if idle {
-		history = readPlacementHistory(dir, key, time.Now())
+		history, scope = chooseHistory(readPlacementHistory(dir, keys, time.Now()))
 	}
 	decision := decidePlacement(idle, busy, history)
 	target := "remote"
@@ -230,11 +254,12 @@ func placeLocally(dir string, policy RemoteWorkPolicy, options WorkRunOptions, k
 		"event": "work_placement_decided", "placement": target, "reason": boundedText(decision.Reason, 80),
 		"local_eta_ms": decision.LocalETAMS, "remote_eta_ms": decision.RemoteETAMS,
 		"local_samples": decision.LocalSamples, "remote_samples": decision.RemoteSamples,
-		"tool_family": family, "class": string(options.Class), "placement_key": key,
+		"tool_family": family, "class": string(options.Class), "placement_key": keys.Exact,
+		"placement_family_key": keys.Family, "history_scope": scope,
 	})
 	if decision.Local && stderr != nil {
-		fmt.Fprintf(stderr, "session-pressure: placer kept this check on the idle Mac (%s; local p75 %s, remote p50 %s)\n",
-			decision.Reason, etaText(decision.LocalETAMS), etaText(decision.RemoteETAMS))
+		fmt.Fprintf(stderr, "session-pressure: placer kept this check on the idle Mac (%s by %s history; local p75 %s, remote p50 %s)\n",
+			decision.Reason, scope, etaText(decision.LocalETAMS), etaText(decision.RemoteETAMS))
 	}
 	return decision.Local
 }

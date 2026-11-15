@@ -47,6 +47,7 @@ type remoteNodePlan struct {
 	argv        []string // the single verification command
 	// placementKey joins this run to its local history (work_placer.go).
 	placementKey string
+	familyKey    string
 }
 
 // localToolVersion reports the Mac's version of a tool ("node" or "pnpm").
@@ -403,7 +404,7 @@ func runRemoteNodeWork(dir string, policy RemoteWorkPolicy, plan remoteNodePlan,
 			"package_manager": plan.manager, "node_version": plan.nodeVersion, "runner_host": policy.Host, "runner_user": policy.User,
 			"request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0,
 			"source_upload_mode": uploadMode, "source_files_sent": uploadFiles, "source_bytes_sent": uploadBytes,
-			"placement_key": plan.placementKey,
+			"placement_key": plan.placementKey, "placement_family_key": plan.familyKey,
 		}
 		for name, ms := range timingMS {
 			event[name] = ms
@@ -520,8 +521,9 @@ func tryRemoteNodeWork(dir string, policy RemoteWorkPolicy, options WorkRunOptio
 	if streams.Stderr == nil {
 		streams.Stderr = os.Stderr
 	}
-	plan.placementKey = PlacementKey(cwd, options.Command)
-	if placeLocally(dir, policy, options, plan.placementKey, ToolFamilyNode, streams.Stderr) {
+	keys := NewPlacementKeys(cwd, options.Command)
+	plan.placementKey, plan.familyKey = keys.Exact, keys.Family
+	if placeLocally(dir, policy, options, keys, ToolFamilyNode, streams.Stderr) {
 		return false, 0, nil
 	}
 	code, err := runRemoteNodeWork(dir, policy, plan, options, streams)

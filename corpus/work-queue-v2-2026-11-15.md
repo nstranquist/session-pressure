@@ -415,6 +415,32 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
   checkouts, so the exact cwd+argv key rarely matches. The placer will stay
   remote-only until a coarser fallback key exists (open item below).
 
+### Placer family key (2026-11-15)
+
+- Problem (measured): of 35 keyed remote runs, 23 distinct exact keys, and
+  only 3 had the 2 successful samples the placer needs.
+- `PlacementFamilyKey` (`work_placement_family.go`, prefix `family-v1`):
+  - project identity by declaration: Go module path, package.json name,
+    Swift package directory name, git root name, else the cwd itself;
+  - cwd relative to that root, so temporary checkouts of one repo match;
+  - argv[0] by base name; test selection and verbosity flags dropped
+    (`-run`, `-skip`, `-count`, `-timeout`, `-shuffle`, `-v`, `-failfast`,
+    `-json`, `-t`, `--testNamePattern`, `--grep`, `--reporter`,
+    `--verbose`, `--silent`); absolute paths inside the root made relative;
+    positional arguments sorted as a set. Build-changing flags (`-race`,
+    `-tags`) and the package set stay in the key.
+- Recorded on every work event (`placement_family_key`, validated digest)
+  and on `remote_work_finished` (Go and Node). The placer reads both scopes
+  in one pass and uses the exact key when it has 2 samples on both sides,
+  otherwise the family. `work_placement_decided` records `history_scope`
+  (`key` or `family`) and the family digest, and the stderr line names the
+  scope.
+- Known trade-off: a family mixes `-run TestOne` with whole-package runs, so
+  its p75 local and p50 remote come from a mixed population. Both sides mix
+  the same way, and the loop corrects a wrong call because each run adds a
+  sample. History starts empty: rows before this release carry no family key.
+- Not changed: the headroom predictor still uses the exact key tier.
+
 ## 5. Open items
 
 - [ ] Memory-headroom admission (request from the commit-delivery session,
@@ -475,10 +501,10 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
       reservations no longer block (needs the old waiters to drain).
 - [x] Swift app: show `pressure_parked` as `parked`, not `held` (slice 6
       build, 2026-11-15).
-- [ ] Placer fallback key: when the exact placement key has fewer than 2
-      samples, fall back to a coarser key (repo root + tool + subcommand +
-      package set, with `-run` and temp-checkout paths normalised). Measured
-      need: only 3 of 23 keys have 2 successes. Owner: claude (work queue v2).
+- [x] Placer fallback key (Nico: "Yes, build it", 2026-11-15). See
+      "Placer family key" in 4.9. Next check: after 24 h, count decisions by
+      `history_scope` and compare family-scoped local runtimes with the
+      remote p50 they beat. Owner: claude (work queue v2).
 - [ ] Runner gocache-lru: go test jobs on runner-3 wait for
       GOCACHEPROG for more than 6 min while one gocache-lru holds
       `authority.lock` and reads the 26 GB cache under a 2-CPU cgroup cap.

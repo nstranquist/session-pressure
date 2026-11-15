@@ -102,7 +102,7 @@ func TestReadPlacementHistoryJoinsLocalAndRemote(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "work-control-events.jsonl"), body.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	history := readPlacementHistory(dir, key, now)
+	history, _ := readPlacementHistory(dir, PlacementKeys{Exact: key}, now)
 	if len(history.localMS) != 1 || history.localMS[0] != 5_500 {
 		t.Fatalf("local history: %v", history.localMS)
 	}
@@ -113,7 +113,7 @@ func TestReadPlacementHistoryJoinsLocalAndRemote(t *testing.T) {
 
 func TestPlaceLocallyRecordsEveryDecision(t *testing.T) {
 	dir := t.TempDir()
-	key := PlacementKey("/repo/web", []string{"npm", "test"})
+	key := PlacementKeys{Exact: PlacementKey("/repo/web", []string{"npm", "test"})}
 	options := WorkRunOptions{Class: WorkClassTest, Command: []string{"npm", "test"}}
 	options.placementProbe = func() (bool, string) { return false, "2 waiters queued" }
 	var stderr bytes.Buffer
@@ -131,12 +131,12 @@ func TestPlaceLocallyRecordsEveryDecision(t *testing.T) {
 	// An idle Mac with a small remote history explores locally, loudly.
 	options.Placement = WorkPlacementAuto
 	for range 2 {
-		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": 30_000, "failed": false, "placement_key": key})
+		recordControlEvent(dir, map[string]any{"event": "remote_work_finished", "duration_ms": 30_000, "failed": false, "placement_key": key.Exact})
 	}
 	if !placeLocally(dir, RemoteWorkPolicy{Placer: true}, options, key, ToolFamilyNode, &stderr) {
 		t.Fatal("idle Mac with a small check did not explore locally")
 	}
-	if !strings.Contains(stderr.String(), "placer kept this check on the idle Mac (explore_local") {
+	if !strings.Contains(stderr.String(), "placer kept this check on the idle Mac (explore_local by key history") {
 		t.Fatalf("local decision was silent: %q", stderr.String())
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "work-control-events.jsonl"))

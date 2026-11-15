@@ -524,8 +524,9 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if err != nil {
 		return reject(err.Error())
 	}
-	placementKey := PlacementKey(cwd, options.Command)
-	if placeLocally(dir, policy, options, placementKey, ToolFamilyGo, streams.Stderr) {
+	placementKeys := NewPlacementKeys(cwd, options.Command)
+	placementKey := placementKeys.Exact
+	if placeLocally(dir, policy, options, placementKeys, ToolFamilyGo, streams.Stderr) {
 		return false, 0, nil
 	}
 	job, err := NewWorkOperationID()
@@ -550,7 +551,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	var sourceDelta remoteSourceUpload
 	defer func() {
 		finishStage()
-		event := map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "timing_ms": timingMS, "source_bytes": sourceBytes, "delivery_id": os.Getenv("NDEV_COMMIT_DELIVERY_ID"), "operation": options.Command[1], "profile": profile, "runner_host": policy.Host, "runner_user": policy.User, "request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0, "placement_key": placementKey}
+		event := map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "timing_ms": timingMS, "source_bytes": sourceBytes, "delivery_id": os.Getenv("NDEV_COMMIT_DELIVERY_ID"), "operation": options.Command[1], "profile": profile, "runner_host": policy.Host, "runner_user": policy.User, "request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0, "placement_key": placementKey, "placement_family_key": placementKeys.Family}
 		// The shared SQLite telemetry projection retains scalar attributes.
 		for stage, ms := range timingMS {
 			event[stage] = ms
