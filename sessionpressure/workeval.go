@@ -110,6 +110,27 @@ func EvaluateWorkSystem(policy Policy) WorkEvaluationReport {
 	add("express-lookahead-under-benchmark", expressLookahead.SelectedOperationID == secondID && len(expressLookahead.BypassedIndexes) == 1,
 		fmt.Sprintf("selected=%s reason=%s used=%d", expressLookahead.SelectedOperationID, expressLookahead.DecisionReason, benchmarkWeight))
 
+	// A pressure reservation whose owner still waits on host pressure must not
+	// idle the queue (2026-11-15 stall: 7/8 free, ten waiters blocked).
+	parkedAt := queuedAt.Add(time.Second)
+	parkedHead := selectWorkWaiter([]WorkWaiterRecord{
+		{OperationID: firstID, Class: WorkClassBuild, Weight: limits.BuildWeight, QueuedAt: queuedAt,
+			ReservationKind: WorkReservationPressure, ReservedAt: &parkedAt, ProtectedAt: &parkedAt},
+		{OperationID: secondID, Class: WorkClassExpressTest, Weight: expressWeight, QueuedAt: queuedAt.Add(2 * time.Second)},
+	}, expressWeight, limits.Capacity, queuedAt.Add(3*time.Second), workGreenExpressWindow{}, 0)
+	add("pressure-parked-head-does-not-idle", parkedHead.SelectedOperationID == secondID && len(parkedHead.BypassedIndexes) == 0,
+		fmt.Sprintf("selected=%s reason=%s", parkedHead.SelectedOperationID, parkedHead.DecisionReason))
+
+	// A protected head heavier than the warning ceiling cannot drain in, so
+	// it must not hold the ceiling idle either.
+	deratedProtected := queuedAt.Add(time.Second)
+	deratedHead := selectWorkWaiter([]WorkWaiterRecord{
+		{OperationID: firstID, Class: WorkClassBuild, Weight: limits.BuildWeight, QueuedAt: queuedAt, ProtectedAt: &deratedProtected, BypassCount: workMaximumBypasses},
+		{OperationID: secondID, Class: WorkClassExpressTest, Weight: expressWeight, QueuedAt: queuedAt.Add(2 * time.Second)},
+	}, 0, max(1, limits.BuildWeight-1), queuedAt.Add(3*time.Second), workGreenExpressWindow{}, 0)
+	add("derated-head-does-not-idle", deratedHead.SelectedOperationID == secondID && len(deratedHead.BypassedIndexes) == 0,
+		fmt.Sprintf("selected=%s reason=%s ceiling=%d", deratedHead.SelectedOperationID, deratedHead.DecisionReason, max(1, limits.BuildWeight-1)))
+
 	state := workState{SchemaVersion: workStateSchemaVersion, Waiters: []WorkWaiterRecord{
 		{OperationID: secondID, Class: WorkClassBrowser, Weight: limits.BrowserWeight, PID: 2, OwnerIdentity: "owner", QueuedAt: queuedAt, HeartbeatAt: queuedAt},
 		{OperationID: firstID, Class: WorkClassBuild, Weight: limits.BuildWeight, PID: 1, OwnerIdentity: "owner", QueuedAt: queuedAt, HeartbeatAt: queuedAt},

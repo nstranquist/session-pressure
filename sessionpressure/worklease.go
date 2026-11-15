@@ -33,7 +33,10 @@ const (
 	workMaximumBypasses          = 4
 	// Schema 7 adds non-consuming pressure reservations. A post-acquire host
 	// gate no longer charges weighted capacity while it waits to start.
-	workSelectorSchemaVersion = 7
+	// Schema 8: a pressure reservation holds the drain only after its owner
+	// resumes acquisition (resumed_at), and a protected head heavier than the
+	// effective ceiling no longer holds a drain that can never complete.
+	workSelectorSchemaVersion = 8
 )
 
 // WorkMaximumBypasses is the operator-visible admission bound for one blocked
@@ -211,6 +214,18 @@ type WorkWaiterRecord struct {
 	ProtectedAt     *time.Time `json:"protected_at,omitempty"`
 	ReservationKind string     `json:"reservation_kind,omitempty"`
 	ReservedAt      *time.Time `json:"reserved_at,omitempty"`
+	// ResumedAt marks a pressure reservation whose owner is acquiring again.
+	// Until then the owner waits on host pressure, not capacity, so the
+	// reservation keeps its queue place but does not hold the drain.
+	ResumedAt *time.Time `json:"resumed_at,omitempty"`
+}
+
+// pressureParked reports a pressure reservation whose owner still waits on
+// host pressure. Selection skips it: holding idle capacity for an operation
+// that is not trying to start stalled the whole queue (2026-11-15: seven of
+// eight units idle behind a parked build, ten waiters blocked).
+func (waiter WorkWaiterRecord) pressureParked() bool {
+	return waiter.ReservationKind == WorkReservationPressure && waiter.ReservedAt != nil && waiter.ResumedAt == nil
 }
 
 type WorkWaiterStatus struct {
@@ -227,6 +242,9 @@ type WorkWaiterStatus struct {
 	ProtectionReason string     `json:"protection_reason,omitempty"`
 	ReservationKind  string     `json:"reservation_kind,omitempty"`
 	ReservedAt       *time.Time `json:"reserved_at,omitempty"`
+	// PressureParked means the reservation's owner still waits on host
+	// pressure; the queue runs past it until the owner resumes.
+	PressureParked bool `json:"pressure_parked,omitempty"`
 	// OverridePosition is this waiter's 1-based place in the operator override
 	// sequence; 1 is the active head. Zero means the waiter is not pinned.
 	OverridePosition int `json:"override_position,omitempty"`
@@ -960,11 +978,12 @@ func (coordinator *WorkCoordinator) reconcile(state *workState) (prunedLeases, p
 		}
 		switch waiter.ReservationKind {
 		case "":
-			if waiter.ReservedAt != nil {
+			if waiter.ReservedAt != nil || waiter.ResumedAt != nil {
 				return 0, 0, false, fmt.Errorf("invalid work waiter %s reserved_at without reservation_kind", waiter.OperationID)
 			}
 		case WorkReservationPressure:
-			if waiter.ReservedAt == nil || waiter.ReservedAt.Before(waiter.QueuedAt) || waiter.ReservedAt.After(now.Add(maximumWorkClockSkew)) {
+			if waiter.ReservedAt == nil || waiter.ReservedAt.Before(waiter.QueuedAt) || waiter.ReservedAt.After(now.Add(maximumWorkClockSkew)) ||
+				(waiter.ResumedAt != nil && (waiter.ResumedAt.Before(*waiter.ReservedAt) || waiter.ResumedAt.After(now.Add(maximumWorkClockSkew)))) {
 				return 0, 0, false, fmt.Errorf("invalid work waiter %s pressure reservation metadata", waiter.OperationID)
 			}
 		default:
@@ -1096,11 +1115,37 @@ func selectWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.T
 		return workSelection{DecisionReason: "queue_empty"}
 	}
 	available := max(0, capacity-used)
-	limit := min(len(waiters), workSelectorScanLimit)
-	if protected, reason := workWaiterProtection(waiters[0], capacity, now); protected {
-		selection := workSelection{ProtectedOperationID: waiters[0].OperationID, DecisionReason: "protected_" + reason}
-		if waiters[0].Weight <= available {
-			selection.SelectedOperationID = waiters[0].OperationID
+	// Parked pressure reservations keep their queue place but are invisible to
+	// selection: they neither hold the drain nor accrue bypasses. Indexes below
+	// stay in the caller's waiter slice so bypass accounting lands correctly.
+	eligible := make([]int, 0, min(len(waiters), workSelectorScanLimit))
+	for index := 0; index < len(waiters) && len(eligible) < workSelectorScanLimit; index++ {
+		if !waiters[index].pressureParked() {
+			eligible = append(eligible, index)
+		}
+	}
+	if len(eligible) == 0 {
+		return workSelection{DecisionReason: "only_pressure_parked_waiters"}
+	}
+	head := waiters[eligible[0]]
+	protected, reason := workWaiterProtection(head, capacity, now)
+	if protected && head.Weight > capacity {
+		// The head cannot fit this effective ceiling at all (for example a
+		// weight-5 build under a warning ceiling of 4). A drain cannot finish,
+		// so holding it only idles capacity. Let feasible successors run
+		// without charging the head a bypass; it regains its drain the moment
+		// the ceiling can hold it again.
+		for _, index := range eligible[1:] {
+			if waiters[index].Weight <= available {
+				return workSelection{SelectedOperationID: waiters[index].OperationID, DecisionReason: "protected_head_exceeds_effective_capacity"}
+			}
+		}
+		return workSelection{DecisionReason: "protected_head_exceeds_effective_capacity"}
+	}
+	if protected {
+		selection := workSelection{ProtectedOperationID: head.OperationID, DecisionReason: "protected_" + reason}
+		if head.Weight <= available {
+			selection.SelectedOperationID = head.OperationID
 			return selection
 		}
 		if reason == "exclusive_capacity" {
@@ -1117,7 +1162,7 @@ func selectWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.T
 			// residue the head can never use — the head still admits the
 			// moment every non-express lease releases, under any sustained
 			// express stream. No overcommit inside a drain.
-			for index := 1; index < limit; index++ {
+			for _, index := range eligible[1:] {
 				candidate := waiters[index]
 				if !IsExpressClass(candidate.Class) {
 					continue
@@ -1125,7 +1170,7 @@ func selectWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.T
 				if candidate.Weight > available {
 					continue
 				}
-				if expressLeased+candidate.Weight+waiters[0].Weight > capacity {
+				if expressLeased+candidate.Weight+head.Weight > capacity {
 					continue
 				}
 				selection.SelectedOperationID = candidate.OperationID
@@ -1141,7 +1186,7 @@ func selectWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.T
 		selection.DecisionReason = "protected_bounded_drain"
 		return selection
 	}
-	for index := 0; index < limit; index++ {
+	for position, index := range eligible {
 		candidate := waiters[index]
 		overcommitted := false
 		if candidate.Weight > available {
@@ -1153,7 +1198,7 @@ func selectWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.T
 			overcommitted = true
 		}
 		reason := "queue_head_fits"
-		if index > 0 {
+		if position > 0 {
 			reason = "oldest_feasible_head_bypass"
 		}
 		if overcommitted {
@@ -1163,10 +1208,10 @@ func selectWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.T
 			SelectedOperationID: candidate.OperationID,
 			DecisionReason:      reason,
 		}
-		if index > 0 {
+		if position > 0 {
 			// Only the active blocking head accrues a bypass. Successors have not
 			// yet had their own bounded opportunity to use otherwise idle capacity.
-			selection.BypassedIndexes = []int{0}
+			selection.BypassedIndexes = []int{eligible[0]}
 		}
 		return selection
 	}
@@ -1177,19 +1222,32 @@ func selectFIFOWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now ti
 	if len(waiters) == 0 {
 		return workSelection{DecisionReason: "queue_empty"}
 	}
-	protectedOperationID := ""
-	if protected, _ := workWaiterProtection(waiters[0], capacity, now); protected {
-		protectedOperationID = waiters[0].OperationID
+	// FIFO order applies to work that is trying to start. A parked pressure
+	// reservation keeps its place but is not the head until its owner resumes.
+	headIndex := -1
+	for index := range waiters {
+		if !waiters[index].pressureParked() {
+			headIndex = index
+			break
+		}
 	}
-	if used+waiters[0].Weight > capacity {
+	if headIndex < 0 {
+		return workSelection{DecisionReason: "only_pressure_parked_waiters"}
+	}
+	head := waiters[headIndex]
+	protectedOperationID := ""
+	if protected, _ := workWaiterProtection(head, capacity, now); protected {
+		protectedOperationID = head.OperationID
+	}
+	if used+head.Weight > capacity {
 		// FIFO order is preserved; green only relaxes the express head's
 		// capacity by the bounded overcommit.
-		if green.Active && IsExpressClass(waiters[0].Class) && used+waiters[0].Weight <= capacity+green.Overcommit {
-			return workSelection{SelectedOperationID: waiters[0].OperationID, ProtectedOperationID: protectedOperationID, DecisionReason: "fifo_green_express_overcommit"}
+		if green.Active && IsExpressClass(head.Class) && used+head.Weight <= capacity+green.Overcommit {
+			return workSelection{SelectedOperationID: head.OperationID, ProtectedOperationID: protectedOperationID, DecisionReason: "fifo_green_express_overcommit"}
 		}
 		return workSelection{ProtectedOperationID: protectedOperationID, DecisionReason: "fifo_head_does_not_fit"}
 	}
-	return workSelection{SelectedOperationID: waiters[0].OperationID, ProtectedOperationID: protectedOperationID, DecisionReason: "fifo_head_fits"}
+	return workSelection{SelectedOperationID: head.OperationID, ProtectedOperationID: protectedOperationID, DecisionReason: "fifo_head_fits"}
 }
 
 func (coordinator *WorkCoordinator) schedulingPolicy() string {
@@ -1282,6 +1340,7 @@ func (coordinator *WorkCoordinator) status(state workState, prunedLeases, pruned
 			WaitMS: max(int64(0), now.Sub(record.QueuedAt).Milliseconds()), BypassCount: record.BypassCount,
 			Protected: protected, ProtectionReason: protectionReason,
 			ReservationKind: record.ReservationKind, ReservedAt: record.ReservedAt,
+			PressureParked:   record.pressureParked(),
 			OverridePosition: overridePosition,
 		})
 		if record.ReservationKind == WorkReservationPressure {
@@ -1826,6 +1885,13 @@ func (waiter *WorkWaiter) TryAcquireWithCapacity(ctx context.Context, effectiveC
 			if state.Waiters[index].OperationID == waiter.operationID {
 				position = index
 				state.Waiters[index].HeartbeatAt = now
+				if state.Waiters[index].pressureParked() {
+					// Trying to acquire is the readiness signal: the owner left
+					// its host-pressure wait, so the reservation now holds its
+					// drain again. Set in the same locked transaction as selection.
+					resumedAt := now
+					state.Waiters[index].ResumedAt = &resumedAt
+				}
 				break
 			}
 		}

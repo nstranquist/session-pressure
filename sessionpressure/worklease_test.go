@@ -625,17 +625,19 @@ func TestWorkSelectorProtectsWaitAgeAndBoundsScan(t *testing.T) {
 	now := time.Date(2026, 7, 14, 16, 0, 0, 0, time.UTC)
 	waiters := make([]WorkWaiterRecord, workSelectorScanLimit+1)
 	for index := range waiters {
-		waiters[index] = WorkWaiterRecord{OperationID: fmt.Sprintf("%032x", index+1), Weight: 9, QueuedAt: now.Add(-time.Second)}
+		// Weight 7 fits the ceiling but not the 6 free units. (A head heavier
+		// than the ceiling itself no longer holds a drain: selector schema 8.)
+		waiters[index] = WorkWaiterRecord{OperationID: fmt.Sprintf("%032x", index+1), Weight: 7, QueuedAt: now.Add(-time.Second)}
 	}
 	waiters[len(waiters)-1].Weight = 1
-	selection := selectWorkWaiter(waiters, 0, 8, now, workGreenExpressWindow{}, 0)
+	selection := selectWorkWaiter(waiters, 2, 8, now, workGreenExpressWindow{}, 0)
 	if selection.SelectedOperationID != "" || selection.DecisionReason != "no_waiter_fits_capacity" {
 		t.Fatalf("selector scanned beyond its hard bound: %+v", selection)
 	}
 	lastBypassedAt := now.Add(-WorkReservationAge)
 	waiters[0].LastBypassedAt = &lastBypassedAt
 	waiters[0].BypassCount = 1
-	selection = selectWorkWaiter(waiters, 0, 8, now, workGreenExpressWindow{}, 0)
+	selection = selectWorkWaiter(waiters, 2, 8, now, workGreenExpressWindow{}, 0)
 	if selection.ProtectedOperationID != waiters[0].OperationID || selection.SelectedOperationID != "" || selection.DecisionReason != "protected_bounded_drain" {
 		t.Fatalf("aged waiter with no feasible successor did not reserve capacity: %+v", selection)
 	}
@@ -856,25 +858,88 @@ func TestWorkLeasePressureReservationReleasesCapacityAndPreservesQueueAge(t *tes
 	if status.Used != 0 || status.Available != status.Capacity || status.PressureReservationCount != 1 || status.ReservedWeight != coordinator.Limits.BuildWeight {
 		t.Fatalf("pressure reservation still consumed capacity: %+v", status)
 	}
-	if len(status.Waiters) != 1 || status.Waiters[0].ReservationKind != WorkReservationPressure || !status.Waiters[0].Protected || status.Waiters[0].ProtectionReason != "pressure_reservation" || !status.Waiters[0].QueuedAt.Equal(originalQueuedAt) {
+	if len(status.Waiters) != 1 || status.Waiters[0].ReservationKind != WorkReservationPressure || !status.Waiters[0].Protected || status.Waiters[0].ProtectionReason != "pressure_reservation" || !status.Waiters[0].PressureParked || !status.Waiters[0].QueuedAt.Equal(originalQueuedAt) {
 		t.Fatalf("pressure reservation lost queue protection: %+v", status.Waiters)
 	}
+	// Selector schema 8: while the owner waits on host pressure the
+	// reservation is parked. A successor that fits runs instead of idling
+	// the whole queue behind an operation that is not trying to start.
 	other, _, err := coordinator.RegisterWaiter(context.Background(), WorkClassBrowser, "00000000000000000000000000000002")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, blocked, err := other.TryAcquire(context.Background()); !errors.Is(err, ErrWorkReservation) || blocked.ProtectedOperationID != operationID {
-		t.Fatalf("successor bypassed pressure reservation: status=%+v err=%v", blocked, err)
+	otherLease, otherStatus, err := other.TryAcquire(context.Background())
+	if err != nil || otherStatus.Used != coordinator.Limits.BrowserWeight {
+		t.Fatalf("successor stalled behind a parked pressure reservation: status=%+v err=%v", otherStatus, err)
 	}
+	// The owner resuming acquisition is the readiness signal; it reacquires
+	// at the head with its original queue age.
 	reacquired, status, err := waiter.TryAcquire(context.Background())
-	if err != nil || status.Used != coordinator.Limits.BuildWeight || status.PressureReservationCount != 0 {
+	if err != nil || status.Used != coordinator.Limits.BuildWeight+coordinator.Limits.BrowserWeight || status.PressureReservationCount != 0 {
 		t.Fatalf("pressure reservation did not reacquire: status=%+v err=%v", status, err)
+	}
+	if !reacquired.Record().QueuedAt.Equal(originalQueuedAt) {
+		t.Fatalf("reacquired lease lost queue age: %v", reacquired.Record().QueuedAt)
 	}
 	if err := reacquired.Release(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := other.Cancel(context.Background()); err != nil {
+	if err := otherLease.Release(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSelectWorkWaiterSkipsParkedPressureReservation(t *testing.T) {
+	now := time.Date(2026, 11, 15, 14, 20, 0, 0, time.UTC)
+	queued := now.Add(-10 * time.Minute)
+	reserved := now.Add(-5 * time.Minute)
+	resumed := now.Add(-time.Second)
+	parked := WorkWaiterRecord{OperationID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Class: WorkClassBuild, Weight: 5, QueuedAt: queued,
+		ReservationKind: WorkReservationPressure, ReservedAt: &reserved, ProtectedAt: &reserved}
+	successor := WorkWaiterRecord{OperationID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Class: WorkClassExpressTest, Weight: 1, QueuedAt: queued.Add(time.Minute)}
+	// The 2026-11-15 stall: 1/8 used, parked build head, express successor.
+	s := selectWorkWaiter([]WorkWaiterRecord{parked, successor}, 1, 8, now, workGreenExpressWindow{}, 0)
+	if s.SelectedOperationID != successor.OperationID || s.ProtectedOperationID != "" || len(s.BypassedIndexes) != 0 {
+		t.Fatalf("parked reservation still held the drain: %+v", s)
+	}
+	if s := selectWorkWaiter([]WorkWaiterRecord{parked}, 0, 8, now, workGreenExpressWindow{}, 0); s.SelectedOperationID != "" || s.DecisionReason != "only_pressure_parked_waiters" {
+		t.Fatalf("lone parked reservation selection=%+v", s)
+	}
+	// Once its owner resumes, the reservation holds its protected drain again.
+	ready := parked
+	ready.ResumedAt = &resumed
+	s = selectWorkWaiter([]WorkWaiterRecord{ready, successor}, 6, 8, now, workGreenExpressWindow{}, 0)
+	if s.SelectedOperationID != "" || s.ProtectedOperationID != ready.OperationID || s.DecisionReason != "protected_bounded_drain" {
+		t.Fatalf("resumed reservation lost its drain: %+v", s)
+	}
+	s = selectWorkWaiter([]WorkWaiterRecord{ready, successor}, 1, 8, now, workGreenExpressWindow{}, 0)
+	if s.SelectedOperationID != ready.OperationID {
+		t.Fatalf("resumed reservation did not admit first: %+v", s)
+	}
+	// Bypass accounting must name the first eligible head, not a parked one.
+	head := WorkWaiterRecord{OperationID: "cccccccccccccccccccccccccccccccc", Class: WorkClassBuild, Weight: 5, QueuedAt: queued.Add(30 * time.Second)}
+	s = selectWorkWaiter([]WorkWaiterRecord{parked, head, successor}, 6, 8, now, workGreenExpressWindow{}, 0)
+	if s.SelectedOperationID != successor.OperationID || len(s.BypassedIndexes) != 1 || s.BypassedIndexes[0] != 1 {
+		t.Fatalf("bypass charged to the wrong waiter: %+v", s)
+	}
+}
+
+func TestSelectWorkWaiterProtectedHeadAboveEffectiveCapacityDoesNotIdleQueue(t *testing.T) {
+	now := time.Date(2026, 11, 15, 14, 20, 0, 0, time.UTC)
+	queued := now.Add(-10 * time.Minute)
+	protectedAt := now.Add(-time.Minute)
+	build := WorkWaiterRecord{OperationID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Class: WorkClassBuild, Weight: 5, QueuedAt: queued,
+		BypassCount: workMaximumBypasses, ProtectedAt: &protectedAt}
+	test := WorkWaiterRecord{OperationID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Class: WorkClassTest, Weight: 2, QueuedAt: queued.Add(time.Minute)}
+	// Warning ceiling 4: the weight-5 head can never drain in, so the
+	// feasible successor runs and the head is not charged a bypass.
+	s := selectWorkWaiter([]WorkWaiterRecord{build, test}, 1, 4, now, workGreenExpressWindow{}, 0)
+	if s.SelectedOperationID != test.OperationID || s.DecisionReason != "protected_head_exceeds_effective_capacity" || len(s.BypassedIndexes) != 0 {
+		t.Fatalf("derated ceiling idled the queue: %+v", s)
+	}
+	// At the configured ceiling the same head keeps its drain.
+	if s := selectWorkWaiter([]WorkWaiterRecord{build, test}, 4, 8, now, workGreenExpressWindow{}, 0); s.SelectedOperationID != "" || s.DecisionReason != "protected_bounded_drain" {
+		t.Fatalf("configured-capacity drain changed: %+v", s)
 	}
 }
 

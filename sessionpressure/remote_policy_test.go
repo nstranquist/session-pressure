@@ -12,7 +12,7 @@ func TestRemoteEndpointPolicyCompatibilityAndPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	old, err := RemoteWorkConfig(dir)
-	if err != nil || old.Host != "runner-2" || old.User != "builder" || !old.Enabled {
+	if err != nil || old.Host != "runner-3" || old.User != "builder" || !old.Enabled {
 		t.Fatal(old, err)
 	}
 	// An explicit reserve endpoint survives toggling; it must not revert to
