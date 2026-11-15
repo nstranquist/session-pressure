@@ -55,6 +55,31 @@ final class LevelAlertNotifier: NSObject, ObservableObject {
         )
     }
 
+    /// Runner capacity alerts that the watch's gate decided are news.
+    /// Permission is never requested here; without it nothing is shown.
+    func notifyRunner(_ fired: [LiveRunnerAlert]) {
+        for alert in fired.prefix(3) {
+            var link = URLComponents()
+            link.scheme = "ndev-pressure"
+            link.host = "hetzner"
+            link.queryItems = [URLQueryItem(name: "alert", value: alert.id)]
+            post(
+                title: "\(alert.host): \(alert.title)",
+                body: alert.detail,
+                identifier: alert.id,
+                url: link.url?.absoluteString ?? "ndev-pressure://hetzner"
+            )
+        }
+        if fired.count > 3 {
+            post(
+                title: "\(fired.count - 3) more runner alerts",
+                body: "Open the Hetzner tab for the full list.",
+                identifier: "runner-more",
+                url: "ndev-pressure://hetzner"
+            )
+        }
+    }
+
     func sendTest() {
         post(
             title: "NDev Pressure test alert",
@@ -63,13 +88,13 @@ final class LevelAlertNotifier: NSObject, ObservableObject {
         )
     }
 
-    private func post(title: String, body: String, identifier: String) {
+    private func post(title: String, body: String, identifier: String, url: String = "ndev-pressure://overview") {
         guard let center else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
-        content.userInfo = ["url": "ndev-pressure://overview"]
+        content.userInfo = ["url": url]
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         // Record an alert only when macOS will actually show it, so "Last
         // alert" never claims a delivery that permission denied.

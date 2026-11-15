@@ -32,6 +32,9 @@ final class RunnerCapacityStore: ObservableObject {
     @Published private(set) var window: RunnerCapacityWindow = .day
     @Published var selectedHost: String?
     @Published var focusedAlert: CapacityAlert.ID?
+    /// Every good report, so the background watch counts a tab read as its
+    /// own check instead of reading again.
+    var onReport: (RunnerCapacityReport) -> Void = { _ in }
 
     private let fetch: Fetch
     private let now: @Sendable () -> Date
@@ -194,9 +197,17 @@ final class RunnerCapacityStore: ObservableObject {
         report = r
         hosts = next
         fetchedAt = at
+        onReport(r)
         if let focusedAlert, !r.alerts.contains(where: { $0.id == focusedAlert }) {
             self.focusedAlert = nil
         }
+    }
+
+    /// A bell or notification click: show this runner with the alert's
+    /// episode highlighted.
+    func focus(alertID: CapacityAlert.ID, host: String) {
+        selectedHost = host
+        focusedAlert = alertID
     }
 
     // MARK: Operator text

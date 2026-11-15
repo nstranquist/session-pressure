@@ -21,6 +21,8 @@ public enum AppPreferenceKey {
     public static let apiURLOverride = "apiURLOverride"
     public static let apiTokenFileOverride = "apiTokenFileOverride"
     public static let apiTimeoutSeconds = "apiTimeoutSeconds"
+    public static let runnerWatch = "runnerWatch"
+    public static let runnerAlertNotify = "runnerAlertNotify"
 
     /// Every key this app owns. Reset removes exactly these and nothing else
     /// (for example, never the trace-helper registration record).
@@ -28,7 +30,7 @@ public enum AppPreferenceKey {
         showMenuBarExtra, launchPane, lastPane, dockBadgeMode, alertThreshold,
         refreshProfile, showDayGate, showHetzner, pressureBinaryOverride,
         ndevBinaryOverride, apiSocketOverride, apiURLOverride,
-        apiTokenFileOverride, apiTimeoutSeconds,
+        apiTokenFileOverride, apiTimeoutSeconds, runnerWatch, runnerAlertNotify,
     ]
 
     /// Keys that change how the control-plane client is built.
@@ -184,6 +186,15 @@ public enum AppPreferences {
 
     public static func alertThreshold(_ defaults: UserDefaults = .standard) -> AlertThreshold {
         defaults.string(forKey: AppPreferenceKey.alertThreshold).flatMap(AlertThreshold.init(rawValue:)) ?? .default
+    }
+
+    /// Background runner capacity check; on unless turned off.
+    public static func runnerWatch(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: AppPreferenceKey.runnerWatch) as? Bool ?? true
+    }
+
+    public static func runnerAlertNotify(_ defaults: UserDefaults = .standard) -> RunnerAlertNotify {
+        defaults.string(forKey: AppPreferenceKey.runnerAlertNotify).flatMap(RunnerAlertNotify.init(rawValue:)) ?? .default
     }
 
     /// Saved string override, trimmed; empty means "not set".

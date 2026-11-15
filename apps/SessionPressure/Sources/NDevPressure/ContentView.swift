@@ -51,6 +51,13 @@ struct ContentView: View {
         }
         .onChange(of: store.selectedSection) { _, _ in updateHetznerPolling() }
         .onOpenURL { store.handleDeepLink($0) }
+        .onAppear { capacity.onReport = { [weak watch = store.runnerWatch] in watch?.ingest($0) } }
+        .onChange(of: store.capacityFocusRequest) { _, request in
+            guard let request else { return }
+            capacity.focus(alertID: request.capacityAlertID, host: request.host)
+            Task { await hetzner.selectHost(request.host) }
+            store.capacityFocusRequest = nil
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { _ in
             windowVisible = false
             hetzner.stop()

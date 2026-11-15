@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Combine
 import NDevPressureCore
 import SwiftUI
 
@@ -260,6 +261,12 @@ final class PressureStore: ObservableObject {
 
     /// Opt-in level notifications; feeds on every full board read.
     let alerts = LevelAlertNotifier()
+    /// Background runner capacity check feeding the bell and notifications.
+    let runnerWatch: RunnerAlertWatch
+    /// Set by a bell or notification click: the Hetzner page focuses this
+    /// capacity alert (`CapacityAlert.id`) and its runner.
+    @Published var capacityFocusRequest: LiveRunnerAlert?
+    private var runnerWatchObservation: Any?
     /// Saved Settings overrides that were refused (shown on the Settings page).
     @Published var preferenceProblems: [PreferenceProblem] = []
     private var launchPaneApplied = false
@@ -337,8 +344,21 @@ final class PressureStore: ObservableObject {
 
     private static let fullStatusMaxAge: TimeInterval = 90
 
-    init(client: NDevPressureClient? = nil) {
+    init(client: NDevPressureClient? = nil, runnerWatch: RunnerAlertWatch = RunnerAlertWatch()) {
         self.client = client
+        self.runnerWatch = runnerWatch
+        runnerWatch.onFire = { [weak self] fired in self?.alerts.notifyRunner(fired) }
+        runnerWatch.shouldSkip = { [weak self] in self?.board.level == .critical }
+        // Republish so the bell updates; prune dismissals of runner alerts
+        // that ended, so a later episode with the same ID alerts again.
+        runnerWatchObservation = runnerWatch.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let active = self.activeNotificationIDs
+                self.dismissedNotificationIDs = self.dismissedNotificationIDs.filter { !$0.hasPrefix("runner") || active.contains($0) }
+                self.objectWillChange.send()
+            }
+        }
     }
 
     struct NotificationItem: Identifiable, Hashable {
@@ -348,6 +368,7 @@ final class PressureStore: ObservableObject {
         var severity: PressureLevel
         var systemImage: String
         var section: Section?
+        var runnerAlert: LiveRunnerAlert? = nil
     }
 
     var binaryPath: String { client?.binaryPath ?? board.binaryPath }
@@ -363,6 +384,8 @@ final class PressureStore: ObservableObject {
         if let doctor = board.doctor, !doctor.fixes.isEmpty, !(doctor.ok ?? false) { ids.insert("doctor-\(doctor.fixes.count)") }
         if let storage = board.snapshot.storage as StorageSnapshot?, storage.level == .warning || storage.level == .red || storage.level == .critical { ids.insert("storage-\(storage.level.rawValue)") }
         if let healthError = diskHealthError, !healthError.isEmpty { ids.insert("disk-health-error") }
+        for alert in runnerWatch.live { ids.insert(alert.id) }
+        if runnerWatch.checkFailing { ids.insert("runner-check-failed") }
         return ids
     }
 
@@ -396,6 +419,13 @@ final class PressureStore: ObservableObject {
         }
         if let healthError = diskHealthError, !healthError.isEmpty {
             items.append(NotificationItem(id: "disk-health-error", title: "Disk health probe failed", detail: healthError, severity: .warning, systemImage: "exclamationmark.triangle.fill", section: .storage))
+        }
+        let runnerSection: Section? = Section.hetzner.isVisible() ? .hetzner : nil
+        for alert in runnerWatch.live {
+            items.append(NotificationItem(id: alert.id, title: "\(alert.host): \(alert.title)", detail: alert.detail, severity: alert.isCritical ? .critical : .warning, systemImage: "server.rack", section: runnerSection, runnerAlert: alert))
+        }
+        if runnerWatch.checkFailing {
+            items.append(NotificationItem(id: "runner-check-failed", title: "Runner capacity check failing", detail: "\(runnerWatch.consecutiveFailures) checks in a row: \(runnerWatch.lastError ?? "unknown error")", severity: .warning, systemImage: "server.rack", section: runnerSection))
         }
         // Filter dismissed — no mutation inside the getter to avoid publishing loops.
         return items.filter { !dismissedNotificationIDs.contains($0.id) }
@@ -540,6 +570,7 @@ final class PressureStore: ObservableObject {
             Task { await refreshIdentity() }
         }
         if !selectedSection.isVisible() { selectedSection = .settings }
+        runnerWatch.preferencesChanged()
         updateDockBadge()
         schedulePoll(immediate: rebuildClient)
         if selectedSection == .work { scheduleWorkFocusPoll(immediate: false) }
@@ -569,11 +600,13 @@ final class PressureStore: ObservableObject {
         if selectedSection == .diskWrites {
             scheduleDiskFocusPoll(immediate: true)
         }
+        runnerWatch.start()
     }
 
     func stop() {
         pollTask?.cancel()
         pollTask = nil
+        runnerWatch.stop()
         stopWorkFocusPoll()
         stopDiskFocusPoll()
     }
@@ -883,6 +916,11 @@ final class PressureStore: ObservableObject {
         }
         if url.scheme == "ndev-pressure", url.host == "hetzner" {
             selectedSection = .hetzner
+            let alertID = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "alert" })?.value
+            if let alertID, let alert = runnerWatch.live.first(where: { $0.id == alertID }) {
+                capacityFocusRequest = alert
+            }
             return
         }
         guard url.scheme == "ndev-pressure", url.host == "disk-writes" else { return }

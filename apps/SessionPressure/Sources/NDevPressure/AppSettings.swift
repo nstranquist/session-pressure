@@ -348,6 +348,67 @@ struct AlertSettingsSection: View {
 
     var body: some View {
         AlertSettingsContent(alerts: store.alerts)
+        RunnerAlertSettingsContent(watch: store.runnerWatch, alerts: store.alerts) {
+            store.preferencesChanged(rebuildClient: false)
+        }
+    }
+}
+
+/// Background runner capacity check: what feeds the bell, what notifies.
+private struct RunnerAlertSettingsContent: View {
+    @ObservedObject var watch: RunnerAlertWatch
+    @ObservedObject var alerts: LevelAlertNotifier
+    let changed: () -> Void
+    @AppStorage(AppPreferenceKey.runnerWatch) private var enabled = true
+    @AppStorage(AppPreferenceKey.runnerAlertNotify) private var notify = RunnerAlertNotify.default.rawValue
+
+    var body: some View {
+        Section {
+            Toggle("Check runners in the background", isOn: $enabled)
+                .help("Every 5 minutes, read the last 6 hours of runner capacity over SSH and list live warning and critical alerts in the bell. Runs while the app is open, including from the menu bar. Skipped while this Mac is at critical pressure.")
+                .onChange(of: enabled) { _, _ in changed() }
+            Picker("Notify for runner alerts", selection: $notify) {
+                ForEach(RunnerAlertNotify.allCases) { Text($0.displayName).tag($0.rawValue) }
+            }
+            .disabled(!enabled)
+            .onChange(of: notify) { _, next in
+                guard next != RunnerAlertNotify.off.rawValue else { return }
+                Task { await alerts.requestAuthorization() }
+            }
+            if enabled {
+                LabeledContent("Last check", value: lastCheckText)
+                if let error = watch.lastError {
+                    Text("Last attempt failed: \(error)")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                LabeledContent("Live runner alerts", value: liveText)
+                if let last = watch.lastNotifiedAt {
+                    LabeledContent("Last runner notification", value: PressureFormat.relative(last))
+                }
+                Button(watch.checking ? "Checking…" : "Check now") {
+                    Task { await watch.check() }
+                }
+                .disabled(watch.checking)
+            }
+        } header: {
+            Text("Runner alerts")
+        } footer: {
+            Text("A runner alert notifies once when it starts (or worsens to critical), at most once per alert every 30 minutes. App launch never notifies. Notifications use the macOS permission above.")
+        }
+    }
+
+    private var lastCheckText: String {
+        if watch.checking { return "checking…" }
+        if watch.skippedForPressure { return "skipped: this Mac is at critical pressure" }
+        guard let at = watch.lastCheckAt else { return "not yet (first check about 20 s after launch)" }
+        return PressureFormat.relative(min(at, Date()))
+    }
+
+    private var liveText: String {
+        let critical = watch.live.filter(\.isCritical).count
+        let warning = watch.live.count - critical
+        if watch.live.isEmpty { return watch.lastCheckAt == nil ? "unknown" : "none" }
+        return "\(critical) critical · \(warning) warning"
     }
 }
 

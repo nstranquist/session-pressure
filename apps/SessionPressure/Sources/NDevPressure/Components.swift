@@ -511,7 +511,7 @@ struct NotificationPopoverBody: View {
                         .foregroundStyle(PressureTheme.levelColor(.normal))
                     Text("All clear")
                         .font(.callout.weight(.medium))
-                    Text("No active pressure, admission, or Day Gate alerts.")
+                    Text("No active pressure, admission, Day Gate or runner alerts.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -524,6 +524,9 @@ struct NotificationPopoverBody: View {
                             NotificationRow(item: item) {
                                 if let section = item.section {
                                     store.selectedSection = section
+                                }
+                                if let runner = item.runnerAlert {
+                                    store.capacityFocusRequest = runner
                                 }
                                 // Explicit per-item dismissal on click; onDismiss also clears viewed set.
                                 store.dismissNotification(id: item.id)
@@ -549,7 +552,7 @@ struct NotificationPopoverBody: View {
     }
 }
 
-private struct NotificationRow: View {
+struct NotificationRow: View {
     let item: PressureStore.NotificationItem
     var onTap: () -> Void
 

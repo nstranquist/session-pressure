@@ -170,3 +170,59 @@ JSON for the app to decode). Wall time is SSH-bound and did not change.
   (decision 5 above) would make it continuous.
 - runner-1 records no `host_samples`; its CPU/slot history stays empty
   until its runner build is updated.
+
+## Background runner alerts (2026-11-15)
+
+Follow-up to the open gap above: critical capacity alerts reached the operator
+only while the Hetzner tab was open. Nico approved building it.
+
+### Decisions
+
+1. No CLI change. The app's main store owns a `RunnerAlertWatch` that reads
+   `remote capacity --window 6h` every 5 minutes for as long as the app runs
+   (window open, hidden, or closed to the menu bar). 6h gives 5-minute buckets,
+   so episode ends are precise, and it is the cheapest read.
+2. A report the Hetzner tab already read for the 6h window counts as a check,
+   so the tab and the watch never read twice. Other windows do not count:
+   alert rules (for example setup failures "in the last N") depend on the
+   window.
+3. The watch skips its SSH fan-out while this Mac is at critical pressure.
+4. "Live" alert (`RunnerAlertTriage.live`, pure): warning or critical only;
+   point-in-time and whole-window alerts hold for the read; an episode holds
+   while it reached into the last two buckets. Info never reaches the bell.
+5. Bell: each live alert is an item with a stable ID per host, code and
+   severity (a warning that becomes critical is a new ID). Dismissed IDs of
+   ended alerts are pruned, so a later episode alerts again. A failed check
+   keeps the last live set (missing evidence is not an all-clear); the bell
+   reports the check itself only after 3 failures in a row.
+6. macOS notifications (`RunnerAlertGate`, pure): first check after launch is a
+   baseline; an alert notifies when it was not live at the previous check and
+   passes the setting; at most once per alert every 30 minutes. Setting
+   default "Critical only"; it never prompts for permission on its own (the
+   prompt appears only when the operator changes the setting), so without
+   macOS permission nothing is shown. At most 3 notifications per check plus
+   one summary.
+7. Clicking a bell item or notification opens the Hetzner tab, selects the
+   runner for capacity and job receipts, and highlights the alert's episode on
+   the charts (`ndev-pressure://hetzner?alert=<id>`).
+8. Settings → Alerts → Runner alerts: background check toggle (default on),
+   notify level, last check, live counts, last notification, Check now.
+   Both keys are in `AppPreferenceKey.all`, so Reset clears them.
+
+Cost: one check per 5 minutes, about 2 s wall, about 17 MB transient CLI
+memory and 34-85 KB of JSON (measured earlier on the installed CLI). Idle CPU
+in the app between checks is a sleeping task.
+
+### Verification
+
+- 147 Swift tests pass, including triage (episodes, info, unreachable
+  runners), the gate (baseline, rising, severity, cooldown and flapping), the
+  watch (news only after baseline, failure threshold keeps live alerts, tab
+  ingest of the same window only, pressure skip, disable clears the bell) and
+  the store (bell items, dismissal pruning after an episode ends).
+- Offscreen render of the bell rows with a critical and a warning runner
+  alert (ImageRenderer does not draw ScrollView content, so the rows are
+  rendered directly).
+- App installed with `make install-headless` (Team ID C82D23RNQ9, rollback
+  kept). Not relaunched; the watch starts on the app's next launch, first
+  check about 20 seconds after it.
