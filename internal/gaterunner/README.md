@@ -1,6 +1,7 @@
 # Gate-runner evidence contract
 
-`session-pressure --json remote inspect [--no-box] [--known-ledger SHA256]`
+`session-pressure --json remote inspect [--no-box] [--known-ledger SHA256]
+[--known-jobs SHA256]`
 returns schema 1 in `inspection`. This is a read-only adapter over existing
 commit-delivery receipts and the canonical gate runner. It does not schedule
 jobs, change policy, or create another telemetry database.
@@ -19,6 +20,16 @@ last 1000 canonical job receipts and current Linux health. Missing or invalid
 health is an explicit error. Nonfinite loads cannot enter JSON. The response
 keeps at most 512 KiB each of delegate rows and jobs, and 256 KiB of config.
 Counts and aggregates describe only the loaded window, not lifetime totals.
+
+The box job text has its own SHA-256 `jobs_signature`. A matching
+`--known-jobs` returns `jobs_unchanged=true` and no job rows; the client keeps
+its prior rows. On a live runner-3 read this removes about 550 KB of the
+1.26 MB response each minute while receipts do not change.
+
+A failed SSH read sets `box_failure` (and capacity host errors use
+`runner_capacity_<kind>`) to one of `timeout`, `connect_failed`,
+`remote_failed` or `output_too_large`, so clients can say what failed
+without parsing stderr.
 
 `remote job-log --id JOB` accepts only the canonical timestamp/PID job ID
 and reads the first 100,000 bytes. Arbitrary paths and remote shell arguments

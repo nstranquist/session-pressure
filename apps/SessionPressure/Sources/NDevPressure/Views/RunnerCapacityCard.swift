@@ -6,11 +6,12 @@ import NDevPressureCore
 /// anything (CPU, heavy slots, memory, disk, I/O, network, traffic terms)
 /// limit or threaten its capacity in the window. Read-only.
 struct RunnerCapacityCard: View {
-    @StateObject private var store: RunnerCapacityStore
-
-    init(store: RunnerCapacityStore = RunnerCapacityStore()) {
-        _store = StateObject(wrappedValue: store)
-    }
+    @ObservedObject var store: RunnerCapacityStore
+    /// Selecting a runner here also points the job history at it, so the
+    /// page has one notion of "the selected runner".
+    var onSelectHost: (String) -> Void = { _ in }
+    /// Shared across charts: hovering one shows the same instant in all.
+    @State private var hoverDate: Date?
 
     private static let critical = Color(red: 0.92, green: 0.22, blue: 0.28)
     private static let warning = Color(red: 0.95, green: 0.62, blue: 0.18)
@@ -30,6 +31,13 @@ struct RunnerCapacityCard: View {
                     InlineError(message: error)
                 }
                 if let report = store.report {
+                    if store.reportIsForOtherWindow {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.mini)
+                            Text("Reading the last \(store.window.label); showing the \(windowLabel(report)) report until it arrives.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                     alerts(report)
                     hostTiles(report)
                     if let host = store.selected {
@@ -44,8 +52,8 @@ struct RunnerCapacityCard: View {
                 }
             }
         }
-        .onAppear { store.start() }
-        .onDisappear { store.stop() }
+        .onAppear { store.setCardVisible(true) }
+        .onDisappear { store.setCardVisible(false) }
     }
 
     private var trailing: String {
@@ -90,7 +98,7 @@ struct RunnerCapacityCard: View {
     @ViewBuilder
     private func alerts(_ report: RunnerCapacityReport) -> some View {
         if report.alerts.isEmpty {
-            Label("No capacity alerts in the last \(store.window.label).", systemImage: "checkmark.seal")
+            Label("No capacity alerts in the last \(windowLabel(report)).", systemImage: "checkmark.seal")
                 .font(.callout)
                 .foregroundStyle(Self.good)
         } else {
@@ -108,7 +116,8 @@ struct RunnerCapacityCard: View {
     }
 
     private func alertRow(_ alert: CapacityAlert) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        let focused = store.focusedAlert == alert.id
+        return HStack(alignment: .top, spacing: 10) {
             Image(systemName: severityIcon(alert.severity))
                 .foregroundStyle(severityColor(alert.severity))
                 .frame(width: 16)
@@ -132,46 +141,67 @@ struct RunnerCapacityCard: View {
             Spacer(minLength: 0)
         }
         .padding(8)
-        .background(severityColor(alert.severity).opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(severityColor(alert.severity).opacity(focused ? 0.18 : 0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .stroke(focused ? severityColor(alert.severity).opacity(0.6) : .clear, lineWidth: 1))
         .contentShape(Rectangle())
-        .onTapGesture { store.selectedHost = alert.host }
-        .help("Show \(alert.host) below")
+        .onTapGesture {
+            store.focusedAlert = focused ? nil : alert.id
+            select(alert.host)
+        }
+        .help(focused ? "Clear the highlight" : "Show \(alert.host) below with this episode highlighted on its charts")
     }
 
     // MARK: Host tiles
 
     private func hostTiles(_ report: RunnerCapacityReport) -> some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 12)], spacing: 12) {
-            ForEach(report.hosts) { host in
-                hostTile(host, alerts: report.alerts.filter { $0.host == host.host })
+            ForEach(store.hosts) { display in
+                hostTile(display, alerts: report.alerts.filter { $0.host == display.id })
             }
         }
     }
 
-    private func hostTile(_ host: HostCapacity, alerts: [CapacityAlert]) -> some View {
-        let selected = store.selected?.host == host.host
+    private func hostTile(_ display: RunnerCapacityStore.DisplayHost, alerts: [CapacityAlert]) -> some View {
+        let host = display.capacity
+        let selected = store.selected?.id == display.id
         return Button {
-            store.selectedHost = host.host
+            select(host.host)
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(host.reachable ? tileStatusColor(alerts) : Self.critical)
+                        .fill(display.isStale || !host.reachable ? Self.critical : tileStatusColor(alerts))
                         .frame(width: 8, height: 8)
                     Text(host.host).font(.headline)
                     Text(host.state.uppercased())
                         .font(.caption2.weight(.bold))
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background((host.isActive ? Self.good : Color.secondary).opacity(0.15), in: Capsule())
+                    if display.isStale {
+                        Text("STALE")
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Self.warning.opacity(0.18), in: Capsule())
+                            .foregroundStyle(Self.warning)
+                    }
                     Spacer()
                     Text(host.platform)
                         .font(PressureTheme.monoCaption)
                         .foregroundStyle(.tertiary)
                 }
+                if let staleSince = display.staleSince {
+                    Label("Latest read failed: \(RunnerCapacityStore.describe(display.failure ?? "unreachable")) Showing data from \(PressureFormat.relative(staleSince)).",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Self.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !host.reachable {
                     Text(RunnerCapacityStore.describe(host.error ?? "unreachable"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     let u = host.usage
                     tileRow("CPU", value: u.cpuAvgPct.map { String(format: "%.1f%% avg · %.0f%% peak", $0, u.cpuPeakPct ?? 0) } ?? String(format: "load %.2f (no samples)", host.load1),
@@ -209,7 +239,7 @@ struct RunnerCapacityCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
-        .help("Show charts for \(host.host)")
+        .help("Show charts for \(host.host) and its job receipts")
     }
 
     private func tileRow(_ label: String, value: String, fraction: Double) -> some View {
@@ -242,10 +272,26 @@ struct RunnerCapacityCard: View {
     // MARK: Host detail charts
 
     @ViewBuilder
-    private func hostDetail(_ host: HostCapacity, report: RunnerCapacityReport) -> some View {
+    private func hostDetail(_ display: RunnerCapacityStore.DisplayHost, report: RunnerCapacityReport) -> some View {
+        let host = display.capacity
         VStack(alignment: .leading, spacing: 16) {
-            Text("\(host.host) over the last \(store.window.label)")
-                .font(.subheadline.weight(.semibold))
+            HStack(alignment: .firstTextBaseline) {
+                Text("\(host.host) over the last \(windowLabel(report))")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                if let alert = focusedAlert(for: host) {
+                    Button {
+                        store.focusedAlert = nil
+                    } label: {
+                        Label("Highlighting: \(alert.title)", systemImage: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                    .foregroundStyle(severityColor(alert.severity))
+                    .help("Clear the highlighted alert episode")
+                }
+            }
+            hoverReadout(host)
             if !host.samplesPresent {
                 Text("This runner does not record utilization samples (older runner build), so CPU, slot and memory history are not available. Jobs and network still show.")
                     .font(.caption)
@@ -286,9 +332,12 @@ struct RunnerCapacityCard: View {
                 RuleMark(y: .value("Spike", 85))
                     .foregroundStyle(Self.warning.opacity(0.7))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                overlays(host)
             }
             .chartYScale(domain: 0...100)
             .chartXScale(domain: xDomain)
+            .chartXSelection(value: $hoverDate)
+            .chartPlotStyle { $0.clipped() }
             .chartYAxis { AxisMarks(values: [0, 25, 50, 75, 100]) { v in AxisGridLine(); AxisValueLabel { Text("\(v.as(Int.self) ?? 0)%") } } }
             .frame(height: 150)
         }
@@ -307,9 +356,12 @@ struct RunnerCapacityCard: View {
                 RuleMark(y: .value("Capacity", host.heavySlots))
                     .foregroundStyle(Self.critical.opacity(0.6))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                overlays(host)
             }
             .chartYScale(domain: 0...Double(max(host.heavySlots, 1)) + 0.5)
             .chartXScale(domain: xDomain)
+            .chartXSelection(value: $hoverDate)
+            .chartPlotStyle { $0.clipped() }
             .frame(height: 120)
         }
     }
@@ -326,9 +378,12 @@ struct RunnerCapacityCard: View {
                 RuleMark(y: .value("Pressure", total * 0.10))
                     .foregroundStyle(Self.critical.opacity(0.6))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                overlays(host)
             }
             .chartYScale(domain: 0...max(total, 1))
             .chartXScale(domain: xDomain)
+            .chartXSelection(value: $hoverDate)
+            .chartPlotStyle { $0.clipped() }
             .frame(height: 110)
         }
     }
@@ -351,12 +406,17 @@ struct RunnerCapacityCard: View {
             if host.jobHours.isEmpty {
                 Text("No jobs in this window.").font(.caption).foregroundStyle(.secondary)
             } else {
-                Chart(slices) { s in
-                    BarMark(x: .value("Hour", s.at, unit: .hour), y: .value("Jobs", s.count))
-                        .foregroundStyle(by: .value("Result", s.kind))
+                Chart {
+                    ForEach(slices) { s in
+                        BarMark(x: .value("Hour", s.at, unit: .hour), y: .value("Jobs", s.count))
+                            .foregroundStyle(by: .value("Result", s.kind))
+                    }
+                    overlays(host)
                 }
                 .chartForegroundStyleScale(["exit 0": Self.good.opacity(0.7), "non-zero": Self.warning, "setup failure": Self.critical])
-                .chartXScale(domain: report.since...report.capturedAt)
+                .chartXScale(domain: xDomain)
+                .chartXSelection(value: $hoverDate)
+            .chartPlotStyle { $0.clipped() }
                 .frame(height: 130)
             }
         }
@@ -401,9 +461,12 @@ struct RunnerCapacityCard: View {
                                 .foregroundStyle(Self.warning.opacity(0.6))
                                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         }
+                        overlays(host)
                     }
                     .chartForegroundStyleScale(["in": Self.info, "out": Self.good])
-                    .chartXScale(domain: report.since...report.capturedAt)
+                    .chartXScale(domain: xDomain)
+                    .chartXSelection(value: $hoverDate)
+            .chartPlotStyle { $0.clipped() }
                     .chartYAxisLabel("Mbit/s")
                     .frame(height: 130)
                     Text("Covers \(CapacityFormat.duration(Double(net.seriesCoverageSeconds))) of the window (sampled while the app polls).\(net.linkMbps.map { link in peakMbps(net) < Double(link) * 0.25 ? String(format: " Peak is %.1f%% of the %d Mbit/s port, so the port line is hidden.", peakMbps(net) / Double(link) * 100, link) : "" } ?? "")")
@@ -463,10 +526,7 @@ struct RunnerCapacityCard: View {
     }
 
     private var barUnit: Calendar.Component {
-        switch store.window {
-        case .sixHours, .day: .minute
-        case .week, .fortnight: .hour
-        }
+        (store.report?.bucketSeconds ?? 0) >= 3600 ? .hour : .minute
     }
 
     private func allowanceLabel(_ net: NetworkUse) -> String {
@@ -509,13 +569,101 @@ struct RunnerCapacityCard: View {
         }
     }
 
-    private func rangeLabel(_ since: Date, _ until: Date?) -> String {
+    private static let dayTime: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "MMM d HH:mm"
-        let t = DateFormatter()
-        t.dateFormat = "HH:mm"
-        guard let until else { return f.string(from: since) }
+        return f
+    }()
+
+    private static let timeOnly: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    private func rangeLabel(_ since: Date, _ until: Date?) -> String {
+        guard let until else { return Self.dayTime.string(from: since) }
         let sameDay = Calendar.current.isDate(since, inSameDayAs: until)
-        return "\(f.string(from: since))–\(sameDay ? t.string(from: until) : f.string(from: until))"
+        return "\(Self.dayTime.string(from: since))–\(sameDay ? Self.timeOnly.string(from: until) : Self.dayTime.string(from: until))"
+    }
+
+    private func select(_ host: String) {
+        store.selectedHost = host
+        onSelectHost(host)
+    }
+
+    /// The window the shown report covers, which can lag the picker for the
+    /// length of one read.
+    private func windowLabel(_ report: RunnerCapacityReport) -> String {
+        RunnerCapacityWindow(rawValue: report.window)?.label ?? report.window
+    }
+
+    private func focusedAlert(for host: HostCapacity) -> CapacityAlert? {
+        guard let id = store.focusedAlert,
+              let alert = store.report?.alerts.first(where: { $0.id == id }),
+              alert.host == host.host, alert.since != nil else { return nil }
+        return alert
+    }
+
+    /// Focused alert episode band and the shared hover rule.
+    @ChartContentBuilder
+    private func overlays(_ host: HostCapacity) -> some ChartContent {
+        if let alert = focusedAlert(for: host), let since = alert.since {
+            let end = max(alert.until ?? since, since.addingTimeInterval(Double(store.report?.bucketSeconds ?? 300)))
+            RectangleMark(xStart: .value("From", since), xEnd: .value("To", end))
+                .foregroundStyle(severityColor(alert.severity).opacity(0.14))
+        }
+        if let hoverDate {
+            RuleMark(x: .value("Hover", hoverDate))
+                .foregroundStyle(Color.primary.opacity(0.35))
+                .lineStyle(StrokeStyle(lineWidth: 1))
+        }
+    }
+
+    /// One line describing the hovered instant across every series, so a
+    /// spike can be read without guessing from the axes.
+    @ViewBuilder
+    private func hoverReadout(_ host: HostCapacity) -> some View {
+        let text = hoverText(host)
+        Text(text ?? "Hover a chart to read exact values; tap an alert to highlight its episode.")
+            .font(PressureTheme.monoCaption)
+            .foregroundStyle(text == nil ? .tertiary : .secondary)
+            .lineLimit(2)
+            .frame(maxWidth: .infinity, minHeight: 30, alignment: .topLeading)
+    }
+
+    private func hoverText(_ host: HostCapacity) -> String? {
+        guard let hoverDate else { return nil }
+        var parts: [String] = []
+        if let b = nearest(host.buckets, to: hoverDate, within: Double(store.report?.bucketSeconds ?? 300)) {
+            parts.append(Self.dayTime.string(from: b.at))
+            parts.append(String(format: "CPU %.0f%% avg / %.0f%% peak", b.cpuAvgPct, b.cpuPeakPct))
+            parts.append(String(format: "iowait %.1f%%", b.iowaitAvgPct))
+            parts.append(String(format: "heavy %.1f avg / %d of %d", b.heavyAvg, b.heavyMax, host.heavySlots))
+            if b.saturatedSeconds > 0 { parts.append("full \(CapacityFormat.duration(b.saturatedSeconds))") }
+            parts.append("mem min \(CapacityFormat.gib(b.memAvailableMinBytes)) free")
+        } else {
+            parts.append(Self.dayTime.string(from: hoverDate))
+        }
+        if let hour = host.jobHours.first(where: { $0.at <= hoverDate && hoverDate < $0.at.addingTimeInterval(3600) }) {
+            parts.append("\(hour.jobs) jobs that hour (\(hour.failed) non-zero, \(hour.setup) setup)")
+        }
+        if let net = host.network, let p = nearest(net.series, to: hoverDate, within: 900) {
+            parts.append(String(format: "net %.1f in / %.1f out Mbit/s", p.rxBps * 8 / 1e6, p.txBps * 8 / 1e6))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func nearest<T>(_ items: [T], to date: Date, within: TimeInterval) -> T? where T: Identifiable, T.ID == Date {
+        // Series are time-ordered: binary search for the insertion point.
+        var lo = 0, hi = items.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if items[mid].id < date { lo = mid + 1 } else { hi = mid }
+        }
+        let candidates = [lo - 1, lo].filter { $0 >= 0 && $0 < items.count }
+        guard let best = candidates.min(by: { abs(items[$0].id.timeIntervalSince(date)) < abs(items[$1].id.timeIntervalSince(date)) }),
+              abs(items[best].id.timeIntervalSince(date)) <= within else { return nil }
+        return items[best]
     }
 }

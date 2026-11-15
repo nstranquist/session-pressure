@@ -14,6 +14,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -99,7 +100,10 @@ type Inspection struct {
 	BoxRequested     bool          `json:"box_requested"`
 	BoxReachable     bool          `json:"box_reachable"`
 	BoxError         string        `json:"box_error,omitempty"`
+	BoxFailure       string        `json:"box_failure,omitempty"`
 	Jobs             []Job         `json:"jobs"`
+	JobsSignature    string        `json:"jobs_signature,omitempty"`
+	JobsUnchanged    bool          `json:"jobs_unchanged,omitempty"`
 	Health           *Health       `json:"health"`
 	Live             *LiveSection  `json:"live,omitempty"`
 	Fleet            *FleetSection `json:"fleet,omitempty"`
@@ -114,6 +118,13 @@ func Inspect(ctx context.Context, home string, includeBox bool) Inspection {
 // A content signature avoids repeatedly decoding an unchanged history in the
 // desktop. Configuration and remote health still refresh independently.
 func InspectSince(ctx context.Context, home string, includeBox bool, known string) Inspection {
+	return InspectWithCursors(ctx, home, includeBox, known, "")
+}
+
+// InspectWithCursors also accepts the jobs signature from the client's last
+// box read. A matching signature returns jobs_unchanged=true and no rows, so
+// the minute-cadence box read stops re-sending up to 512 KiB of receipts.
+func InspectWithCursors(ctx context.Context, home string, includeBox bool, known, knownJobs string) Inspection {
 	s := Inspection{SchemaVersion: 1, CapturedAt: time.Now().UTC(), Runs: []Run{}, Jobs: []Job{}, BoxRequested: includeBox}
 	s.Host = runnerTarget(ctx)
 	// Fleet probes run alongside the selected host read, not on the 15-second
@@ -143,11 +154,15 @@ func InspectSince(ctx context.Context, home string, includeBox bool, known strin
 		output, e := runSSH(ctx, "tail -n 1000 /srv/build/logs/jobs.log && printf '\n__HZ_HEALTH__\n' && cat /proc/loadavg && free -m && df -P / && uptime -p", 1<<20)
 		if e != nil {
 			s.BoxError = "gate_runner_read_failed"
+			s.BoxFailure = sshFailureKind(e)
 		} else {
 			halves := strings.SplitN(string(output), "\n__HZ_HEALTH__\n", 2)
 			if len(halves) != 2 {
 				s.BoxError = "gate_runner_payload_invalid"
 			} else {
+				sum := sha256.Sum256([]byte(halves[0]))
+				s.JobsSignature = hex.EncodeToString(sum[:])
+				s.JobsUnchanged = knownJobs != "" && knownJobs == s.JobsSignature
 				scanner := bufio.NewScanner(strings.NewReader(halves[0]))
 				scanner.Buffer(make([]byte, 4096), 256<<10)
 				for scanner.Scan() {
@@ -160,6 +175,9 @@ func InspectSince(ctx context.Context, home string, includeBox bool, known strin
 					s.Jobs = []Job{}
 				} else {
 					reverse(s.Jobs)
+					if s.JobsUnchanged {
+						s.Jobs = []Job{}
+					}
 					h := ParseHealth(halves[1])
 					if h.Load1 == nil || h.MemTotalMB == nil || h.DiskUsedPercent == nil {
 						s.BoxError = "gate_runner_health_invalid"
@@ -368,9 +386,47 @@ func runSSH(parent context.Context, remote string, limit int) ([]byte, error) {
 	cmd.Stdout = out
 	cmd.Stderr = stderr
 	if e := cmd.Run(); e != nil {
-		return nil, e
+		return nil, classifySSH(ctx, e)
 	}
 	return out.Bytes(), nil
+}
+
+// SSHFailure names why a runner read failed without exposing remote text.
+// Kind is timeout, connect_failed (ssh exit 255: DNS, refused, auth, host
+// key), remote_failed (the remote command exited non-zero), or
+// output_too_large.
+type SSHFailure struct {
+	Kind string
+	Err  error
+}
+
+func (e *SSHFailure) Error() string { return "ssh " + e.Kind + ": " + e.Err.Error() }
+func (e *SSHFailure) Unwrap() error { return e.Err }
+
+func classifySSH(ctx context.Context, err error) error {
+	kind := "remote_failed"
+	var exit *exec.ExitError
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		kind = "timeout"
+	case strings.Contains(err.Error(), "exceeds bound"):
+		kind = "output_too_large"
+	case errors.As(err, &exit) && exit.ExitCode() == 255:
+		kind = "connect_failed"
+	case errors.As(err, &exit):
+		kind = "remote_failed"
+	default:
+		kind = "connect_failed"
+	}
+	return &SSHFailure{Kind: kind, Err: err}
+}
+
+func sshFailureKind(err error) string {
+	var f *SSHFailure
+	if errors.As(err, &f) {
+		return f.Kind
+	}
+	return "connect_failed"
 }
 
 type targetKey struct{}

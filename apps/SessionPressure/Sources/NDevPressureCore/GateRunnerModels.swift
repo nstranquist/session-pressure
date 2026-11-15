@@ -181,6 +181,12 @@ public struct GateRunnerInspection: Decodable, Sendable {
     public let live: LiveSection?
     public var host: String? = nil
     public var fleet: RunnerFleet? = nil
+    /// Box job cursor: a client that sends back jobsSignature gets
+    /// jobsUnchanged=true and no rows while the runner's receipts are the same.
+    public var jobsSignature: String? = nil
+    public var jobsUnchanged: Bool? = nil
+    /// timeout, connect_failed, remote_failed or output_too_large.
+    public var boxFailure: String? = nil
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case capturedAt = "captured_at"
@@ -194,6 +200,9 @@ public struct GateRunnerInspection: Decodable, Sendable {
         case boxRequested = "box_requested"
         case boxReachable = "box_reachable"
         case boxError = "box_error"
+        case jobsSignature = "jobs_signature"
+        case jobsUnchanged = "jobs_unchanged"
+        case boxFailure = "box_failure"
     }
 }
 

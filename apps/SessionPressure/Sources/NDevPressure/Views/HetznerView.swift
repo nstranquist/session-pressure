@@ -2,651 +2,99 @@ import SwiftUI
 import AppKit
 import NDevPressureCore
 
-/// Hetzner gate-runner tab: is the delegate offload on, is the box taking
-/// runs, are the verdicts agreeing — plus the full delegate ledger and the
-/// box's job receipts, both filterable, with per-run detail and per-job
-/// logs. Read-only: the delegate config is displayed, never written, and
-/// running or killing jobs stays in the existing scripts.
+/// Hetzner gate-runner tab, top to bottom: fleet capacity and alerts, the
+/// runners' scheduler and live jobs, the delivery-gate delegate, and the
+/// selected runner's job receipts with inline logs. Read-only throughout.
+///
+/// Performance: the page is a lazy stack, so cards below the fold are not
+/// built until scrolled to. Each card is its own view; filtered lists are
+/// cached by the store's revision counters and rows are Equatable, so the
+/// 15-second refresh does not re-filter 1,000 receipts or rebuild rows whose
+/// data did not change.
 struct HetznerView: View {
     @ObservedObject var hetzner: HetznerStore
-
-    // Delegate-run filters (view state, so data refreshes never reset them)
-    @State private var runRepo = "All"
-    @State private var runDecision = "All"
-    @State private var runAgreement = "All"
-    @State private var runRange = "All"
-    @State private var expandedRuns: Set<String> = []
-    @State private var visibleRunLimit = 100
-
-    // Box-job filters
-    @State private var jobRepo = "All"
-    @State private var jobCaller = "All"
-    @State private var jobExit = "All"
-    @State private var jobSort = "Newest"
-    @State private var jobSearch = ""
-    @State private var visibleJobLimit = 120
+    @ObservedObject var capacity: RunnerCapacityStore
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                statusCard
-                RunnerCapacityCard()
-                fleetLiveCard
-                delegateCard
-                jobsCard
-                if hetzner.selectedJobID != nil {
-                    jobLogCard
-                }
+            LazyVStack(alignment: .leading, spacing: 16) {
+                RunnerCapacityCard(store: capacity, onSelectHost: { host in
+                    Task { await hetzner.selectHost(host) }
+                })
+                RunnersCard(hetzner: hetzner)
+                DelegateStatusCard(hetzner: hetzner)
+                DelegateRunsCard(hetzner: hetzner)
+                BoxJobsCard(hetzner: hetzner)
             }
             .padding(16)
         }
+    }
+}
 
+// MARK: - Shared
+
+enum HetznerUI {
+    static func chip(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.15), in: Capsule())
+            .foregroundStyle(color)
     }
 
-    // MARK: Status
+    static func filterLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+    }
 
-    private var statusCard: some View {
-        SectionCard(
-            title: "Hetzner gate-runner fleet",
-            systemImage: "server.rack",
-            trailing: boxStatusTrailing
-        ) {
-            VStack(alignment: .leading, spacing: 8) {
-                if let fleet = hetzner.fleet {
-                    Picker("Job history and logs", selection: Binding(
-                        get: { hetzner.selectedHost ?? fleet.hosts.first?.name ?? "" },
-                        set: { host in Task { await hetzner.selectHost(host) } }
-                    )) {
-                        ForEach(fleet.hosts) { host in
-                            Text("\(host.name) · \(host.roleLabel)").tag(host.name)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .help("Changes the runner whose job history and logs are read. Work placement stays governed by the fleet inventory.")
-                }
-                HStack(spacing: 8) {
-                    Text("Delegate mode")
-                        .font(.subheadline.weight(.semibold))
-                    if let config = hetzner.delegateConfig {
-                        chip(config.mode.uppercased(), color: modeColor(config.mode))
-                        Text(configSummary(config))
-                            .font(PressureTheme.monoCaption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    } else {
-                        Text("config not read")
-                            .font(PressureTheme.monoCaption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button {
-                        Task { await hetzner.refreshNow() }
-                    } label: {
-                        Label("Refresh now", systemImage: "arrow.clockwise")
-                    }
-                    .controlSize(.small)
-                    .disabled(hetzner.refreshing)
-                }
+    static func copy(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+    }
 
-                let stats = hetzner.delegateStats
-                if stats.total > 0 {
-                    Text("Loaded runs: \(stats.total) · \(stats.shadow) shadow · \(stats.remotePass) substituted · \(stats.fallbacks) fallbacks")
-                        .font(PressureTheme.monoCaption)
-                        .foregroundStyle(.secondary)
-                    Text("Loaded rows with mode on: \(stats.onEraTotal) runs · \(stats.onEraRemotePass) substituted · \(stats.onEraFallbacks) fallbacks · box time \(PressureFormat.durationMS(stats.onEraRemoteRunMS))")
-                        .font(PressureTheme.monoCaption)
-                        .foregroundStyle(.secondary)
-                    HStack(spacing: 8) {
-                        Text("Where both sides ran: \(stats.bothVerdict) · agree \(stats.agree) · diverged \(stats.diverged)")
-                            .font(PressureTheme.monoCaption)
-                            .foregroundStyle(.secondary)
-                        if stats.diverged > 0 {
-                            Button("Show diverged") { showDiverged() }
-                                .controlSize(.small)
-                        }
-                    }
-                    Text("Recorded check time — box \(PressureFormat.durationMS(stats.remoteRunMS)) · mac \(PressureFormat.durationMS(stats.localMS))")
-                        .font(PressureTheme.monoCaption)
-                        .foregroundStyle(.secondary)
-                    if stats.onEraDiverged > 0 {
-                        Label("\(stats.onEraDiverged) divergence(s) in loaded mode-on rows — set the runs filter to Agreement: Diverged to inspect.",
-                              systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.red)
-                    } else if stats.onEraBothVerdict > 0 {
-                        Label("No recorded divergence in loaded mode-on comparisons.", systemImage: "checkmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                    }
-                } else if hetzner.ledgerPresent {
-                    Text("No delegate runs recorded yet.")
-                        .font(PressureTheme.monoCaption)
-                        .foregroundStyle(.secondary)
-                }
+    /// Operator text for the CLI's fixed error codes.
+    static func describeBox(_ code: String, failure: String?) -> String {
+        let cause: String
+        switch failure {
+        case "timeout": cause = "SSH timed out (12 s)"
+        case "connect_failed": cause = "SSH could not connect (host down, DNS, tailnet or key)"
+        case "remote_failed": cause = "the read command failed on the runner"
+        case "output_too_large": cause = "the runner's output exceeded the read bound"
+        default: cause = ""
+        }
+        switch code {
+        case "gate_runner_read_failed": return cause.isEmpty ? "Runner read failed" : "Runner read failed: \(cause)"
+        case "gate_runner_payload_invalid": return "The runner returned an unreadable job list"
+        case "gate_runner_health_invalid": return "The runner returned incomplete health (load, memory or disk)"
+        default: return code
+        }
+    }
 
-                if let error = hetzner.localError {
-                    Label("Local read failed: \(error). Showing last good data.", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption).foregroundStyle(.orange)
-                }
-                if let error = hetzner.boxError {
-                    Label("Box read failed: \(error).", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption).foregroundStyle(.orange)
-                }
-                if hetzner.historyTruncated || hetzner.malformedRows > 0 {
-                    Text("Bounded history: \(hetzner.delegateRuns.count) recent rows loaded; \(hetzner.malformedRows) malformed rows skipped. Counts describe this window.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                if let health = hetzner.boxHealth {
-                    Text(boxHealthLine(health))
-                        .font(PressureTheme.monoCaption)
-                        .foregroundStyle(.secondary)
-                }
-                HStack(spacing: 12) {
-                    Text("Local read:")
-                    if let date = hetzner.ledgerCheckedAt { ReadAgeView(date: date) } else { Text("not read") }
-                    Text("Box read:")
-                    if let date = hetzner.boxFetchedAt { ReadAgeView(date: date) } else { Text("not read") }
-                }
-                Text("Recent history only: up to 1000 delegate rows and 1000 box jobs, subject to size limits.")
-                    .font(.caption2).foregroundStyle(.tertiary)
-                if !hetzner.boxReachable, hetzner.boxFetchedAt != nil {
-                    Label("Box unreachable — showing last known data.", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(PressureTheme.levelColor(.warning))
-                } else if !hetzner.boxReachable {
-                    Label("Box not reached yet — first fetch may take a few seconds.", systemImage: "hourglass")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Text("Mode and repos are read from ~/.nicos-dev/commit-delivery/v1/gate-delegate.json — display only; this tab never changes worker config.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+    static func describeLocal(_ code: String) -> String {
+        code.split(separator: " ").map { part -> String in
+            switch part {
+            case "delegate_ledger_read_failed": "the delegate ledger could not be read"
+            case "delegate_config_read_failed": "gate-delegate.json could not be read"
+            default: String(part)
             }
-        }
+        }.joined(separator: "; ")
     }
+}
 
-    private var boxStatusTrailing: String {
-        if let at = hetzner.boxFetchedAt {
-            return (hetzner.selectedHost ?? "runner") + " · " + (hetzner.boxReachable ? "reachable · " : "last fetched ") + PressureFormat.relative(at)
-        }
-        return "not fetched yet"
-    }
+private func chip(_ text: String, _ color: Color) -> some View {
+    HetznerUI.chip(text, color: color)
+}
 
-    private var freshnessLine: String {
-        let ledger = hetzner.ledgerPresent
-            ? "ledger \(hetzner.delegateRuns.count) rows · checked \(PressureFormat.relative(hetzner.ledgerCheckedAt))"
-            : "ledger not found · checked \(PressureFormat.relative(hetzner.ledgerCheckedAt))"
-        return ledger + " · box fetched \(PressureFormat.relative(hetzner.boxFetchedAt))"
-    }
+// MARK: - Runners (scheduler + live jobs)
 
-    private func modeColor(_ mode: String) -> Color {
-        switch mode {
-        case "on": return .green
-        case "shadow": return .orange
-        default: return .secondary
-        }
-    }
+private struct RunnersCard: View {
+    @ObservedObject var hetzner: HetznerStore
 
-    private func configSummary(_ config: DelegateConfig) -> String {
-        let repos = config.repos.map(\.box).joined(separator: ", ")
-        return "repos: \(repos.isEmpty ? "none" : repos) · \(config.allowCount) portable prefixes"
-    }
-
-    private func boxHealthLine(_ health: BoxHealth) -> String {
-        var parts: [String] = []
-        if let l1 = health.load1, let l5 = health.load5, let l15 = health.load15 {
-            parts.append(String(format: "load %.2f / %.2f / %.2f", l1, l5, l15))
-        }
-        if let avail = health.memAvailableMB, let total = health.memTotalMB {
-            parts.append("mem \(avail) of \(total) MB available")
-        }
-        if let disk = health.diskUsedPercent {
-            parts.append("disk \(disk)% used")
-        }
-        if let uptime = health.uptime {
-            parts.append("up \(uptime)")
-        }
-        return parts.isEmpty ? "" : "\(hetzner.selectedHost ?? "Selected runner") — " + parts.joined(separator: " · ")
-    }
-
-    private func showDiverged() {
-        runRepo = "All"
-        runDecision = "All"
-        runAgreement = "Diverged"
-        runRange = "All"
-    }
-
-    // MARK: Delegate runs
-
-    private var runRepoOptions: [String] {
-        ["All"] + Array(Set(hetzner.delegateRuns.map(\.repoName))).sorted()
-    }
-
-    private var filteredRuns: [DelegateRun] {
-        let cutoff: Date?
-        switch runRange {
-        case "1h": cutoff = Date().addingTimeInterval(-3600)
-        case "24h": cutoff = Date().addingTimeInterval(-86400)
-        default: cutoff = nil
-        }
-        return hetzner.delegateRuns.filter { run in
-            if runRepo != "All", run.repoName != runRepo { return false }
-            switch runDecision {
-            case "Substituted": if run.decision != "remote_pass" { return false }
-            case "Fallback": if run.decision != "local_fallback" { return false }
-            case "Shadow": if run.decision != "shadow" { return false }
-            default: break
-            }
-            switch runAgreement {
-            case "Agree": if run.agreement != true { return false }
-            case "Diverged": if run.agreement != false { return false }
-            default: break
-            }
-            if let cutoff, let at = run.at, at < cutoff { return false }
-            return true
-        }
-    }
-
-    private var delegateCard: some View {
-        SectionCard(
-            title: "Gate-delegate runs",
-            systemImage: "arrow.triangle.swap",
-            trailing: "\(filteredRuns.count) of \(hetzner.delegateRuns.count)"
-        ) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 12) {
-                    filterLabel("Repo")
-                    Picker("", selection: $runRepo) {
-                        ForEach(runRepoOptions, id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .fixedSize()
-                    filterLabel("Decision")
-                    Picker("", selection: $runDecision) {
-                        ForEach(["All", "Substituted", "Fallback", "Shadow"], id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                }
-                HStack(spacing: 12) {
-                    filterLabel("Agreement")
-                    Picker("", selection: $runAgreement) {
-                        ForEach(["All", "Agree", "Diverged"], id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    filterLabel("Range")
-                    Picker("", selection: $runRange) {
-                        ForEach(["All", "24h", "1h"], id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                }
-            }
-            .padding(.bottom, 4)
-
-            if !hetzner.ledgerPresent {
-                Text("The delegate ledger is not available at its expected path.")
-                    .foregroundStyle(.secondary)
-            } else if hetzner.delegateRuns.isEmpty {
-                Text("No valid delegate runs were loaded from this ledger.")
-                    .foregroundStyle(.secondary)
-            } else if filteredRuns.isEmpty {
-                Text("No runs match the current filters.")
-                    .foregroundStyle(.secondary)
-            } else {
-                LazyVStack(spacing: 0) {
-                    ForEach(filteredRuns.prefix(visibleRunLimit)) { run in
-                        delegateRow(run)
-                        Divider().opacity(0.4)
-                    }
-                }
-                if filteredRuns.count > visibleRunLimit {
-                    Button("Show more runs (\(visibleRunLimit) of \(filteredRuns.count) shown)") {
-                        visibleRunLimit += 100
-                    }
-                    .padding(.top, 6)
-                }
-            }
-            Text("Source: ~/.nicos-dev/commit-delivery/v1/gate-delegate/runs.jsonl — re-checked every 15 seconds while this pane is visible and active. Select a run for full detail.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .padding(.top, 6)
-        }
-    }
-
-    private func delegateRow(_ run: DelegateRun) -> some View {
-        let expanded = expandedRuns.contains(run.id)
-        return VStack(alignment: .leading, spacing: 3) {
-            Button {
-                if expanded { expandedRuns.remove(run.id) } else { expandedRuns.insert(run.id) }
-            } label: {
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
-                        Text(run.repoName)
-                            .font(.subheadline.weight(.semibold))
-                        chip(run.mode, color: run.mode == "on" ? .green : .secondary)
-                        decisionChip(run)
-                        if let agreement = run.agreement {
-                            chip(agreement ? "agree" : "DIVERGED", color: agreement ? .secondary : .red)
-                            if !agreement, run.localEnvFailure {
-                                chip("local environment hint", color: .orange)
-                            }
-                        }
-                        Spacer()
-                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Text(PressureFormat.shortTime(run.at))
-                            .font(PressureTheme.monoCaption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(delegateDetail(run))
-                        .font(PressureTheme.monoCaption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                    Text(run.command)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if expanded {
-                delegateExpanded(run)
-            }
-        }
-        .padding(.vertical, 6)
-    }
-
-    @ViewBuilder
-    private func decisionChip(_ run: DelegateRun) -> some View {
-        switch run.decision {
-        case "remote_pass":
-            chip("VERDICT USED", color: .green)
-        case "local_fallback":
-            chip("FALLBACK · local kept", color: .orange)
-        case "shadow":
-            chip("shadow compare", color: .secondary)
-        default:
-            chip(run.decision.isEmpty ? "unknown decision" : run.decision, color: .secondary)
-        }
-    }
-
-    private func delegateExpanded(_ run: DelegateRun) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            detailRow("Delivery", run.deliveryID, copyable: true)
-            detailRow("Command", run.command, copyable: true)
-            if !run.repoPath.isEmpty {
-                detailRow("Repo path", run.repoPath)
-            }
-            if let detail = run.localDetail, !detail.isEmpty {
-                detailRow("Mac detail", detail)
-            }
-            if let boxSummary = boxRunSummary(run) {
-                detailRow("Box run", boxSummary)
-            }
-            if let treeSummary = treeSummary(run) {
-                detailRow("Tree", treeSummary)
-            }
-            if let digest = run.policyDigest {
-                detailRow("Policy", String(digest.prefix(24)))
-            }
-            if let allowed = run.remotePassAllowed {
-                detailRow("Remote pass", allowed ? "allowed for this check" : "not allowed for this check")
-            }
-        }
-        .padding(.leading, 12)
-        .padding(.top, 2)
-    }
-
-    private func detailRow(_ label: String, _ value: String, copyable: Bool = false) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(label)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 86, alignment: .leading)
-            Text(value)
-                .font(PressureTheme.monoCaption)
-                .textSelection(.enabled)
-            if copyable {
-                Button {
-                    copyText(value)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Copy")
-            }
-            Spacer()
-        }
-    }
-
-    private func treeSummary(_ run: DelegateRun) -> String? {
-        guard let verified = run.treeVerified else { return nil }
-        var text = verified ? "verified" : "NOT verified"
-        if let hash = run.treeHash { text += " · " + String(hash.prefix(12)) }
-        return text
-    }
-
-    private func boxRunSummary(_ run: DelegateRun) -> String? {
-        guard run.remoteRan else { return nil }
-        var parts: [String] = []
-        if let stage = run.remoteStage { parts.append("stage \(stage)") }
-        if let exit = run.remoteExit { parts.append("exit \(exit)") }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    private func delegateDetail(_ run: DelegateRun) -> String {
-        var parts: [String] = ["delivery \(PressureFormat.shortSession(run.deliveryID))"]
-        if let passed = run.localPassed {
-            var local = "mac \(passed ? "pass" : "FAIL")"
-            if let ms = run.localMS { local += " \(PressureFormat.durationMS(ms))" }
-            parts.append(local)
-        }
-        if run.remoteRan {
-            var remote = "box"
-            if let passed = run.remotePassed { remote += " \(passed ? "pass" : "FAIL")" }
-            if let ms = run.remoteRunMS { remote += " \(PressureFormat.durationMS(ms))" }
-            if let wall = run.remoteWallMS { remote += " (wall \(PressureFormat.durationMS(wall)))" }
-            parts.append(remote)
-        } else {
-            parts.append("box did not run")
-        }
-        if let verified = run.treeVerified {
-            parts.append(verified ? "tree verified" : "tree NOT verified")
-        }
-        if let allowed = run.remotePassAllowed {
-            parts.append(allowed ? "remote-pass allowed" : "remote-pass not allowed")
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    // MARK: Box jobs
-
-    private var jobRepoOptions: [String] {
-        ["All"] + Array(Set(hetzner.jobs.map(\.repo))).sorted()
-    }
-
-    private var jobCallerOptions: [String] {
-        ["All"] + Array(Set(hetzner.jobs.map(\.caller))).sorted()
-    }
-
-    private var filteredJobs: [BoxJob] {
-        var list = hetzner.jobs.filter { job in
-            if jobRepo != "All", job.repo != jobRepo { return false }
-            if jobCaller != "All", job.caller != jobCaller { return false }
-            switch jobExit {
-            case "OK": if !job.isSuccess { return false }
-            case "Failed": if job.isSuccess || job.isSetupFailure { return false }
-            case "Setup": if !job.isSetupFailure { return false }
-            default: break
-            }
-            if !jobSearch.isEmpty {
-                let hay = (job.repo + " " + job.caller + " " + job.command + " " + job.id).lowercased()
-                if !hay.contains(jobSearch.lowercased()) { return false }
-            }
-            return true
-        }
-        if jobSort == "Longest" {
-            list.sort { ($0.durationSeconds ?? -1) > ($1.durationSeconds ?? -1) }
-        }
-        return list
-    }
-
-    private var jobsCard: some View {
-        SectionCard(
-            title: "Jobs · \(hetzner.selectedHost ?? "runner not selected")",
-            systemImage: "terminal",
-            trailing: "\(filteredJobs.count) of \(hetzner.jobs.count)"
-        ) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 12) {
-                    filterLabel("Repo")
-                    Picker("", selection: $jobRepo) {
-                        ForEach(jobRepoOptions, id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .fixedSize()
-                    filterLabel("Caller")
-                    Picker("", selection: $jobCaller) {
-                        ForEach(jobCallerOptions, id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .fixedSize()
-                }
-                HStack(spacing: 12) {
-                    filterLabel("Exit")
-                    Picker("", selection: $jobExit) {
-                        ForEach(["All", "OK", "Failed", "Setup"], id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    filterLabel("Sort")
-                    Picker("", selection: $jobSort) {
-                        ForEach(["Newest", "Longest"], id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                }
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                    TextField("Search command, repo, caller, job id", text: $jobSearch)
-                        .textFieldStyle(.roundedBorder)
-                }
-            }
-            .padding(.bottom, 4)
-
-            if hetzner.jobs.isEmpty {
-                Text(hetzner.boxReachable
-                    ? "No jobs in the fetched window."
-                    : "No box jobs loaded yet — the box may be unreachable.")
-                    .foregroundStyle(.secondary)
-            } else if filteredJobs.isEmpty {
-                Text("No jobs match the current filters.")
-                    .foregroundStyle(.secondary)
-            } else {
-                LazyVStack(spacing: 0) {
-                    ForEach(filteredJobs.prefix(visibleJobLimit)) { job in
-                        jobRow(job)
-                        Divider().opacity(0.4)
-                    }
-                }
-                if filteredJobs.count > visibleJobLimit {
-                    Button("Show more jobs (\(visibleJobLimit) of \(filteredJobs.count) shown)") {
-                        visibleJobLimit += 120
-                    }
-                    .padding(.top, 6)
-                }
-            }
-            Text("Source: /srv/build/logs/jobs.log on \(hetzner.selectedHost ?? "the selected runner") via SSH (tail of 1000) — refreshed about once a minute while this pane is visible and active. Select a job to view its captured log.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .padding(.top, 6)
-        }
-    }
-
-    private func jobRow(_ job: BoxJob) -> some View {
-        Button {
-            hetzner.selectJob(job)
-        } label: {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(job.repo)
-                        .font(.subheadline.weight(.semibold))
-                    if let jobClass = job.jobClass {
-                        chip(jobClass, color: .secondary)
-                    }
-                    chip(exitLabel(job), color: exitColor(job))
-                    if let dur = job.durationSeconds {
-                        Text(PressureFormat.duration(seconds: Int64(dur)))
-                            .font(PressureTheme.monoCaption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if hetzner.selectedJobID == job.id {
-                        Image(systemName: "chevron.down")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(PressureFormat.shortTime(job.at))
-                        .font(PressureTheme.monoCaption)
-                        .foregroundStyle(.secondary)
-                }
-                Text(jobMetaLine(job))
-                    .font(PressureTheme.monoCaption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if !job.command.isEmpty {
-                    Text(job.command)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func jobMetaLine(_ job: BoxJob) -> String {
-        var line = "\(job.caller) · job \(job.id)"
-        if let cand = job.cand {
-            line += " · cand \(String(cand.prefix(8)))"
-        }
-        if let sha = job.sha {
-            line += " · sha \(String(sha.prefix(8)))"
-        }
-        return line
-    }
-
-    private func exitLabel(_ job: BoxJob) -> String {
-        job.isSetupFailure ? "SETUP" : "exit \(job.exitCode)"
-    }
-
-    private func exitColor(_ job: BoxJob) -> Color {
-        if job.isSuccess { return .green }
-        if job.isSetupFailure { return .orange }
-        return .red
-    }
-
-
-    // MARK: Runner fleet (live)
-
-    private var fleetLiveCard: some View {
+    var body: some View {
         SectionCard(title: "Runners", systemImage: "server.rack",
-                    trailing: hetzner.fleet.map { "\($0.hosts.count) configured" }) {
+                    trailing: hetzner.fleet.map { "\($0.hosts.count) configured · generation \($0.generation)" }) {
             VStack(alignment: .leading, spacing: 12) {
                 if let error = hetzner.fleetError {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -657,8 +105,6 @@ struct HetznerView: View {
                         runnerSection(host)
                         if host.id != fleet.hosts.last?.id { Divider() }
                     }
-                    Text("Inventory generation: \(fleet.generation). Active hosts receive new work; reserve hosts require an explicit choice. Existing jobs stay on their assigned host.")
-                        .font(.caption2).foregroundStyle(.secondary)
                 } else {
                     Text("Fleet inventory not loaded. Runner roles and capacity are unknown.")
                         .foregroundStyle(.secondary)
@@ -667,7 +113,7 @@ struct HetznerView: View {
                     Label("Job feed: \(error)", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(.orange)
                 }
-                Text("Scheduler checks run about once a minute while this pane is visible and active. Local job samples refresh every 15 seconds; sample ages and read errors remain visible.")
+                Text("Active hosts receive new work; reserve hosts need an explicit choice. Scheduler checks run about once a minute and job samples every 15 seconds while this pane is visible.")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
         }
@@ -677,33 +123,35 @@ struct HetznerView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(runner.name).font(.headline)
-                chip(runner.roleLabel.uppercased(), color: runner.state == "active" ? .blue : .secondary)
+                chip(runner.roleLabel.uppercased(), runner.state == "active" ? .blue : .secondary)
                 Spacer()
                 if let observation = hetzner.observations[runner.name] {
                     if !observation.isFresh() {
-                        chip("CHECK STALE", color: .orange)
+                        chip("CHECK STALE", .orange)
                     } else if observation.healthy && !observation.drained {
-                        chip("SCHEDULER HEALTHY", color: .green)
+                        chip("SCHEDULER HEALTHY", .green)
                     } else {
-                        chip(observation.drained ? "DRAINED" : "UNAVAILABLE", color: .orange)
+                        chip(observation.drained ? "DRAINED" : "UNAVAILABLE", .orange)
                     }
                 } else {
-                    chip("NOT CHECKED", color: .secondary)
+                    chip("NOT CHECKED", .secondary)
                 }
             }
-            Text("\(runner.providerLabel) · \(runner.platform) · \(runner.user)@\(runner.name)")
-                .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
-            Text("Configured slots: \(runner.heavySlots) heavy / \(runner.lightSlots) light · placement weight \(runner.weight)")
+            Text("\(runner.providerLabel) · \(runner.platform) · \(runner.user)@\(runner.name) · \(runner.heavySlots) heavy / \(runner.lightSlots) light slots · weight \(runner.weight)")
                 .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
             if let observation = hetzner.observations[runner.name] {
-                Text("Scheduler: \(observation.heavyJobs)/\(observation.heavySlots) heavy · \(observation.lightJobs)/\(observation.lightSlots) light · revision \(PressureFormat.shortDigest(observation.sourceCommit)) · checked \(PressureFormat.relative(observation.observedAt))")
+                Text("Scheduler now: \(observation.heavyJobs)/\(observation.heavySlots) heavy · \(observation.lightJobs)/\(observation.lightSlots) light · revision \(PressureFormat.shortDigest(observation.sourceCommit)) · checked \(PressureFormat.relative(observation.observedAt))")
                     .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
                 if let error = observation.error {
                     Text(error).font(.caption).foregroundStyle(.orange)
                 }
             }
-            Text("Profiles: \(runner.profiles.joined(separator: ", "))")
-                .font(.caption).foregroundStyle(.secondary)
+            DisclosureGroup("Profiles (\(runner.profiles.count))") {
+                Text(runner.profiles.joined(separator: ", "))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.caption)
             if let live = hetzner.liveHosts.first(where: { $0.host == runner.name }) {
                 liveHostSection(live)
             } else {
@@ -713,60 +161,49 @@ struct HetznerView: View {
         }
     }
 
+    private func feedStale(_ host: LiveHost) -> Bool {
+        host.feedStale || !hetzner.livePresent || hetzner.liveError != nil || host.pollError != nil
+    }
+
     private func liveHostSection(_ host: LiveHost) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let stale = feedStale(host)
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text("Job feed")
-                    .font(.subheadline.weight(.semibold))
-                if host.feedStale || !hetzner.livePresent || hetzner.liveError != nil || host.pollError != nil {
-                    chip("FEED STALE", color: .secondary)
-                } else {
-                    chip("LIVE", color: .green)
-                }
-                if host.pollError != nil {
-                    chip("POLL ERROR", color: .orange)
-                }
+                Text("Job feed").font(.subheadline.weight(.semibold))
+                chip(stale ? "FEED STALE" : "LIVE", stale ? .secondary : .green)
+                if host.pollError != nil { chip("POLL ERROR", .orange) }
                 Spacer()
                 Text("polled \(PressureFormat.relative(host.lastPollAt))")
-                    .font(PressureTheme.monoCaption)
-                    .foregroundStyle(.secondary)
+                    .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
             }
             if let vitals = liveVitalsLine(host) {
-                Text(vitals)
-                    .font(PressureTheme.monoCaption)
-                    .foregroundStyle(.secondary)
+                Text(vitals).font(PressureTheme.monoCaption).foregroundStyle(.secondary)
             }
-            if host.feedStale || !hetzner.livePresent || hetzner.liveError != nil || host.pollError != nil {
+            if stale {
                 Label("Live feed stale — the poller may be down; showing the last samples, not a live fleet.", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(PressureTheme.levelColor(.warning))
             }
             if let error = host.pollError {
-                Text("Last poll error: \(error)")
-                    .font(PressureTheme.monoCaption)
-                    .foregroundStyle(.orange)
+                Text("Last poll error: \(error)").font(PressureTheme.monoCaption).foregroundStyle(.orange)
             }
             if host.liveJobs.isEmpty {
-                Text(host.feedStale || !hetzner.livePresent || hetzner.liveError != nil || host.pollError != nil ? "No jobs in the last sample." : "No jobs running in the last sample.")
-                    .font(PressureTheme.monoCaption)
-                    .foregroundStyle(.secondary)
+                Text(stale ? "No jobs in the last sample." : "No jobs running in the last sample.")
+                    .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
             } else {
-                ForEach(host.liveJobs) { job in
-                    liveJobRow(job)
-                }
+                ForEach(host.liveJobs) { job in liveJobRow(job) }
             }
             if !host.recentRuns.isEmpty {
                 DisclosureGroup("Recent runs (\(host.recentRuns.count))") {
                     ForEach(host.recentRuns) { job in recentRunRow(job) }
                 }
+                .font(.caption)
             }
             if !host.kills.isEmpty {
-                Text("Stall kills")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.red)
-                    .padding(.top, 2)
-                ForEach(host.kills) { kill in
-                    killRow(kill)
+                DisclosureGroup {
+                    ForEach(host.kills) { kill in killRow(kill) }
+                } label: {
+                    Text("Stall kills (\(host.kills.count))").font(.caption.weight(.semibold)).foregroundStyle(.red)
                 }
             }
         }
@@ -783,27 +220,23 @@ struct HetznerView: View {
 
     private func verdictChip(_ job: LiveJob) -> some View {
         switch job.verdict {
-        case "HEALTHY": return chip("HEALTHY", color: .green)
-        case "SUSPECT": return chip("SUSPECT", color: .orange)
-        case "STALLED": return chip("STALLED", color: .red)
-        default: return chip(job.phase.uppercased(), color: .secondary)
+        case "HEALTHY": chip("HEALTHY", .green)
+        case "SUSPECT": chip("SUSPECT", .orange)
+        case "STALLED": chip("STALLED", .red)
+        default: chip(job.phase.uppercased(), .secondary)
         }
     }
 
     private func liveJobRow(_ job: LiveJob) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
-                Text(job.repo.isEmpty ? job.jobID : job.repo)
-                    .font(.subheadline.weight(.semibold))
-                if let jobClass = job.jobClass {
-                    chip(jobClass, color: .secondary)
-                }
+                Text(job.repo.isEmpty ? job.jobID : job.repo).font(.subheadline.weight(.semibold))
+                if let jobClass = job.jobClass { chip(jobClass, .secondary) }
                 verdictChip(job)
                 Spacer()
                 if let elapsed = job.elapsedS {
                     Text(PressureFormat.duration(seconds: elapsed))
-                        .font(PressureTheme.monoCaption)
-                        .foregroundStyle(.secondary)
+                        .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
                 }
             }
             Text(liveJobMeta(job))
@@ -816,85 +249,57 @@ struct HetznerView: View {
 
     private func liveJobMeta(_ job: LiveJob) -> String {
         var parts: [String] = []
-        if let delivery = job.deliveryID {
-            parts.append("delivery \(PressureFormat.shortSession(delivery))")
-        }
+        if let delivery = job.deliveryID { parts.append("delivery \(PressureFormat.shortSession(delivery))") }
         if job.phase == "queued" {
-            if let wait = job.queueWaitS {
-                parts.append("waiting \(PressureFormat.duration(seconds: wait))")
-            }
+            if let wait = job.queueWaitS { parts.append("waiting \(PressureFormat.duration(seconds: wait))") }
         } else if job.phase == "running" {
-            if let silent = job.lastOutputAgeS {
-                parts.append("silent \(PressureFormat.duration(seconds: silent))")
-            }
-            if let cpu = job.cpuPct {
-                parts.append(String(format: "cpu %.0f%%", cpu))
-            }
-            if let rss = job.rssMB {
-                parts.append(String(format: "rss %.0f MB", rss))
-            }
+            if let silent = job.lastOutputAgeS { parts.append("silent \(PressureFormat.duration(seconds: silent))") }
+            if let cpu = job.cpuPct { parts.append(String(format: "cpu %.0f%%", cpu)) }
+            if let rss = job.rssMB { parts.append(String(format: "rss %.0f MB", rss)) }
         }
-        if let sha = job.sha {
-            parts.append("sha \(String(sha.prefix(8)))")
-        }
+        if let sha = job.sha { parts.append("sha \(String(sha.prefix(8)))") }
         return parts.joined(separator: " · ")
     }
 
     private func recentRunRow(_ job: LiveJob) -> some View {
         HStack(spacing: 8) {
-            Text(job.repo.isEmpty ? job.jobID : job.repo)
-                .font(PressureTheme.monoCaption)
-            if let jobClass = job.jobClass {
-                chip(jobClass, color: .secondary)
-            }
-            chip(job.state ?? "terminal", color: terminalStateColor(job.state))
+            Text(job.repo.isEmpty ? job.jobID : job.repo).font(PressureTheme.monoCaption)
+            if let jobClass = job.jobClass { chip(jobClass, .secondary) }
+            chip(job.state ?? "terminal", terminalStateColor(job.state))
             if let elapsed = job.elapsedS {
-                Text(PressureFormat.duration(seconds: elapsed))
-                    .font(PressureTheme.monoCaption)
-                    .foregroundStyle(.secondary)
+                Text(PressureFormat.duration(seconds: elapsed)).font(PressureTheme.monoCaption).foregroundStyle(.secondary)
             }
             Spacer()
             Text(PressureFormat.shortTime(job.finishedAt ?? job.updatedAt))
-                .font(PressureTheme.monoCaption)
-                .foregroundStyle(.secondary)
+                .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
     }
 
     private func terminalStateColor(_ state: String?) -> Color {
         switch state {
-        case "passed": return .green
-        case "failed": return .red
-        case "expired": return .orange
-        default: return .secondary
+        case "passed": .green
+        case "failed": .red
+        case "expired": .orange
+        default: .secondary
         }
     }
 
     private func killRow(_ kill: KillEvent) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
-                chip("STALL-KILLED", color: .red)
-                if let jobClass = kill.jobClass {
-                    chip(jobClass, color: .secondary)
-                }
+                chip("STALL-KILLED", .red)
+                if let jobClass = kill.jobClass { chip(jobClass, .secondary) }
                 if let delivery = kill.deliveryID {
                     Text("delivery \(PressureFormat.shortSession(delivery))")
-                        .font(PressureTheme.monoCaption)
-                        .foregroundStyle(.secondary)
+                        .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text(PressureFormat.shortTime(kill.at))
-                    .font(PressureTheme.monoCaption)
-                    .foregroundStyle(.secondary)
+                Text(PressureFormat.shortTime(kill.at)).font(PressureTheme.monoCaption).foregroundStyle(.secondary)
             }
-            Text(killMeta(kill))
-                .font(PressureTheme.monoCaption)
-                .foregroundStyle(.secondary)
+            Text(killMeta(kill)).font(PressureTheme.monoCaption).foregroundStyle(.secondary)
             if let detail = kill.detail, !detail.isEmpty {
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
+                Text(detail).font(.caption).foregroundStyle(.tertiary).lineLimit(2)
             }
         }
         .padding(.vertical, 3)
@@ -902,84 +307,587 @@ struct HetznerView: View {
 
     private func killMeta(_ kill: KillEvent) -> String {
         var parts: [String] = ["job \(kill.jobID)"]
-        if let elapsed = kill.elapsedS {
-            parts.append("elapsed \(PressureFormat.duration(seconds: elapsed))")
-        }
-        if let silent = kill.lastOutputAgeS {
-            parts.append("silent \(PressureFormat.duration(seconds: silent))")
-        }
-        if let cpu = kill.cpuPct {
-            parts.append(String(format: "cpu %.1f%%", cpu))
-        }
+        if let elapsed = kill.elapsedS { parts.append("elapsed \(PressureFormat.duration(seconds: elapsed))") }
+        if let silent = kill.lastOutputAgeS { parts.append("silent \(PressureFormat.duration(seconds: silent))") }
+        if let cpu = kill.cpuPct { parts.append(String(format: "cpu %.1f%%", cpu)) }
         return parts.joined(separator: " · ")
     }
+}
 
-    // MARK: Job log
+// MARK: - Delegate status
 
-    private var jobLogCard: some View {
-        SectionCard(
-            title: "Job log — \(hetzner.selectedJobID ?? "")",
-            systemImage: "doc.text",
-            trailing: logTrailing
-        ) {
-            if hetzner.jobLogLoading {
+private struct DelegateStatusCard: View {
+    @ObservedObject var hetzner: HetznerStore
+
+    var body: some View {
+        SectionCard(title: "Gate delegate", systemImage: "arrow.triangle.swap", trailing: trailing) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Fetching log from the box…")
-                        .foregroundStyle(.secondary)
+                    Text("Mode").font(.subheadline.weight(.semibold))
+                    if let config = hetzner.delegateConfig {
+                        chip(config.mode.uppercased(), modeColor(config.mode))
+                        Text(configSummary(config))
+                            .font(PressureTheme.monoCaption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    } else {
+                        Text("config not read").font(PressureTheme.monoCaption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        Task { await hetzner.refreshNow() }
+                    } label: {
+                        Label("Refresh now", systemImage: "arrow.clockwise")
+                    }
+                    .controlSize(.small)
+                    .disabled(hetzner.refreshing)
                 }
-            } else if let log = hetzner.jobLog {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Spacer()
-                        Button {
-                            copyText(log)
-                        } label: {
-                            Label("Copy log (first 100 KB)", systemImage: "doc.on.doc")
+                let stats = hetzner.delegateStats
+                if stats.total > 0 {
+                    Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 4) {
+                        GridRow {
+                            metric("\(stats.total)", "loaded runs")
+                            metric("\(stats.remotePass)", "verdicts used")
+                            metric("\(stats.fallbacks)", "fallbacks", warn: stats.fallbacks > 0)
+                            metric("\(stats.shadow)", "shadow")
+                            metric("\(stats.diverged)", "diverged", alert: stats.diverged > 0)
+                            metric(PressureFormat.durationMS(stats.remoteRunMS), "box time")
+                            metric(PressureFormat.durationMS(stats.localMS), "mac time")
                         }
-                        .controlSize(.small)
                     }
-                    ScrollView {
-                        Text(log)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
+                    if stats.onEraDiverged > 0 {
+                        Label("\(stats.onEraDiverged) divergence(s) in loaded mode-on rows — filter Agreement: Diverged below.",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.red)
+                    } else if stats.onEraBothVerdict > 0 {
+                        Label("No recorded divergence in \(stats.onEraBothVerdict) loaded mode-on comparisons.", systemImage: "checkmark.circle.fill")
+                            .font(.caption).foregroundStyle(.green)
                     }
-                    .frame(maxHeight: 280)
+                } else if hetzner.ledgerPresent {
+                    Text("No delegate runs recorded yet.").font(PressureTheme.monoCaption).foregroundStyle(.secondary)
                 }
-            } else if let error = hetzner.jobLogError {
-                Label("Log read failed: \(error)", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-            } else {
-                Label("No log loaded.", systemImage: "info.circle")
-                    .foregroundStyle(.secondary)
+                if let error = hetzner.localError {
+                    Label("Local read failed: \(HetznerUI.describeLocal(error)). Showing last good data.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                if hetzner.historyTruncated || hetzner.malformedRows > 0 {
+                    Text("Bounded history: \(hetzner.delegateRuns.count) recent rows loaded; \(hetzner.malformedRows) malformed rows skipped. Counts describe this window.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Text("Read from ~/.nicos-dev/commit-delivery/v1/gate-delegate.json and its run ledger (last 1,000 rows) — display only.")
+                    .font(.caption2).foregroundStyle(.tertiary)
             }
         }
     }
 
-    private var logTrailing: String? {
-        hetzner.jobLogLoading ? "loading…" : nil
+    private var trailing: String {
+        guard let at = hetzner.ledgerCheckedAt else { return "not read" }
+        return "ledger checked " + PressureFormat.relative(min(at, Date()))
     }
 
-    // MARK: Shared
-
-    private func filterLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
+    private func metric(_ value: String, _ label: String, warn: Bool = false, alert: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(value)
+                .font(.system(.callout, design: .monospaced).weight(.semibold))
+                .foregroundStyle(alert ? .red : warn ? .orange : .primary)
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+        }
     }
 
-    private func chip(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.15), in: Capsule())
-            .foregroundStyle(color)
+    private func modeColor(_ mode: String) -> Color {
+        switch mode {
+        case "on": .green
+        case "shadow": .orange
+        default: .secondary
+        }
     }
 
-    private func copyText(_ value: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(value, forType: .string)
+    private func configSummary(_ config: DelegateConfig) -> String {
+        let repos = config.repos.map(\.box).joined(separator: ", ")
+        return "repos: \(repos.isEmpty ? "none" : repos) · \(config.allowCount) portable prefixes"
+    }
+}
+
+// MARK: - Delegate runs
+
+private struct RunFilter: Equatable {
+    var repo = "All"
+    var decision = "All"
+    var agreement = "All"
+    var range = "All"
+}
+
+private struct DelegateRunsCard: View {
+    @ObservedObject var hetzner: HetznerStore
+    @State private var filter = RunFilter()
+    @State private var expanded: Set<String> = []
+    @State private var visibleLimit = 100
+    @State private var filtered: [DelegateRun] = []
+    @State private var repoOptions: [String] = ["All"]
+
+    private struct CacheKey: Equatable {
+        let revision: Int
+        let filter: RunFilter
+    }
+
+    var body: some View {
+        SectionCard(title: "Gate-delegate runs", systemImage: "list.bullet.rectangle",
+                    trailing: "\(filtered.count) of \(hetzner.delegateRuns.count)") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    HetznerUI.filterLabel("Repo")
+                    Picker("", selection: $filter.repo) {
+                        ForEach(repoOptions, id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.menu).labelsHidden().fixedSize()
+                    HetznerUI.filterLabel("Decision")
+                    Picker("", selection: $filter.decision) {
+                        ForEach(["All", "Substituted", "Fallback", "Shadow"], id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+                }
+                HStack(spacing: 12) {
+                    HetznerUI.filterLabel("Agreement")
+                    Picker("", selection: $filter.agreement) {
+                        ForEach(["All", "Agree", "Diverged"], id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+                    HetznerUI.filterLabel("Range")
+                    Picker("", selection: $filter.range) {
+                        ForEach(["All", "24h", "1h"], id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+                    if filter != RunFilter() {
+                        Button("Clear") { filter = RunFilter() }.controlSize(.small)
+                    }
+                }
+            }
+            .padding(.bottom, 4)
+
+            if !hetzner.ledgerPresent {
+                Text("The delegate ledger is not available at its expected path.").foregroundStyle(.secondary)
+            } else if hetzner.delegateRuns.isEmpty {
+                Text("No valid delegate runs were loaded from this ledger.").foregroundStyle(.secondary)
+            } else if filtered.isEmpty {
+                Text("No runs match the current filters.").foregroundStyle(.secondary)
+            } else {
+                LazyVStack(spacing: 0) {
+                    ForEach(filtered.prefix(visibleLimit)) { run in
+                        DelegateRunRow(run: run, expanded: expanded.contains(run.id)) {
+                            if expanded.contains(run.id) { expanded.remove(run.id) } else { expanded.insert(run.id) }
+                        }
+                        .equatable()
+                        Divider().opacity(0.4)
+                    }
+                }
+                if filtered.count > visibleLimit {
+                    Button("Show more runs (\(visibleLimit) of \(filtered.count) shown)") { visibleLimit += 100 }
+                        .padding(.top, 6)
+                }
+            }
+        }
+        .onChange(of: CacheKey(revision: hetzner.runsRevision, filter: filter), initial: true) { _, key in
+            recompute(key.filter)
+        }
+    }
+
+    private func recompute(_ f: RunFilter) {
+        let runs = hetzner.delegateRuns
+        repoOptions = ["All"] + Array(Set(runs.map(\.repoName))).sorted()
+        let cutoff: Date? = switch f.range {
+        case "1h": Date().addingTimeInterval(-3600)
+        case "24h": Date().addingTimeInterval(-86400)
+        default: nil
+        }
+        filtered = runs.filter { run in
+            if f.repo != "All", run.repoName != f.repo { return false }
+            switch f.decision {
+            case "Substituted": if run.decision != "remote_pass" { return false }
+            case "Fallback": if run.decision != "local_fallback" { return false }
+            case "Shadow": if run.decision != "shadow" { return false }
+            default: break
+            }
+            switch f.agreement {
+            case "Agree": if run.agreement != true { return false }
+            case "Diverged": if run.agreement != false { return false }
+            default: break
+            }
+            if let cutoff, let at = run.at, at < cutoff { return false }
+            return true
+        }
+    }
+}
+
+private struct DelegateRunRow: View, Equatable {
+    let run: DelegateRun
+    let expanded: Bool
+    let toggle: () -> Void
+
+    nonisolated static func == (a: Self, b: Self) -> Bool { a.run.id == b.run.id && a.expanded == b.expanded }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Button(action: toggle) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(run.repoName).font(.subheadline.weight(.semibold))
+                        chip(run.mode, run.mode == "on" ? .green : .secondary)
+                        decisionChip
+                        if let agreement = run.agreement {
+                            chip(agreement ? "agree" : "DIVERGED", agreement ? .secondary : .red)
+                            if !agreement, run.localEnvFailure { chip("local environment hint", .orange) }
+                        }
+                        Spacer()
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2).foregroundStyle(.secondary)
+                        Text(PressureFormat.shortTime(run.at)).font(PressureTheme.monoCaption).foregroundStyle(.secondary)
+                    }
+                    Text(detail).font(PressureTheme.monoCaption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(run.command).font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded { expandedDetail }
+        }
+        .padding(.vertical, 6)
+    }
+
+    @ViewBuilder private var decisionChip: some View {
+        switch run.decision {
+        case "remote_pass": chip("VERDICT USED", .green)
+        case "local_fallback": chip("FALLBACK · local kept", .orange)
+        case "shadow": chip("shadow compare", .secondary)
+        default: chip(run.decision.isEmpty ? "unknown decision" : run.decision, .secondary)
+        }
+    }
+
+    private var expandedDetail: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            detailRow("Delivery", run.deliveryID, copyable: true)
+            detailRow("Command", run.command, copyable: true)
+            if !run.repoPath.isEmpty { detailRow("Repo path", run.repoPath) }
+            if let detail = run.localDetail, !detail.isEmpty { detailRow("Mac detail", detail) }
+            if run.remoteRan {
+                let parts = [run.remoteStage.map { "stage \($0)" }, run.remoteExit.map { "exit \($0)" }].compactMap { $0 }
+                if !parts.isEmpty { detailRow("Box run", parts.joined(separator: " · ")) }
+            }
+            if let verified = run.treeVerified {
+                detailRow("Tree", (verified ? "verified" : "NOT verified") + (run.treeHash.map { " · " + String($0.prefix(12)) } ?? ""))
+            }
+            if let digest = run.policyDigest { detailRow("Policy", String(digest.prefix(24))) }
+            if let allowed = run.remotePassAllowed {
+                detailRow("Remote pass", allowed ? "allowed for this check" : "not allowed for this check")
+            }
+        }
+        .padding(.leading, 12)
+        .padding(.top, 2)
+    }
+
+    private func detailRow(_ label: String, _ value: String, copyable: Bool = false) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 86, alignment: .leading)
+            Text(value).font(PressureTheme.monoCaption).textSelection(.enabled)
+            if copyable {
+                Button { HetznerUI.copy(value) } label: { Image(systemName: "doc.on.doc") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Copy")
+            }
+            Spacer()
+        }
+    }
+
+    private var detail: String {
+        var parts: [String] = ["delivery \(PressureFormat.shortSession(run.deliveryID))"]
+        if let passed = run.localPassed {
+            parts.append("mac \(passed ? "pass" : "FAIL")" + (run.localMS.map { " \(PressureFormat.durationMS($0))" } ?? ""))
+        }
+        if run.remoteRan {
+            var remote = "box"
+            if let passed = run.remotePassed { remote += " \(passed ? "pass" : "FAIL")" }
+            if let ms = run.remoteRunMS { remote += " \(PressureFormat.durationMS(ms))" }
+            if let wall = run.remoteWallMS { remote += " (wall \(PressureFormat.durationMS(wall)))" }
+            parts.append(remote)
+        } else {
+            parts.append("box did not run")
+        }
+        if let verified = run.treeVerified { parts.append(verified ? "tree verified" : "tree NOT verified") }
+        if let allowed = run.remotePassAllowed { parts.append(allowed ? "remote-pass allowed" : "remote-pass not allowed") }
+        return parts.joined(separator: " · ")
+    }
+}
+
+// MARK: - Box jobs
+
+private struct JobFilter: Equatable {
+    var repo = "All"
+    var caller = "All"
+    var exit = "All"
+    var sort = "Newest"
+    var search = ""
+}
+
+private struct BoxJobsCard: View {
+    @ObservedObject var hetzner: HetznerStore
+    @State private var filter = JobFilter()
+    @State private var searchText = ""
+    @State private var visibleLimit = 120
+    @State private var filtered: [BoxJob] = []
+    @State private var repoOptions: [String] = ["All"]
+    @State private var callerOptions: [String] = ["All"]
+
+    private struct CacheKey: Equatable {
+        let revision: Int
+        let filter: JobFilter
+    }
+
+    var body: some View {
+        SectionCard(title: "Job receipts", systemImage: "terminal", trailing: trailing) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    HetznerUI.filterLabel("Runner")
+                    if let fleet = hetzner.fleet {
+                        Picker("", selection: Binding(
+                            get: { hetzner.selectedHost ?? fleet.hosts.first?.name ?? "" },
+                            set: { host in Task { await hetzner.selectHost(host) } }
+                        )) {
+                            ForEach(fleet.hosts) { host in Text("\(host.name) · \(host.roleLabel)").tag(host.name) }
+                        }
+                        .pickerStyle(.menu).labelsHidden().fixedSize()
+                        .help("The runner whose receipts and logs are read. Placement stays governed by the fleet inventory.")
+                    } else {
+                        Text(hetzner.selectedHost ?? "default runner").font(PressureTheme.monoCaption)
+                    }
+                    HetznerUI.filterLabel("Repo")
+                    Picker("", selection: $filter.repo) {
+                        ForEach(repoOptions, id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.menu).labelsHidden().fixedSize()
+                    HetznerUI.filterLabel("Caller")
+                    Picker("", selection: $filter.caller) {
+                        ForEach(callerOptions, id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.menu).labelsHidden().fixedSize()
+                }
+                HStack(spacing: 12) {
+                    HetznerUI.filterLabel("Exit")
+                    Picker("", selection: $filter.exit) {
+                        ForEach(["All", "OK", "Failed", "Setup"], id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+                    HetznerUI.filterLabel("Sort")
+                    Picker("", selection: $filter.sort) {
+                        ForEach(["Newest", "Longest"], id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+                }
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search command, repo, caller, job id", text: $searchText)
+                        .textFieldStyle(.roundedBorder)
+                    if filter != JobFilter() || !searchText.isEmpty {
+                        Button("Clear") { filter = JobFilter(); searchText = "" }.controlSize(.small)
+                    }
+                }
+                if let error = hetzner.boxError {
+                    Label("\(HetznerUI.describeBox(error, failure: hetzner.boxFailure)). Showing the last good receipts.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                if let health = hetzner.boxHealth {
+                    Text(healthLine(health)).font(PressureTheme.monoCaption).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.bottom, 4)
+
+            if hetzner.jobs.isEmpty {
+                if hetzner.boxFetchedAt == nil && hetzner.boxError == nil {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Reading receipts from the runner…").foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text(hetzner.boxReachable ? "No receipts in the fetched window." : "No receipts loaded — the runner was not reached.")
+                        .foregroundStyle(.secondary)
+                }
+            } else if filtered.isEmpty {
+                Text("No jobs match the current filters.").foregroundStyle(.secondary)
+            } else {
+                LazyVStack(spacing: 0) {
+                    ForEach(filtered.prefix(visibleLimit)) { job in
+                        let selected = hetzner.selectedJobID == job.id
+                        BoxJobRow(job: job, selected: selected) { hetzner.selectJob(job) }
+                            .equatable()
+                        if selected {
+                            JobLogPanel(hetzner: hetzner)
+                        }
+                        Divider().opacity(0.4)
+                    }
+                }
+                if filtered.count > visibleLimit {
+                    Button("Show more jobs (\(visibleLimit) of \(filtered.count) shown)") { visibleLimit += 120 }
+                        .padding(.top, 6)
+                }
+            }
+            Text("Source: /srv/build/logs/jobs.log on \(hetzner.selectedHost ?? "the selected runner") via SSH (last 1,000 receipts), about once a minute while visible; unchanged receipts are not re-sent. Select a job to open its log.")
+                .font(.caption2).foregroundStyle(.tertiary).padding(.top, 6)
+        }
+        .onChange(of: CacheKey(revision: hetzner.jobsRevision, filter: filter), initial: true) { _, key in
+            recompute(key.filter)
+        }
+        // Debounce typing so each keystroke does not re-filter 1,000 rows.
+        .task(id: searchText) {
+            try? await Task.sleep(for: .milliseconds(180))
+            if !Task.isCancelled { filter.search = searchText }
+        }
+    }
+
+    private var trailing: String {
+        let base = "\(filtered.count) of \(hetzner.jobs.count)"
+        guard let at = hetzner.boxFetchedAt else { return base }
+        return base + " · " + (hetzner.boxReachable ? "read " : "last read ") + PressureFormat.relative(min(at, Date()))
+    }
+
+    private func healthLine(_ health: BoxHealth) -> String {
+        var parts: [String] = []
+        if let l1 = health.load1, let l5 = health.load5, let l15 = health.load15 {
+            parts.append(String(format: "load %.2f / %.2f / %.2f", l1, l5, l15))
+        }
+        if let avail = health.memAvailableMB, let total = health.memTotalMB {
+            parts.append("mem \(avail) of \(total) MB available")
+        }
+        if let disk = health.diskUsedPercent { parts.append("disk \(disk)% used") }
+        if let uptime = health.uptime { parts.append("up \(uptime)") }
+        return (hetzner.selectedHost ?? "Runner") + " now — " + parts.joined(separator: " · ")
+    }
+
+    private func recompute(_ f: JobFilter) {
+        let jobs = hetzner.jobs
+        repoOptions = ["All"] + Array(Set(jobs.map(\.repo))).sorted()
+        callerOptions = ["All"] + Array(Set(jobs.map(\.caller))).sorted()
+        let needle = f.search.lowercased()
+        var list = jobs.filter { job in
+            if f.repo != "All", job.repo != f.repo { return false }
+            if f.caller != "All", job.caller != f.caller { return false }
+            switch f.exit {
+            case "OK": if !job.isSuccess { return false }
+            case "Failed": if job.isSuccess || job.isSetupFailure { return false }
+            case "Setup": if !job.isSetupFailure { return false }
+            default: break
+            }
+            if !needle.isEmpty {
+                return job.repo.localizedCaseInsensitiveContains(needle)
+                    || job.caller.localizedCaseInsensitiveContains(needle)
+                    || job.command.localizedCaseInsensitiveContains(needle)
+                    || job.id.localizedCaseInsensitiveContains(needle)
+            }
+            return true
+        }
+        if f.sort == "Longest" {
+            list.sort { ($0.durationSeconds ?? -1) > ($1.durationSeconds ?? -1) }
+        }
+        filtered = list
+    }
+}
+
+private struct BoxJobRow: View, Equatable {
+    let job: BoxJob
+    let selected: Bool
+    let select: () -> Void
+
+    nonisolated static func == (a: Self, b: Self) -> Bool { a.job.id == b.job.id && a.selected == b.selected }
+
+    var body: some View {
+        Button(action: select) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(job.repo).font(.subheadline.weight(.semibold))
+                    if let jobClass = job.jobClass { chip(jobClass, .secondary) }
+                    chip(job.isSetupFailure ? "SETUP" : "exit \(job.exitCode)", exitColor)
+                    if let dur = job.durationSeconds {
+                        Text(PressureFormat.duration(seconds: Int64(dur))).font(PressureTheme.monoCaption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: selected ? "chevron.down" : "chevron.right").font(.caption2).foregroundStyle(.secondary)
+                    Text(PressureFormat.shortTime(job.at)).font(PressureTheme.monoCaption).foregroundStyle(.secondary)
+                }
+                Text(meta).font(PressureTheme.monoCaption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                if !job.command.isEmpty {
+                    Text(job.command).font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                }
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var exitColor: Color {
+        if job.isSuccess { return .green }
+        if job.isSetupFailure { return .orange }
+        return .red
+    }
+
+    private var meta: String {
+        var line = "\(job.caller) · job \(job.id)"
+        if let cand = job.cand { line += " · cand \(String(cand.prefix(8)))" }
+        if let sha = job.sha { line += " · sha \(String(sha.prefix(8)))" }
+        return line
+    }
+}
+
+/// Inline log for the selected receipt. Large logs render in a native text
+/// view so a 100 KB log does not lay out as one SwiftUI Text.
+private struct JobLogPanel: View {
+    @ObservedObject var hetzner: HetznerStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if hetzner.jobLogLoading {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Fetching log from \(hetzner.selectedHost ?? "the runner")…").foregroundStyle(.secondary)
+                }
+            } else if let log = hetzner.jobLog {
+                HStack {
+                    Text("\(log.utf8.count >= 100_000 ? "First 100 KB of the log" : "Log") · \(log.split(separator: "\n", omittingEmptySubsequences: false).count) lines")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { HetznerUI.copy(log) } label: { Label("Copy", systemImage: "doc.on.doc") }
+                        .controlSize(.small)
+                }
+                LogTextView(text: log)
+                    .frame(height: 280)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(PressureTheme.hairline))
+            } else if let error = hetzner.jobLogError {
+                Label("Log read failed: \(error). SETUP receipts can exist without a log.", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            }
+        }
+        .padding(.leading, 12)
+        .padding(.bottom, 8)
+    }
+}
+
+private struct LogTextView: NSViewRepresentable {
+    let text: String
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSTextView.scrollableTextView()
+        if let view = scroll.documentView as? NSTextView {
+            view.isEditable = false
+            view.isSelectable = true
+            view.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+            view.textContainerInset = NSSize(width: 6, height: 6)
+            view.drawsBackground = false
+        }
+        scroll.drawsBackground = false
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let view = scroll.documentView as? NSTextView, view.string != text else { return }
+        view.string = text
+        view.textColor = .labelColor
     }
 }

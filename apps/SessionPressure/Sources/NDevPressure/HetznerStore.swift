@@ -54,9 +54,11 @@ struct DelegateStats: Sendable {
 // The Go CLI owns all file and SSH reads. This store only keeps view state.
 @MainActor
 final class HetznerStore: ObservableObject {
-    typealias Inspect = @Sendable (Bool, String?, String?, String?) async throws -> GateRunnerEnvelope
+    /// (includeBox, knownLedger, host, user, knownJobs)
+    typealias Inspect = @Sendable (Bool, String?, String?, String?, String?) async throws -> GateRunnerEnvelope
     typealias ReadLog = @Sendable (String, String?, String?) async throws -> String
-    @Published private(set) var delegateRuns: [DelegateRun] = []
+    @Published private(set) var delegateRuns: [DelegateRun] = [] { didSet { runsRevision &+= 1 } }
+    @Published private(set) var runsRevision = 0
     @Published private(set) var delegateStats = DelegateStats()
     @Published private(set) var delegateConfig: DelegateConfig?
     @Published private(set) var ledgerPresent = false
@@ -64,11 +66,15 @@ final class HetznerStore: ObservableObject {
     @Published private(set) var historyTruncated = false
     @Published private(set) var malformedRows = 0
     @Published private(set) var localError: String?
-    @Published private(set) var jobs: [BoxJob] = []
+    @Published private(set) var jobs: [BoxJob] = [] { didSet { jobsRevision &+= 1 } }
+    /// Bumped on every jobs/runs replacement so views can cache derived
+    /// lists by a cheap key instead of re-filtering on each 15 s publish.
+    @Published private(set) var jobsRevision = 0
     @Published private(set) var boxHealth: BoxHealth?
     @Published private(set) var boxFetchedAt: Date?
     @Published private(set) var boxReachable = false
     @Published private(set) var boxError: String?
+    @Published private(set) var boxFailure: String?
     @Published private(set) var liveHosts: [LiveHost] = []
     @Published private(set) var fleet: RunnerFleet?
     @Published private(set) var fleetError: String?
@@ -90,9 +96,10 @@ final class HetznerStore: ObservableObject {
     private var generation = UUID()
     private var refreshIncludesBox = false
     private var ledgerSignature: String?
+    private var jobsSignature: String?
 
-    init(inspect: @escaping Inspect = { includeBox, known, host, user in
-        try await ClientFactory.make().gateRunnerInspection(includeBox: includeBox, knownLedger: known, host: host, user: user)
+    init(inspect: @escaping Inspect = { includeBox, known, host, user, knownJobs in
+        try await ClientFactory.make().gateRunnerInspection(includeBox: includeBox, knownLedger: known, host: host, user: user, knownJobs: knownJobs)
     }, readLog: @escaping ReadLog = { id, host, user in
         try await ClientFactory.make().gateRunnerJobLog(id: id, host: host, user: user)
     }) {
@@ -139,12 +146,13 @@ final class HetznerStore: ObservableObject {
         refreshIncludesBox = includeBox
         let inspect = self.inspect
         let signature = ledgerSignature
+        let knownJobs = includeBox ? jobsSignature : nil
         let host = selectedHost
         let user = fleet?.hosts.first(where: { $0.name == host })?.user
         refreshing = true
         let task = Task { [weak self] in
             do {
-                let envelope = try await inspect(includeBox, signature, host, user)
+                let envelope = try await inspect(includeBox, signature, host, user, knownJobs)
                 guard !Task.isCancelled, let self, self.generation == token else { return }
                 guard envelope.ok, envelope.inspection.schemaVersion == 1 else {
                     self.localError = "Unsupported gate-runner response"
@@ -202,8 +210,12 @@ final class HetznerStore: ObservableObject {
                 if s.boxRequested {
                     self.boxReachable = s.boxReachable
                     self.boxError = s.boxError
+                    self.boxFailure = s.boxFailure
                     if s.boxReachable && s.boxError == nil {
-                        self.jobs = s.jobs
+                        // An unchanged cursor keeps the loaded rows; the
+                        // array is not reassigned, so the list does not re-render.
+                        if s.jobsUnchanged != true { self.jobs = s.jobs }
+                        self.jobsSignature = s.jobsSignature
                         self.boxHealth = s.health
                         self.boxFetchedAt = s.capturedAt
                     }
@@ -232,10 +244,12 @@ final class HetznerStore: ObservableObject {
         stop()
         selectedHost = host
         jobs = []
+        jobsSignature = nil
         boxHealth = nil
         boxFetchedAt = nil
         boxReachable = false
         boxError = nil
+        boxFailure = nil
         selectedJobID = nil
         jobLog = nil
         jobLogError = nil

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -271,5 +272,30 @@ func TestCapacityWithFleetAndProbe(t *testing.T) {
 	}
 	if _, err := ParseCapacityWindow("3d"); err == nil {
 		t.Fatal("unsupported window accepted")
+	}
+}
+
+func TestClassifySSHFailures(t *testing.T) {
+	run := func(ctx context.Context, script string) error {
+		return exec.CommandContext(ctx, "/bin/sh", "-c", script).Run()
+	}
+	bg := context.Background()
+	if got := sshFailureKind(classifySSH(bg, run(bg, "exit 255"))); got != "connect_failed" {
+		t.Fatalf("exit 255 = %s", got)
+	}
+	if got := sshFailureKind(classifySSH(bg, run(bg, "exit 3"))); got != "remote_failed" {
+		t.Fatalf("exit 3 = %s", got)
+	}
+	ctx, cancel := context.WithTimeout(bg, 20*time.Millisecond)
+	defer cancel()
+	err := run(ctx, "sleep 2")
+	if got := sshFailureKind(classifySSH(ctx, err)); got != "timeout" {
+		t.Fatalf("deadline = %s", got)
+	}
+	if got := sshFailureKind(classifySSH(bg, errors.New("gate-runner output exceeds bound"))); got != "output_too_large" {
+		t.Fatalf("bound = %s", got)
+	}
+	if got := sshFailureKind(errors.New("plain")); got != "connect_failed" {
+		t.Fatalf("unclassified = %s", got)
 	}
 }

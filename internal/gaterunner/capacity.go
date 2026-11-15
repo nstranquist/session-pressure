@@ -257,7 +257,7 @@ func capacityWith(ctx context.Context, home, dataDir string, window CapacityWind
 			hc := HostCapacity{Host: h.Name, State: h.State, Provider: h.Provider, Platform: h.Platform, HeavySlots: h.HeavySlots, LightSlots: h.LightSlots, Buckets: []UsageBucket{}, JobHours: []JobBucket{}, TopCallers: []UseRow{}, TopRepos: []UseRow{}}
 			raw, err := probe(ctx, h, capacityScript(r.Since, window.Bucket, h.HeavySlots))
 			if err != nil {
-				hc.Error = "runner_capacity_read_failed"
+				hc.Error = "runner_capacity_" + sshFailureKind(err)
 			} else if p, err := parseCapacityProbe(string(raw), window.Bucket); err != nil {
 				hc.Error = "runner_capacity_payload_invalid"
 			} else {

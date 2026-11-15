@@ -6,6 +6,7 @@ struct ContentView: View {
     @EnvironmentObject private var store: PressureStore
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var hetzner = HetznerStore()
+    @StateObject private var capacity = RunnerCapacityStore()
     @State private var windowVisible = true
     @State private var selectedSettingsSection: SettingsSection = .general
     @AppStorage(AppPreferenceKey.showDayGate) private var showDayGate = true
@@ -41,6 +42,7 @@ struct ContentView: View {
             // happened to be when the window closed.
             windowVisible = false
             hetzner.stop()
+            capacity.setPaneActive(false)
             store.setWindowOpen(false)
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
@@ -52,6 +54,7 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { _ in
             windowVisible = false
             hetzner.stop()
+            capacity.setPaneActive(false)
             store.setWindowVisible(false)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { _ in
@@ -142,7 +145,7 @@ struct ContentView: View {
         case .diskWrites: DiskWritesView()
         case .storage: StorageView()
         case .work: WorkView()
-        case .hetzner: HetznerView(hetzner: hetzner)
+        case .hetzner: HetznerView(hetzner: hetzner, capacity: capacity)
         case .policy: PolicyView()
         case .monitor: MonitorView()
         case .telemetry: TelemetryView()
@@ -168,7 +171,7 @@ struct ContentView: View {
             if let at = store.selectedSection == .hetzner ? hetzner.ledgerCheckedAt : store.selectedSectionRefreshedAt {
                 Button {
                     Task {
-                        if store.selectedSection == .hetzner { await hetzner.refreshNow() }
+                        if store.selectedSection == .hetzner { async let capacityRead: Void = capacity.refresh(); await hetzner.refreshNow(); await capacityRead }
                         else { await store.refresh(live: false, light: false) }
                     }
                 } label: {
@@ -203,7 +206,7 @@ struct ContentView: View {
             }
             Button {
                 Task {
-                    if store.selectedSection == .hetzner { await hetzner.refreshNow() }
+                    if store.selectedSection == .hetzner { async let capacityRead: Void = capacity.refresh(); await hetzner.refreshNow(); await capacityRead }
                     else { await store.refresh(live: false, light: false) }
                 }
             } label: {
@@ -246,8 +249,9 @@ struct ContentView: View {
     }
 
     private func updateHetznerPolling() {
-        if scenePhase == .active && windowVisible && store.selectedSection == .hetzner { hetzner.start() }
-        else { hetzner.stop() }
+        let active = scenePhase == .active && windowVisible && store.selectedSection == .hetzner
+        if active { hetzner.start() } else { hetzner.stop() }
+        capacity.setPaneActive(active)
     }
 
     private var summaryLine: String {

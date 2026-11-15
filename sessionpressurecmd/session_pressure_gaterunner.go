@@ -51,29 +51,34 @@ func cmdSessionPressureGaterunner(g *Flags, args []string) int {
 	switch args[0] {
 	case "inspect":
 		box := true
-		known := ""
+		known, knownJobs := "", ""
 		for i := 1; i < len(args); i++ {
 			switch args[i] {
 			case "--no-box":
 				box = false
-			case "--known-ledger":
+			case "--known-ledger", "--known-jobs":
+				flag := args[i]
 				i++
 				if i >= len(args) || len(args[i]) != 64 {
-					return sessionPressureError("remote inspect requires a 64-character ledger signature", 2)
+					return sessionPressureError("remote inspect "+flag+" requires a 64-character SHA-256 signature", 2)
 				}
 				if _, e := hex.DecodeString(args[i]); e != nil {
-					return sessionPressureError("invalid ledger signature", 2)
+					return sessionPressureError("invalid "+flag+" signature", 2)
 				}
-				known = args[i]
+				if flag == "--known-ledger" {
+					known = args[i]
+				} else {
+					knownJobs = args[i]
+				}
 			default:
-				return sessionPressureError("remote inspect accepts --no-box and --known-ledger SHA256", 2)
+				return sessionPressureError("remote inspect accepts --no-box, --known-ledger SHA256 and --known-jobs SHA256", 2)
 			}
 		}
 		home, e := os.UserHomeDir()
 		if e != nil {
 			return sessionPressureError(e.Error(), 1)
 		}
-		report := gaterunner.InspectSince(ctx, home, box, known)
+		report := gaterunner.InspectWithCursors(ctx, home, box, known, knownJobs)
 		return emitPressure(g, map[string]any{"ok": true, "action": "remote.inspect", "inspection": report}, fmt.Sprintf("Gate runner: reachable=%t runs=%d jobs=%d local_error=%s box_error=%s\n", report.BoxReachable, len(report.Runs), len(report.Jobs), report.LocalError, report.BoxError), 0)
 	case "capacity":
 		window := "24h"
