@@ -1,7 +1,6 @@
 # Runner capacity and usage view
 
-Owner: claude (Claude Code desktop session, 2026-11-15). Status: implemented;
-installed acceptance recorded below when complete.
+Owner: claude (Claude Code desktop session, 2026-11-15). Status: installed.
 
 ## Request
 
@@ -56,3 +55,24 @@ First live 7-day read: runner-3 ran 3,288 jobs at 4.3% average CPU and
   with an unreachable reserve).
 - Swift: contract test decodes a recorded live payload; store keeps the last
   good report on failure and re-reads on window change.
+
+## Installed acceptance (2026-11-15)
+
+- Source commit `f710c0bda6c9e416501f38831f12c004b1b648c7` (guarded single
+  commit). Bundle cloned on runner-3 under
+  `/srv/build/exports/capacity-f710c0b`, clean HEAD checked, darwin/arm64
+  release built there with Go 1.27.4 and `pressure-darwin-clang`.
+- CLI promoted with `session-pressure-release install --expected-current
+  696fd668c9c6753fe98da5c536f3f54b6f54b43a`; `current` now reads `f710c0b`.
+  Installed `remote capacity` answered for both hosts directly and through
+  `ndev --json session pressure remote capacity`; an unsupported window exits 2.
+- App installed with `make install-headless` (Developer ID signature verified,
+  rollback preserved; archive maintenance pending because the archive disk was
+  not mounted). The running app was not relaunched; it loads the card on its
+  next start.
+- `swift test --filter RunnerCapacity` with `PRESSURE_GATE_RUNNER_CONTRACT_BIN`
+  set to the installed CLI and `PRESSURE_GATE_RUNNER_BOX=1`: 8 tests passed,
+  including the real-CLI read. Full suite before install: 134 tests passed.
+- Offscreen render (SwiftUI ImageRenderer, no window) of the live 7-day report
+  checked alerts, tiles and aligned charts. Segmented controls do not render
+  offscreen; that is a renderer limitation, not an app defect.
