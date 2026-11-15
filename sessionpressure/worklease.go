@@ -218,6 +218,11 @@ type WorkWaiterRecord struct {
 	// Until then the owner waits on host pressure, not capacity, so the
 	// reservation keeps its queue place but does not hold the drain.
 	ResumedAt *time.Time `json:"resumed_at,omitempty"`
+	// Interactive marks a waiter from an attended agent chat. The selector
+	// prefers it over background work that has not earned protection; it
+	// never changes capacity or host admission. Older binaries drop the
+	// field on rewrite, which only loses the preference.
+	Interactive bool `json:"interactive,omitempty"`
 }
 
 // pressureParked reports a pressure reservation whose owner still waits on
@@ -328,6 +333,9 @@ type WorkCoordinator struct {
 	// SchedulingPolicy remains FIFO until replay promotion gates pass. Tests and
 	// an explicit future rollout may select bounded-lookahead-v1.
 	SchedulingPolicy string
+	// Interactive stamps this process's waiters as interactive work. Work
+	// started by a schedule is never interactive.
+	Interactive bool
 }
 
 func NewWorkCoordinator(dir string, limits WorkLimits) *WorkCoordinator {
@@ -1826,6 +1834,7 @@ func (coordinator *WorkCoordinator) RegisterWaiter(ctx context.Context, class Wo
 		OperationID: operationID, Class: class, Weight: weight, PID: coordinator.PID,
 		OwnerIdentity: ownerIdentity, QueuedAt: now, HeartbeatAt: now,
 		OriginKind: stamp.Kind, ScheduleID: stamp.ScheduleID, ScheduleRunID: stamp.ScheduleRunID, AgentKind: stamp.AgentKind,
+		Interactive: coordinator.Interactive && stamp.ScheduleID == "",
 	}
 	status, err := coordinator.withState(ctx, func(state *workState) error {
 		for _, lease := range state.Leases {

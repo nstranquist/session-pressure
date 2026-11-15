@@ -158,6 +158,9 @@ type WorkEvent struct {
 	// operation. It keeps fast-lane and warning-derating populations measurable
 	// and revocable from telemetry alone.
 	AdmissionDecision string `json:"admission_decision,omitempty"`
+	// Interactive marks an operation from an attended agent chat. Such work is
+	// pinned ahead of background work and may use the capped red lane.
+	Interactive bool `json:"interactive,omitempty"`
 	// Terminal events record how long an idle leased group held no weight.
 	IdleParkedMilliseconds int64 `json:"idle_parked_ms,omitempty"`
 	IdleParkCount          int   `json:"idle_park_count,omitempty"`

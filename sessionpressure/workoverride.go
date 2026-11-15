@@ -78,7 +78,64 @@ func (coordinator *WorkCoordinator) selectStateWaiter(state workState, used, cap
 			return selection
 		}
 	}
-	return coordinator.selectWaiter(state.Waiters, used, capacity, now, green, expressLeasedWeight(state.Leases))
+	return preferInteractiveWaiter(state.Waiters, coordinator.selectWaiter(state.Waiters, used, capacity, now, green, expressLeasedWeight(state.Leases)), used, capacity)
+}
+
+// preferInteractiveWaiter lets work from an attended agent chat go ahead of
+// background work. It runs after operator pins and after the ordinary policy,
+// and it changes only who goes next:
+//
+//   - a protected head (drain, bypass limit, bypass age, pressure
+//     reservation, exclusive capacity) keeps its reservation.
+//   - the chosen waiter must fit the remaining weighted capacity; no
+//     overcommit, no green ride-through, no beyond-capacity override.
+//   - parked pressure reservations are skipped.
+//   - passing the head charges it one bypass, so the existing protection
+//     rules (four bypasses, or 30 s after the first) bound how long
+//     background work can be passed.
+func preferInteractiveWaiter(waiters []WorkWaiterRecord, selection workSelection, used, capacity int) workSelection {
+	if selection.ProtectedOperationID != "" {
+		return selection
+	}
+	headIndex := -1
+	scanned := 0
+	for index := range waiters {
+		if waiters[index].pressureParked() {
+			continue
+		}
+		if headIndex < 0 {
+			headIndex = index
+		}
+		if waiters[index].OperationID == selection.SelectedOperationID && waiters[index].Interactive {
+			return selection
+		}
+		if scanned++; scanned > workSelectorScanLimit {
+			break
+		}
+	}
+	if headIndex < 0 {
+		return selection
+	}
+	available := max(0, capacity-used)
+	scanned = 0
+	for index := headIndex; index < len(waiters); index++ {
+		candidate := waiters[index]
+		if candidate.pressureParked() {
+			continue
+		}
+		if scanned++; scanned > workSelectorScanLimit {
+			break
+		}
+		if !candidate.Interactive || candidate.Weight > available {
+			continue
+		}
+		preferred := workSelection{SelectedOperationID: candidate.OperationID, DecisionReason: "interactive_priority"}
+		if index != headIndex {
+			preferred.BypassedIndexes = []int{headIndex}
+		}
+		return preferred
+	}
+	return selection
 }
 
 // selectOverriddenWorkWaiter reports the overridden waiter's selection. The

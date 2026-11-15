@@ -58,6 +58,12 @@ type WorkRunOptions struct {
 	SingleflightWaitMS  int64
 	NoReuse             bool
 	Priority            bool
+	// Interactive marks work from an attended agent chat. The selector puts
+	// it ahead of unprotected background work, and it may use the capped red
+	// lane. It is not an operator pin and never bypasses capacity.
+	// InteractiveSource says what set it (flag or environment).
+	Interactive       bool
+	InteractiveSource string
 	// Placement is where the command may run. auto routes eligible Go work
 	// to the remote runner when remote work is enabled and rejects the rest.
 	// local declares work that is only correct on this Mac (a darwin cgo
@@ -198,9 +204,13 @@ func awaitWorkGate(args []string, gate io.ReadCloser, replace func(string, []str
 	return replace(target, argv, os.Environ())
 }
 
+// workRunGetenv is replaced in tests so parsing stays hermetic.
+var workRunGetenv = os.Getenv
+
 func ParseWorkRunArgs(args []string) (WorkRunOptions, error) {
 	options := WorkRunOptions{Wait: 10 * time.Minute, Progress: WorkProgressHuman, RetentionDays: 14}
 	classSet := false
+	interactiveSet := false
 	for len(args) > 0 {
 		if args[0] == "--" {
 			options.Command = append([]string(nil), args[1:]...)
@@ -241,6 +251,12 @@ func ParseWorkRunArgs(args []string) (WorkRunOptions, error) {
 			args = args[1:]
 		case "--priority":
 			options.Priority = true
+			args = args[1:]
+		case "--interactive":
+			options.Interactive, options.InteractiveSource, interactiveSet = true, interactiveSourceFlag, true
+			args = args[1:]
+		case "--no-interactive":
+			options.Interactive, options.InteractiveSource, interactiveSet = false, "", true
 			args = args[1:]
 		case "--placement", "--placement-reason":
 			if len(args) < 2 {
@@ -311,6 +327,9 @@ func ParseWorkRunArgs(args []string) (WorkRunOptions, error) {
 	}
 	if options.Priority && options.Wait == 0 {
 		return WorkRunOptions{}, errors.New("--priority requires a positive --wait so the request can enter the audited queue")
+	}
+	if !interactiveSet {
+		options.Interactive, options.InteractiveSource = interactiveFromEnv(workRunGetenv)
 	}
 	if err := ValidateWorkload(options.Workload, options.Cohort); err != nil {
 		return WorkRunOptions{}, err
@@ -471,6 +490,12 @@ type workAdmissionGate struct {
 	swapThrashExternal bool
 	fastLaneAdmitted   bool
 	fastLaneRefusal    fastLaneRefusal
+	// interactive marks an operation from an attended agent chat. Only such
+	// operations may use the red lane (workredlight.go).
+	interactive       bool
+	classPeakRSSP90MB func() (int64, bool)
+	redLightAdmitted  bool
+	redLightRefusal   redLightRefusal
 	// Warning derating keeps the coordinator resident while lowering only the
 	// ceiling seen by new admissions. These fields make the decision measurable.
 	warningCapacityAdmitted bool
@@ -683,6 +708,11 @@ func (gate *workAdmissionGate) observe(admission Admission, immediate, ownsLease
 		}
 	}
 	dimension := pressureDimension(admission)
+	if dimension == "memory" || dimension == "swap" {
+		if decision, ok := gate.redLightDecision(admission, dimension, ownsLease); ok {
+			return decision
+		}
+	}
 	if immediate {
 		if dimension == "cpu" {
 			redPercent := gate.cpuRedPercent
@@ -1045,6 +1075,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		event.Class = options.Class
 		event.Workload = options.Workload
 		event.Cohort = options.Cohort
+		event.Interactive = options.Interactive
 		if event.Event == WorkEventQueued && options.RequestedClass != options.Class {
 			event.RequestedClass = options.RequestedClass
 		}
@@ -1219,6 +1250,8 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		},
 		class:                options.Class,
 		classRuntimeP95MS:    newCalibratedClassRuntimeP95(coordinator.Dir, options.Class, coordinator.Now),
+		interactive:          options.Interactive,
+		classPeakRSSP90MB:    newCalibratedClassPeakRSSP90(coordinator.Dir, options.Class, coordinator.Now),
 		freeWeightedCapacity: func() (int, bool) { return coordinatorFreeCapacity(coordinator) },
 		warningCapacityStatus: func() (WorkStatus, bool) {
 			statusCtx, statusCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -1272,6 +1305,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		})
 	}
 	effectiveCapacity := warningEffectiveCapacity(admissionAfterWait, coordinator.Limits)
+	coordinator.Interactive = options.Interactive
 	if options.Wait == 0 {
 		lease, status, err = coordinator.AcquireOperationWithCapacity(waitCtx, options.Class, operationID, effectiveCapacity)
 	} else if options.Priority {

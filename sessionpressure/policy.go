@@ -170,6 +170,16 @@ type WorkLimits struct {
 	// slows every process super-linearly, so serializing memory-heavy work
 	// finishes the same queue sooner. A lone operation is always admitted.
 	SwapThrashCapacity int `json:"swap_thrash_capacity"`
+	// InteractiveRedLightCapacity bounds the interactive red lane: light work
+	// (weight within FastLaneMaxWeight) from an attended agent chat may start
+	// under red memory or swap pressure while all coordinated work, this
+	// operation included, stays within this weighted ceiling. Zero takes the
+	// default (2: two express tests or one express build). Negative disables
+	// the lane. Critical pressure and storage pressure are never bypassed.
+	InteractiveRedLightCapacity int `json:"interactive_red_light_capacity,omitempty"`
+	// InteractiveRedLightMaxPeakRSSMB is the largest measured p90 command peak
+	// RSS for a class to use the red lane. Zero takes the default (1024).
+	InteractiveRedLightMaxPeakRSSMB int `json:"interactive_red_light_max_peak_rss_mb,omitempty"`
 	// SwapThrashExternalReleaseSeconds bounds what an outside thrash can cost
 	// agents. Holding new heavy work only helps when leased work is part of the
 	// memory demand. When leased work RSS stays under SwapThrashAgentSharePercent
@@ -601,6 +611,12 @@ func (policy Policy) Validate() error {
 	}
 	if w.SwapThrashCapacity < 1 || w.SwapThrashCapacity > w.Capacity {
 		return errors.New("work swap_thrash_capacity must be between 1 and capacity")
+	}
+	if w.InteractiveRedLightCapacity > w.Capacity {
+		return errors.New("work interactive_red_light_capacity must not exceed capacity")
+	}
+	if w.InteractiveRedLightMaxPeakRSSMB < 0 {
+		return errors.New("work interactive_red_light_max_peak_rss_mb must not be negative")
 	}
 	if w.SwapThrashExternalReleaseSeconds > 0 && w.SwapThrashExternalReleaseSeconds < minSwapThrashExternalReleaseSeconds {
 		return fmt.Errorf("work swap_thrash_external_release_seconds must be negative (strict) or at least %d", minSwapThrashExternalReleaseSeconds)

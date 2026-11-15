@@ -201,11 +201,17 @@ func (gate *workAdmissionGate) decisionLabel() string {
 	if gate.warningCapacityAdmitted {
 		return WarningCapacityAdmittedDecision
 	}
+	if gate.redLightAdmitted {
+		return RedLightAdmittedDecision
+	}
 	if gate.fastLaneAdmitted {
 		return FastLaneDecisionReason
 	}
 	if gate.fastLaneRefusal != "" {
 		return "fast_lane_refused:" + string(gate.fastLaneRefusal)
+	}
+	if gate.redLightRefusal != "" {
+		return "red_light_refused:" + string(gate.redLightRefusal)
 	}
 	return ""
 }
