@@ -140,3 +140,18 @@ func TestReadMemoryHeadroomFromStores(t *testing.T) {
 		t.Fatalf("headroom: %+v", headroom)
 	}
 }
+
+func TestShadowMemoryProbeReadsTheResidentSample(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	body, _ := json.Marshal(headroomSnapshot(now, 50, LevelNormal))
+	if err := os.WriteFile(filepath.Join(dir, "latest.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	probe := &shadowMemoryProbe{dir: dir, class: WorkClassTest, weight: 2, fastLane: 2}
+	// A storage-warning admission carries no memory snapshot.
+	decision := probe.decide(Admission{Allowed: true, Level: LevelWarning, Source: "storage"}, nil, now)
+	if decision.Label() != "admit:fits" || decision.PredictionSource != predictionFallback || decision.HeadroomMB != 8192-2048 {
+		t.Fatalf("decision: %+v", decision)
+	}
+}

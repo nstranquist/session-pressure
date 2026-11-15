@@ -298,11 +298,12 @@ func (probe *shadowMemoryProbe) decide(admission Admission, leases []WorkLeaseSt
 		history := readPeakRSSHistory(probe.dir, now)
 		probe.history = &history
 	}
-	var snapshot Snapshot
-	if admission.Snapshot != nil {
-		snapshot = *admission.Snapshot
-	}
-	headroom := computeHeadroom(snapshot, admission.Snapshot != nil, leases, *probe.history, now)
+	// The resident sample is the one source, as for `work headroom`. The
+	// admission's own snapshot is not used: a storage-warning admission
+	// (ConfiguredWorkAdmission) carries no memory fields, which made every
+	// live decision no_sample on 2026-11-15.
+	snapshot, haveSample := NewTelemetryStore(probe.dir).ReadLatest()
+	headroom := computeHeadroom(snapshot, haveSample, leases, *probe.history, now)
 	if admission.Level != "" {
 		// The work admission level is authoritative for this operation.
 		headroom.Level = admission.Level
