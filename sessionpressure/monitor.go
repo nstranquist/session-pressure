@@ -538,6 +538,7 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 			}
 			lastSampleError = message
 		} else {
+			swapLatch.projectCalm(&snapshot)
 			memoryLevel := EvaluateMemoryPressure(snapshot, monitor.Policy).Level
 			if memoryLevel == lastMemoryLevel {
 				memoryConsecutive++

@@ -1,0 +1,151 @@
+# Memory attribution and the swap lag release
+
+Owner: claude (side session of the delivery-queue incident). Status:
+2026-11-15, Nico approved `swap_lag_release_minutes: 15` in chat. The code
+ships with the release off by default; the live host policy enables it.
+
+## Incident
+
+On 2026-11-15 the nicos-tools delivery queue landed nothing for more than
+1.5 hours with a backlog of 23. Session-pressure held every gate at memory
+level red. The monitor reasons named only `claude tree 92881 RSS` and total
+swap. The cause was about 6.1 GB of per-session language servers (gopls x25,
+the gopls telemetry sidecar x17, tsserver, pyright) across about 21 Claude
+Code sessions. Relief by hand: `go telemetry off`, SIGTERM of the LSPs, and
+the `gopls-lsp`/`pyright-lsp` plugins disabled. Swap fell from 11.6 GB to
+about 8.1 to 8.3 GB, but the level stayed red or warning.
+
+Verified in this session:
+
+- pid 92881 is `/Applications/Claude.app/Contents/MacOS/Claude`, the desktop
+  app. It is one agent tree that holds every desktop session and their
+  children (47 direct children at 15:14 UTC). Its RSS sum moved between
+  3964 and 5124 MB from 15:03 to 15:25 UTC. The tree rung (warning 3072,
+  red 5120) therefore measures the sum of all desktop sessions, not one
+  runaway session. That tree warning is the "live warning" that turned
+  sticky swap into red.
+- Before relief, `top_host_consumers` could not show the LSPs: tsserver and
+  pyright are `node`, and all of them sit inside the agent tree.
+
+## Change 1: memory families (attribution)
+
+`Snapshot.memory_families` (latest.json and state transitions) groups every
+process into a closed family set: `lsp`, `agent_host`, `build_test`,
+`browser`, `other`. Each family has process count, RSS sum, the RSS inside
+agent trees, `reclaimable_mb` and a `relief` hint:
+
+| family | relief | reclaimable |
+|---|---|---|
+| lsp | restart_on_demand | all of it |
+| build_test | finishes_on_its_own | 0 |
+| agent_host | close_idle_sessions | 0 |
+| browser | owner_only | 0 |
+
+Classification is privacy safe. Node processes use only the basename of the
+first positional argument, which the darwin sampler already reads for agent
+identity, so there is no new syscall. The gopls telemetry sidecar is a gopls
+whose parent is gopls. No PID, path, or argument is projected.
+
+Each agent tree also carries `lsp_process_count` and `lsp_rss_sum_mb`, and the
+tree reason names that share, for example
+`claude tree 92881 RSS sum 6000 MB >= red 5120 MB (language servers 5800 MB in 50 processes)`.
+
+The heartbeat carries `memory_families` as one compact string
+(`lsp=5800/5800,agent_host=2906/0,build_test=900/0`: RSS/reclaimable MB). The
+largest heartbeat was 946 bytes against the 1024-byte reserve before this
+change. About 60 more bytes makes the projection use the observed size; the
+transition snapshot stays under its 8 KiB reserve.
+
+Commit-delivery (separate repo) reads the families from latest.json:
+
+- `delivery doctor` adds `QUEUE_HELD_BY_MEMORY` beside `QUEUE_NOT_LANDING`
+  when the resident blocks heavy work on memory. It names the top three
+  families, the reclaimable MB, and the relief for the largest reclaimable
+  family.
+- status `next_actions` adds `relieve_memory` with the same evidence.
+- A memory hold's detail and its telemetry attributes add
+  `memory_top_family`, `memory_top_family_mb` and `memory_reclaimable_mb`.
+
+## Change 2: swap lag release (off until approved)
+
+### Evidence from telemetry (2026-11-01 to 2026-11-15)
+
+Reproduce with `go run ./scripts/swap-lag-history`.
+
+- Records whose primary reason is the sticky swap rung at red or critical
+  (run at 15:30 UTC): 13, all on 2026-11-15 between 13:31 and 15:24 UTC. The
+  thrash latch was set for 8 of them, and the longest calm before any of the
+  other 5 was 1 min 17 s.
+  **The 2026-11-15 hold was real thrash, not swap lag.** The swap-out bursts
+  after relief reached 40 to 254 MB/s about once a minute, and swap used rose
+  again from 7.9 to 9.8 GB between 15:08 and 15:15.
+- Calm gaps between thrash episodes at swap >= 8192 MB: n=128, p25 27 s,
+  p50 83 s, p75 5 min 13 s, p90 25 min 18 s, p95 49 min 56 s.
+- What a release after W calm minutes would have released at swap >= 8 GB:
+
+| W | gaps released | minutes released | relapse into thrash within 10 min |
+|---|---|---|---|
+| 5 min | 32 | 1622 | 16 (50%) |
+| 10 min | 21 | 1493 | 7 (33%) |
+| 15 min | 16 | 1400 | 3 (19%) |
+| 20 min | 14 | 1326 | 4 (29%) |
+| 30 min | 10 | 1202 | 1 (10%) |
+
+Limit of this evidence: heartbeats carry only the primary reason every
+5 minutes, and state transitions carry no swap-out rate. The calm-gap table
+comes from thrash transitions, which are exact. From today, heartbeats carry
+`swap_calm_seconds` and `swap_lag_released`, so the next review can measure
+the release directly.
+
+### Policy (implemented, default off)
+
+`thresholds.swap_lag_release_minutes` (0 = off, else at least 5) and
+`thresholds.swap_lag_max_growth_mb` (default 256). The sticky swap rung does
+not escalate a live warning to red when all of these hold:
+
+1. live swap I/O is available and the thrash latch is not set;
+2. swap-out is at or under the release rate (16 MB/s) now, and has been for
+   the whole window (the resident's calm run, measured at its own sample
+   time; admission samplers project it and never extend it);
+3. swap used has not grown more than 256 MB since the calm run began;
+4. free memory is above the warning line (25%);
+5. the live level is exactly warning.
+
+Every thrash protection stays: live red (free, tree or agent total) still
+escalates to critical, swap-out thrash still warns and latches the derate,
+and a band sample (16 to 32 MB/s) restarts the window. A resident restart
+loses the calm run, which only delays a release. The worker honours the
+resident's `swap_lag_released` verdict because its pinned library (v0.5.2)
+re-evaluates without it.
+
+### Proposal for Nico
+
+Enable `swap_lag_release_minutes: 15` in `~/.nicos-dev/session-pressure/policy.json`.
+15 minutes is the shortest window whose relapse rate (19%) falls under one in
+five, and it keeps 93% of the releasable calm minutes of the 5-minute window.
+A relapse costs little: the thrash latch re-enters on two hot samples
+and derates heavy work, and the first band or hot sample restarts the window.
+
+The larger finding is the tree rung. Today one desktop app tree sums all its
+sessions, so 21 sessions at about 200 MB each pass the 3072 MB warning with no
+runaway. That is a separate threshold question (per-session trees inside the
+desktop app, or a tree rung that excludes `lsp`), not part of this change.
+
+## Proof
+
+- session-pressure: `go test ./sessionpressure/` targeted run, see the
+  journal entry of this session. Darwin vet: `GOOS=darwin go vet ./sessionpressure/`.
+- commit-delivery: `go test ./internal/commitdelivery/ -run 'MemoryHold|HostPressure|...'`.
+
+## Open
+
+- [x] Nico approved `swap_lag_release_minutes: 15` (2026-11-15, in chat).
+      Set in `~/.nicos-dev/session-pressure/policy.json` (backup
+      `policy.json.bak-20261115-pre-swaplag`). The installed resident ignores
+      the field until the new release is installed.
+- [ ] Install the release, then check that heartbeats carry
+      `swap_calm_seconds` and that a calm 15-minute window logs
+      `swap_lag_released`.
+- [ ] After install, read the first memory-red `latest.json` and check that
+      `memory_families` names the LSPs (live dogfood).
+- [ ] Tree-rung design for the desktop app (separate decision).

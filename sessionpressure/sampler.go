@@ -339,6 +339,8 @@ func (sampler *Sampler) Sample(ctx context.Context, policy Policy) (Snapshot, er
 	allTrees := buildAgentTrees(processes)
 	sampler.recordInventoryPressure(allTrees)
 	topHostConsumers := buildHostConsumers(processes, allTrees)
+	memoryFamilies, familyByPID := classifyMemoryFamilies(processes, allTrees)
+	annotateTreeLSP(allTrees, processes, familyByPID)
 	topTrees := allTrees
 	if len(topTrees) > maxProjectedAgentTrees {
 		topTrees = topTrees[:maxProjectedAgentTrees]
@@ -368,6 +370,7 @@ func (sampler *Sampler) Sample(ctx context.Context, policy Policy) (Snapshot, er
 		AgentTreeCount:             len(allTrees),
 		MemoryMomentum:             MemoryMomentumUnknown,
 		TopHostConsumers:           topHostConsumers,
+		MemoryFamilies:             memoryFamilies,
 		TopAgentTrees:              topTrees,
 		ProcessInventoryAvailable:  len(processes) > 0,
 		ProcessInventoryFresh:      inventoryFresh,
@@ -1043,6 +1046,8 @@ func (sampler *Sampler) SampleHost(ctx context.Context, policy Policy, latest *S
 			snapshot.SwapThrashLatched = latest.SwapThrashLatched
 			snapshot.SwapThrashCause = latest.SwapThrashCause
 			snapshot.SwapThrashSince = latest.SwapThrashSince
+			snapshot.SwapCalmSeconds = latest.SwapCalmSeconds
+			snapshot.SwapCalmStartUsedMB = latest.SwapCalmStartUsedMB
 		}
 	}
 	if latest != nil && latest.ProcessInventoryAvailable {
@@ -1071,6 +1076,7 @@ func (sampler *Sampler) SampleHost(ctx context.Context, policy Policy, latest *S
 			snapshot.MinutesToMemoryRed = latest.MinutesToMemoryRed
 			snapshot.MemoryMomentumSampleCount = latest.MemoryMomentumSampleCount
 			snapshot.TopHostConsumers = latest.TopHostConsumers
+			snapshot.MemoryFamilies = latest.MemoryFamilies
 			snapshot.TopAgentTrees = latest.TopAgentTrees
 			snapshot.ProcessInventoryAvailable = true
 			snapshot.ProcessInventoryCapturedAt = capturedAt

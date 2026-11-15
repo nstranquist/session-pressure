@@ -130,6 +130,10 @@ type SwapThrashTransition struct {
 type swapThrashLatch struct {
 	latched   bool
 	hot, calm int
+	// calmSince starts the current run of samples at or under the release
+	// rate; calmStartMB is swap used then. They feed the swap lag release.
+	calmSince   time.Time
+	calmStartMB float64
 
 	// Episode attribution. since is latch entry; quietSince starts the current
 	// run of samples with leased RSS under the agent share. proven is sticky
@@ -172,6 +176,23 @@ func (latch *swapThrashLatch) resume(latest Snapshot, now time.Time) {
 	}
 }
 
+// projectCalm publishes the calm run as of this sample. The monitor also
+// calls it before the latch observes a new sample. That early view still
+// counts the run from the previous calm sample, but the release also needs
+// the current swap-out at or under the release rate, so a hot sample can
+// never release.
+func (latch *swapThrashLatch) projectCalm(snapshot *Snapshot) {
+	if latch == nil || snapshot == nil {
+		return
+	}
+	snapshot.SwapCalmSeconds, snapshot.SwapCalmStartUsedMB = 0, 0
+	if latch.calmSince.IsZero() || !snapshot.SwapIOAvailable {
+		return
+	}
+	snapshot.SwapCalmSeconds = max(0, snapshot.Timestamp.Sub(latch.calmSince).Seconds())
+	snapshot.SwapCalmStartUsedMB = latch.calmStartMB
+}
+
 func (latch *swapThrashLatch) observe(snapshot *Snapshot, thresholds Thresholds) {
 	if latch == nil || snapshot == nil {
 		return
@@ -181,16 +202,23 @@ func (latch *swapThrashLatch) observe(snapshot *Snapshot, thresholds Thresholds)
 		// open for throughput; the memory floors remain independent.
 		*latch = swapThrashLatch{}
 		snapshot.SwapThrashLatched = false
+		latch.projectCalm(snapshot)
 		return
 	}
 	switch rate := snapshot.SwapOutMBPerSecond; {
 	case rate >= thresholds.SwapOutThrashMBPerSecond:
 		latch.hot, latch.calm = latch.hot+1, 0
+		latch.calmSince, latch.calmStartMB = time.Time{}, 0
 	case rate <= thresholds.SwapOutReleaseMBPerSecond:
+		if latch.calm == 0 || latch.calmSince.IsZero() {
+			latch.calmSince, latch.calmStartMB = snapshot.Timestamp, snapshot.SwapUsedMB
+		}
 		latch.hot, latch.calm = 0, latch.calm+1
 	default:
 		latch.hot, latch.calm = 0, 0
+		latch.calmSince, latch.calmStartMB = time.Time{}, 0
 	}
+	latch.projectCalm(snapshot)
 	if !latch.latched && latch.hot >= swapThrashEnterSamples {
 		latch.latched = true
 	}
@@ -237,8 +265,8 @@ func (latch *swapThrashLatch) advance(snapshot *Snapshot, thresholds Thresholds,
 			EpisodeSeconds: max(0, now.Sub(before.since).Seconds()), ExternalSeconds: max(0, externalTotal.Seconds()),
 		}
 		latch.fillEvidence(&transition, snapshot, limits)
-		hot, calm := latch.hot, latch.calm
-		*latch = swapThrashLatch{hot: hot, calm: calm}
+		hot, calm, calmSince, calmStartMB := latch.hot, latch.calm, latch.calmSince, latch.calmStartMB
+		*latch = swapThrashLatch{hot: hot, calm: calm, calmSince: calmSince, calmStartMB: calmStartMB}
 		if before.proven {
 			latch.lastExternalRelease = now
 		}

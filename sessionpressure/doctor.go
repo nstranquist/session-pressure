@@ -165,6 +165,7 @@ func BuildPressureDoctor(in PressureDoctorInput) PressureDoctor {
 		doc.Fixes = append(doc.Fixes, "fix ~/.nicos-dev/session-pressure/agent-identity.json or remove it; session-pressure identity show")
 	}
 	doc.Warnings = append(doc.Warnings, swapThrashDoctorWarnings(in)...)
+	doc.Warnings = append(doc.Warnings, memoryFamilyDoctorWarnings(in)...)
 	doc.SwapDerate = in.SwapDerate
 	for _, surface := range in.Coverage.Surfaces {
 		if surface.ID == "agent_identity" && surface.State == CoverageAttention {
@@ -317,6 +318,22 @@ func swapThrashDoctorWarnings(in PressureDoctorInput) []string {
 		warnings = append(warnings, "swap derate over budget (24h): "+in.SwapDerate.Advice)
 	}
 	return warnings
+}
+
+// memoryFamilyDoctorWarnings names what holds memory when memory blocks new
+// work, so the reader frees the largest reclaimable family first.
+func memoryFamilyDoctorWarnings(in PressureDoctorInput) []string {
+	if !in.HasLatest || len(in.Latest.MemoryFamilies) == 0 {
+		return nil
+	}
+	if !EvaluateMemoryPressure(in.Latest, in.Policy).Level.AtLeast(in.Policy.BlockNewAt) {
+		return nil
+	}
+	warning := "memory blocks new work; top memory families: " + memoryFamiliesText(in.Latest.MemoryFamilies, 3)
+	if top, ok := TopReclaimableMemoryFamily(in.Latest.MemoryFamilies); ok {
+		warning += fmt.Sprintf("; %.0f MB of %s restarts on demand and is safe to stop", top.ReclaimableMB, top.Family)
+	}
+	return []string{warning}
 }
 
 func topNonAgentMemoryConsumers(consumers []HostConsumer, limit int) string {

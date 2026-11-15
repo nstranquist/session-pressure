@@ -190,7 +190,7 @@ func nativeProcesses(ctx context.Context) ([]Process, string, error) {
 		} else if row.Eproc.Xrssize > 0 {
 			rssKB = int64(row.Eproc.Xrssize) * pageKB
 		}
-		agent, executable, sessionID := darwinAgentIdentity(pid, comm, argsReader, identityCatalog)
+		agent, executable, sessionID, scriptFamily, scriptMember := darwinAgentIdentity(pid, comm, argsReader, identityCatalog)
 		if executable == "" {
 			executable = privacySafeExecutable(comm)
 		}
@@ -202,6 +202,7 @@ func nativeProcesses(ctx context.Context) ([]Process, string, error) {
 			CPUPercent:     float64(row.Proc.P_pctcpu) * 100 / darwinCPUScale,
 			ElapsedSeconds: elapsed, Command: comm,
 			Agent: agent, Executable: executable, SessionID: sessionID,
+			ScriptFamily: scriptFamily, ScriptMember: scriptMember,
 			CPUTotalNS: cpuTotalNS, CPUTotalValid: cpuTotalValid, CPUStartID: cpuStartID,
 			StartedAtNS: started.UnixNano(), DiskWriteBytes: diskWriteBytes, DiskWriteValid: diskWriteValid,
 		})
@@ -286,7 +287,10 @@ func darwinCString(value []byte) string {
 	return string(value)
 }
 
-func darwinAgentIdentity(pid int, comm string, argsReader *darwinProcessArgsReader, catalog *AgentIdentityCatalog) (agent, executable, sessionID string) {
+// darwinAgentIdentity also reports the memory family of a node process from
+// the argv it already reads for agent identity, so tsserver and pyright are not
+// one anonymous "node" bucket. Only the entry script basename is kept.
+func darwinAgentIdentity(pid int, comm string, argsReader *darwinProcessArgsReader, catalog *AgentIdentityCatalog) (agent, executable, sessionID, scriptFamily, scriptMember string) {
 	if catalog == nil {
 		catalog = ActiveAgentIdentityCatalog()
 	}
@@ -296,26 +300,31 @@ func darwinAgentIdentity(pid int, comm string, argsReader *darwinProcessArgsRead
 		if err != nil {
 			args = nil
 		}
-		return agent, executable, sessionIDFromArgs(args)
+		return agent, executable, sessionIDFromArgs(args), "", ""
 	}
 	if lower == "node" {
 		args, err := argsReader.args(pid)
 		if err != nil {
-			return "", "", ""
+			return "", "", "", "", ""
 		}
 		agent, executable, sessionID = darwinAgentIdentityFromNodeArgs(catalog, args)
-		return agent, executable, sessionID
+		if agent == "" {
+			if family, member, ok := classifyNodeScript(nodeEntryScript(args)); ok {
+				scriptFamily, scriptMember = family, member
+			}
+		}
+		return agent, executable, sessionID, scriptFamily, scriptMember
 	}
 	// Claude SemVer p_comm / Grok versioned p_comm: resolve path only for those
 	// shapes so we do not pay one path syscall per process.
 	if catalog.NeedsPathProbe(lower) {
 		home, _ := os.UserHomeDir()
 		if agent, executable, ok := catalog.MatchPath(darwinProcessPath(pid), home); ok {
-			return agent, executable, ""
+			return agent, executable, "", "", ""
 		}
-		return "", "", ""
+		return "", "", "", "", ""
 	}
-	return "", "", ""
+	return "", "", "", "", ""
 }
 
 func darwinProcessPath(pid int) string {

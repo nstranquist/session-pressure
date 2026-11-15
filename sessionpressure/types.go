@@ -97,9 +97,14 @@ type Process struct {
 
 	// Native samplers populate identity directly so macOS does not need to
 	// materialize every process's potentially prompt-bearing command line.
-	Agent          string `json:"-"`
-	Executable     string `json:"-"`
-	SessionID      string `json:"-"`
+	Agent      string `json:"-"`
+	Executable string `json:"-"`
+	SessionID  string `json:"-"`
+	// ScriptFamily and ScriptMember classify a node process by its entry
+	// script basename (tsserver, pyright-langserver). The basename is kept
+	// in memory only for the memory-family reduction and is never persisted.
+	ScriptFamily   string `json:"-"`
+	ScriptMember   string `json:"-"`
 	ElapsedSeconds int64  `json:"-"`
 	CPUTotalNS     uint64 `json:"-"`
 	CPUTotalValid  bool   `json:"-"`
@@ -134,7 +139,10 @@ type AgentTree struct {
 	QuiescentSamples int           `json:"quiescent_samples,omitempty"`
 	SemanticState    SemanticState `json:"semantic_state,omitempty"`
 	SemanticStateAt  time.Time     `json:"semantic_state_at,omitempty,omitzero"`
-	PIDs             []int         `json:"-"`
+	// LSP* is the language-server share of this tree (memory families).
+	LSPProcessCount int     `json:"lsp_process_count,omitempty"`
+	LSPRSSSumMB     float64 `json:"lsp_rss_sum_mb,omitempty"`
+	PIDs            []int   `json:"-"`
 }
 
 // HostConsumer is a privacy-safe whole-host attribution bucket. It groups
@@ -220,7 +228,16 @@ type Snapshot struct {
 	// agents, unattributed, or external. Only external lifts the derate.
 	SwapThrashCause string `json:"swap_thrash_cause,omitempty"`
 	// SwapThrashSince is the latch entry time of the current episode.
-	SwapThrashSince            time.Time               `json:"swap_thrash_since,omitzero"`
+	SwapThrashSince time.Time `json:"swap_thrash_since,omitzero"`
+	// SwapCalmSeconds is how long swap-out has stayed at or under the release
+	// rate, measured by the resident at its own sample time. Admission samplers
+	// project it unchanged and never extend it by their own clock.
+	// SwapCalmStartUsedMB is swap used when that calm run began.
+	SwapCalmSeconds     float64 `json:"swap_calm_seconds,omitempty"`
+	SwapCalmStartUsedMB float64 `json:"swap_calm_start_used_mb,omitempty"`
+	// SwapLagReleased reports that sticky swap use did not escalate a live
+	// warning to red because the calm window held (Thresholds.SwapLagReleaseMinutes).
+	SwapLagReleased            bool                    `json:"swap_lag_released,omitempty"`
 	LogicalCPUCount            int                     `json:"logical_cpu_count"`
 	HostCPUPercent             float64                 `json:"host_cpu_percent"`
 	HostCPUAvailable           bool                    `json:"host_cpu_available"`
@@ -292,22 +309,25 @@ type Snapshot struct {
 	GuardBudgetOK              bool               `json:"guard_budget_ok"`
 	GuardBudgetReasons         []string           `json:"guard_budget_reasons,omitempty"`
 	TopHostConsumers           []HostConsumer     `json:"top_host_consumers"`
-	TopAgentTrees              []AgentTree        `json:"top_agent_trees"`
-	PolicySource               string             `json:"policy_source,omitempty"`
-	ConsecutiveSamples         int                `json:"consecutive_samples,omitempty"`
-	MemoryConsecutiveSamples   int                `json:"memory_consecutive_samples,omitempty"`
-	ResourceCleanupError       string             `json:"resource_cleanup_error,omitempty"`
-	GuardSampleErrors          int                `json:"guard_sample_errors,omitempty"`
-	ResourceCleanupFailures    int                `json:"resource_cleanup_failures,omitempty"`
-	MaintenanceError           string             `json:"maintenance_error,omitempty"`
-	ResourceCleanupStatus      string             `json:"resource_cleanup_status,omitempty"`
-	ResourceCleanupExecutedAt  time.Time          `json:"resource_cleanup_control_executed_at,omitempty,omitzero"`
-	ResourceCleanupDurationMS  float64            `json:"resource_cleanup_control_duration_ms,omitempty"`
-	ResourceCleanupMaxRSSMB    float64            `json:"resource_cleanup_control_max_rss_mb,omitempty"`
-	ResidentStarts24h          int                `json:"resident_starts_24h,omitempty"`
-	Storage                    StorageSnapshot    `json:"storage"`
-	DiskWrite                  *DiskWriteSummary  `json:"disk_write,omitempty"`
-	DiskWriteWriters           []DiskWriter       `json:"disk_write_writers,omitempty"`
+	// MemoryFamilies attributes resident memory to process families (LSP
+	// servers, agent hosts, build/test children, browsers). Diagnostic only.
+	MemoryFamilies            []MemoryFamily    `json:"memory_families,omitempty"`
+	TopAgentTrees             []AgentTree       `json:"top_agent_trees"`
+	PolicySource              string            `json:"policy_source,omitempty"`
+	ConsecutiveSamples        int               `json:"consecutive_samples,omitempty"`
+	MemoryConsecutiveSamples  int               `json:"memory_consecutive_samples,omitempty"`
+	ResourceCleanupError      string            `json:"resource_cleanup_error,omitempty"`
+	GuardSampleErrors         int               `json:"guard_sample_errors,omitempty"`
+	ResourceCleanupFailures   int               `json:"resource_cleanup_failures,omitempty"`
+	MaintenanceError          string            `json:"maintenance_error,omitempty"`
+	ResourceCleanupStatus     string            `json:"resource_cleanup_status,omitempty"`
+	ResourceCleanupExecutedAt time.Time         `json:"resource_cleanup_control_executed_at,omitempty,omitzero"`
+	ResourceCleanupDurationMS float64           `json:"resource_cleanup_control_duration_ms,omitempty"`
+	ResourceCleanupMaxRSSMB   float64           `json:"resource_cleanup_control_max_rss_mb,omitempty"`
+	ResidentStarts24h         int               `json:"resident_starts_24h,omitempty"`
+	Storage                   StorageSnapshot   `json:"storage"`
+	DiskWrite                 *DiskWriteSummary `json:"disk_write,omitempty"`
+	DiskWriteWriters          []DiskWriter      `json:"disk_write_writers,omitempty"`
 
 	// Internal cumulative counters let the resident account for CPU used by
 	// persistence, pruning, and action bookkeeping between samples. They are
@@ -562,6 +582,51 @@ func EvaluateMemoryPressure(snapshot Snapshot, policy Policy) Snapshot {
 	return evaluate(snapshot, policy, false)
 }
 
+// swapLagReleases reports whether sticky swap use may stop escalating a live
+// warning to red. macOS drains swap slowly after the cause is gone: on
+// 2026-11-15 swap stayed near the 8192 MB red line after ~6 GB was freed.
+// Every real thrash protection stays: the release needs live swap I/O, no
+// thrash latch, swap-out at or under the release rate for the whole window,
+// swap used not growing since the window began, free memory above the
+// warning line, and a live level of exactly warning. Live red (free, tree or
+// agent) still escalates to critical, and live free/tree/agent breaches keep
+// their own levels. Off (0) unless policy sets SwapLagReleaseMinutes.
+func swapLagReleases(snapshot Snapshot, policy Policy, liveMemoryLevel Level) bool {
+	t := policy.Thresholds
+	if t.SwapLagReleaseMinutes <= 0 || liveMemoryLevel != LevelWarning {
+		return false
+	}
+	if !snapshot.SwapIOAvailable || snapshot.SwapThrashLatched {
+		return false
+	}
+	if snapshot.SwapOutMBPerSecond > t.SwapOutReleaseMBPerSecond {
+		return false
+	}
+	if snapshot.SwapCalmSeconds < t.SwapLagReleaseMinutes*60 || snapshot.SwapCalmStartUsedMB <= 0 {
+		return false
+	}
+	if snapshot.SwapUsedMB > snapshot.SwapCalmStartUsedMB+swapLagMaxGrowthMB(t) {
+		return false
+	}
+	return float64(snapshot.FreePercent) > t.FreeWarningPercent
+}
+
+func swapLagMaxGrowthMB(t Thresholds) float64 {
+	if t.SwapLagMaxGrowthMB > 0 {
+		return t.SwapLagMaxGrowthMB
+	}
+	return defaultSwapLagMaxGrowthMB
+}
+
+// treeLSPSuffix names the language-server share of a breaching tree, the
+// part a restart_on_demand stop frees without losing agent work.
+func treeLSPSuffix(tree AgentTree) string {
+	if tree.LSPRSSSumMB < 1 || tree.LSPProcessCount == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (language servers %.0f MB in %d processes)", tree.LSPRSSSumMB, tree.LSPProcessCount)
+}
+
 func evaluate(snapshot Snapshot, policy Policy, includeCPU bool) Snapshot {
 	level := LevelNormal
 	type breach struct {
@@ -597,11 +662,11 @@ func evaluate(snapshot Snapshot, policy Policy, includeCPU bool) Snapshot {
 		top := snapshot.TopAgentTrees[0]
 		switch {
 		case top.RSSSumMB >= policy.Thresholds.TreeCriticalMB:
-			add(LevelCritical, "%s tree %d RSS sum %.0f MB >= critical %.0f MB", top.Agent, top.RootPID, top.RSSSumMB, policy.Thresholds.TreeCriticalMB)
+			add(LevelCritical, "%s tree %d RSS sum %.0f MB >= critical %.0f MB%s", top.Agent, top.RootPID, top.RSSSumMB, policy.Thresholds.TreeCriticalMB, treeLSPSuffix(top))
 		case top.RSSSumMB >= policy.Thresholds.TreeRedMB:
-			add(LevelRed, "%s tree %d RSS sum %.0f MB >= red %.0f MB", top.Agent, top.RootPID, top.RSSSumMB, policy.Thresholds.TreeRedMB)
+			add(LevelRed, "%s tree %d RSS sum %.0f MB >= red %.0f MB%s", top.Agent, top.RootPID, top.RSSSumMB, policy.Thresholds.TreeRedMB, treeLSPSuffix(top))
 		case top.RSSSumMB >= policy.Thresholds.TreeWarningMB:
-			add(LevelWarning, "%s tree %d RSS sum %.0f MB >= warning %.0f MB", top.Agent, top.RootPID, top.RSSSumMB, policy.Thresholds.TreeWarningMB)
+			add(LevelWarning, "%s tree %d RSS sum %.0f MB >= warning %.0f MB%s", top.Agent, top.RootPID, top.RSSSumMB, policy.Thresholds.TreeWarningMB, treeLSPSuffix(top))
 		}
 	}
 
@@ -614,9 +679,13 @@ func evaluate(snapshot Snapshot, policy Policy, includeCPU bool) Snapshot {
 	// prevents a busy build on a host with historical swap from escalating to
 	// critical and activating memory-oriented automatic tree shedding.
 	liveMemoryLevel := level
+	snapshot.SwapLagReleased = false
 	switch {
 	case snapshot.SwapUsedMB >= policy.Thresholds.SwapCriticalMB && liveMemoryLevel.AtLeast(LevelRed):
 		add(LevelCritical, "swap %.0f MB >= critical %.0f MB with live %s pressure", snapshot.SwapUsedMB, policy.Thresholds.SwapCriticalMB, liveMemoryLevel)
+	case snapshot.SwapUsedMB >= policy.Thresholds.SwapRedMB && liveMemoryLevel.AtLeast(LevelWarning) && swapLagReleases(snapshot, policy, liveMemoryLevel):
+		snapshot.SwapLagReleased = true
+		add(LevelWarning, "swap %.0f MB >= red %.0f MB held at warning: swap-out calm for %.0f min and swap not growing (lag release)", snapshot.SwapUsedMB, policy.Thresholds.SwapRedMB, snapshot.SwapCalmSeconds/60)
 	case snapshot.SwapUsedMB >= policy.Thresholds.SwapRedMB && liveMemoryLevel.AtLeast(LevelWarning):
 		add(LevelRed, "swap %.0f MB >= red %.0f MB with live %s pressure", snapshot.SwapUsedMB, policy.Thresholds.SwapRedMB, liveMemoryLevel)
 	case snapshot.SwapUsedMB >= policy.Thresholds.SwapWarningMB && liveMemoryLevel.AtLeast(LevelWarning):

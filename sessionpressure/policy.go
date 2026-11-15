@@ -51,12 +51,18 @@ type Thresholds struct {
 	SwapOutWarningMBPerSecond float64 `json:"swap_out_warning_mb_per_s"`
 	SwapOutThrashMBPerSecond  float64 `json:"swap_out_thrash_mb_per_s"`
 	SwapOutReleaseMBPerSecond float64 `json:"swap_out_release_mb_per_s"`
-	TreeWarningMB             float64 `json:"tree_warning_mb"`
-	TreeRedMB                 float64 `json:"tree_red_mb"`
-	TreeCriticalMB            float64 `json:"tree_critical_mb"`
-	AgentTotalWarningMB       float64 `json:"agent_total_warning_mb"`
-	AgentTotalRedMB           float64 `json:"agent_total_red_mb"`
-	AgentTotalCriticalMB      float64 `json:"agent_total_critical_mb"`
+	// SwapLagReleaseMinutes stops sticky swap use from escalating a live
+	// warning to red after swap-out has stayed at or under the release rate
+	// for this long with swap not growing (see swapLagReleases). 0 is off.
+	// SwapLagMaxGrowthMB is the swap growth the window tolerates (default 256).
+	SwapLagReleaseMinutes float64 `json:"swap_lag_release_minutes,omitempty"`
+	SwapLagMaxGrowthMB    float64 `json:"swap_lag_max_growth_mb,omitempty"`
+	TreeWarningMB         float64 `json:"tree_warning_mb"`
+	TreeRedMB             float64 `json:"tree_red_mb"`
+	TreeCriticalMB        float64 `json:"tree_critical_mb"`
+	AgentTotalWarningMB   float64 `json:"agent_total_warning_mb"`
+	AgentTotalRedMB       float64 `json:"agent_total_red_mb"`
+	AgentTotalCriticalMB  float64 `json:"agent_total_critical_mb"`
 }
 
 // StoragePolicy is independent from memory-oriented admission and shedding.
@@ -237,6 +243,15 @@ const (
 	// deliberately far above any shipped revision so no future increment can
 	// silently reclaim a hand-tuned policy.
 	fastLaneDefaultsOperatorRevision = 1_000_000
+)
+
+const (
+	// minSwapLagReleaseMinutes keeps the lag release longer than a storm lull.
+	// At swap >= 8 GB, 128 calm gaps between thrash episodes (2026-11-09 to
+	// 2026-11-15, scripts/swap-lag-history) had p50 83 s and p75 313 s.
+	minSwapLagReleaseMinutes = 5
+	// defaultSwapLagMaxGrowthMB tolerates counter noise, not a new storm.
+	defaultSwapLagMaxGrowthMB = 256
 )
 
 func defaultWorkLimits(logicalCPUCount int) WorkLimits {
@@ -671,6 +686,12 @@ func (policy Policy) Validate() error {
 	}
 	if !(0 < t.SwapOutReleaseMBPerSecond && t.SwapOutReleaseMBPerSecond < t.SwapOutThrashMBPerSecond) {
 		return errors.New("swap-out rate thresholds must satisfy 0 < release < thrash")
+	}
+	if t.SwapLagReleaseMinutes < 0 || (t.SwapLagReleaseMinutes > 0 && t.SwapLagReleaseMinutes < minSwapLagReleaseMinutes) {
+		return fmt.Errorf("swap_lag_release_minutes must be 0 (off) or at least %d", minSwapLagReleaseMinutes)
+	}
+	if t.SwapLagMaxGrowthMB < 0 {
+		return errors.New("swap_lag_max_growth_mb must not be negative")
 	}
 	if !(t.TreeWarningMB < t.TreeRedMB && t.TreeRedMB < t.TreeCriticalMB) {
 		return errors.New("tree thresholds must satisfy warning < red < critical")

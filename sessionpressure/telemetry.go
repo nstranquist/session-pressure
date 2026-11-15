@@ -37,16 +37,21 @@ type TelemetryEvent struct {
 // projection (counts only). They are omitted when daily telemetry budget is
 // exhausted (FitsTelemetryBudget).
 type TelemetrySnapshotSummary struct {
-	SchemaVersion              int            `json:"schema_version"`
-	Timestamp                  time.Time      `json:"timestamp"`
-	Level                      Level          `json:"level"`
-	PrimaryReason              string         `json:"primary_reason,omitempty"`
-	FreePercent                int            `json:"free_percent"`
-	SwapUsedMB                 float64        `json:"swap_used_mb"`
-	SwapInMBPerSecond          float64        `json:"swap_in_mb_per_s,omitempty"`
-	SwapOutMBPerSecond         float64        `json:"swap_out_mb_per_s,omitempty"`
-	SwapThrashLatched          bool           `json:"swap_thrash_latched,omitempty"`
-	SwapThrashCause            string         `json:"swap_thrash_cause,omitempty"`
+	SchemaVersion      int       `json:"schema_version"`
+	Timestamp          time.Time `json:"timestamp"`
+	Level              Level     `json:"level"`
+	PrimaryReason      string    `json:"primary_reason,omitempty"`
+	FreePercent        int       `json:"free_percent"`
+	SwapUsedMB         float64   `json:"swap_used_mb"`
+	SwapInMBPerSecond  float64   `json:"swap_in_mb_per_s,omitempty"`
+	SwapOutMBPerSecond float64   `json:"swap_out_mb_per_s,omitempty"`
+	SwapThrashLatched  bool      `json:"swap_thrash_latched,omitempty"`
+	SwapThrashCause    string    `json:"swap_thrash_cause,omitempty"`
+	SwapCalmSeconds    float64   `json:"swap_calm_seconds,omitempty"`
+	SwapLagReleased    bool      `json:"swap_lag_released,omitempty"`
+	// MemoryFamilies is the compact top-3 family projection
+	// "family=rss/reclaimable" in MB, for example "lsp=6100/6100,agent_host=3012/0".
+	MemoryFamilies             string         `json:"memory_families,omitempty"`
 	HostCPUPercent             float64        `json:"host_cpu_percent"`
 	AgentTreeCount             int            `json:"agent_tree_count"`
 	AgentRSSSumMB              float64        `json:"agent_rss_sum_mb"`
@@ -83,6 +88,8 @@ func compactTelemetrySummary(snapshot Snapshot) TelemetrySnapshotSummary {
 		PrimaryReason: primaryReason, FreePercent: snapshot.FreePercent, SwapUsedMB: snapshot.SwapUsedMB,
 		SwapInMBPerSecond: snapshot.SwapInMBPerSecond, SwapOutMBPerSecond: snapshot.SwapOutMBPerSecond,
 		SwapThrashLatched: snapshot.SwapThrashLatched, SwapThrashCause: snapshot.SwapThrashCause,
+		SwapCalmSeconds: math.Round(snapshot.SwapCalmSeconds), SwapLagReleased: snapshot.SwapLagReleased,
+		MemoryFamilies: compactMemoryFamilies(snapshot.MemoryFamilies, 3),
 		HostCPUPercent: snapshot.HostCPUPercent, AgentTreeCount: snapshot.AgentTreeCount, AgentRSSSumMB: snapshot.AgentRSSSumMB,
 		MemoryMomentum: snapshot.MemoryMomentum, FreePercentSlopePerMinute: snapshot.FreePercentSlopePerMinute,
 		MinutesToMemoryRed: snapshot.MinutesToMemoryRed,
