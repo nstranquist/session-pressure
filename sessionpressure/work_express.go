@@ -75,6 +75,11 @@ func ClassifyWorkArgv(argv []string) (WorkClass, bool) {
 }
 
 func classifyDirectWorkArgvAt(argv []string, cwdOverride string) (WorkClass, bool) {
+	// Light-by-construction shapes first: a caller's coarse class guess must
+	// not charge a dependency install or a device query as a build.
+	if class, ok := classifyLightWorkArgv(argv); ok {
+		return class, true
+	}
 	if class, ok := classifyNDevAskEvalArgv(argv); ok {
 		return class, true
 	}

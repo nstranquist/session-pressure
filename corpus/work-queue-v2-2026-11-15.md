@@ -220,6 +220,30 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
 - Hetzner tab: remote queue and per-repository remote share.
 - Bell alert on `queue_stall`.
 
+## 4.9 Implementation log
+
+- 2026-11-15, v1.1 live. Released `5f02c87` through the documented flow
+  (bundle, Darwin cross-build on runner-3, `session-pressure-release
+  install --expected-current 14c7d24`). Finding: coordinated work did not run
+  that release. It runs the launchd helper artifact, which was still
+  `072e4d6` from 2026-11-11, so no queue fix from any agent since then had
+  been live for hook-wrapped work. Promoted with `session-pressure monitor
+  install` (enforcement kept from the persisted policy). `artifact status`:
+  helper `5f02c87`, drift false. Live status after: selector schema 8, queue
+  empty, three operations held only at the host memory gate.
+- 2026-11-15, v2 slice 1, light-command classification
+  (`sessionpressure/work_toolfamily.go`). The live holds were
+  `bash -c xcrun devicectl device info detail` queued as `build` (weight 5)
+  and `npm ci` queued as `test`. The queue now owns classification for
+  shapes that are light by construction: whole-project dependency installs
+  (`npm|pnpm|yarn|bun ci|install|i` with only flags, `go mod download`) map to
+  `install` (1), and read-only Apple queries (`xcrun devicectl list`,
+  `devicectl device info`, `simctl list|getenv`, `xcrun --find`,
+  `--show-sdk-*`) map to `express-test` (1). An explicit `heavy` request is
+  kept. Compound commands keep their strongest statement. Proof: suite on
+  runner-3 passes (both packages, two HEAD-failing tests skipped), vet
+  clean.
+
 ## 5. Open items
 
 - [ ] Install the v1.1 binary and confirm in live status that parked
