@@ -195,6 +195,14 @@ type WorkEvent struct {
 	CommandCPUMilliseconds int64   `json:"command_cpu_ms,omitempty"`
 	CommandPeakRSSMB       float64 `json:"command_peak_rss_mb,omitempty"`
 	LeaseReservedCores     float64 `json:"lease_reserved_cores,omitempty"`
+
+	// Shadow* is what memory-headroom admission (work_headroom.go) would have
+	// decided at this point, recorded on queued and acquired events. It never
+	// admits or refuses work. ShadowHeadroomMB may be negative.
+	ShadowMemoryDecision   string `json:"shadow_memory_decision,omitempty"`
+	ShadowPredictedPeakMB  int64  `json:"shadow_predicted_peak_mb,omitempty"`
+	ShadowPredictionSource string `json:"shadow_prediction_source,omitempty"`
+	ShadowHeadroomMB       int64  `json:"shadow_headroom_mb,omitempty"`
 }
 
 func (event WorkEvent) Validate() error {
@@ -215,6 +223,17 @@ func (event WorkEvent) Validate() error {
 	}
 	if event.SessionDigest != "" && !validSHA256Digest(event.SessionDigest) {
 		return errors.New("work session_digest must be an opaque sha256 digest")
+	}
+	if !validShadowMemoryDecision(event.ShadowMemoryDecision) {
+		return fmt.Errorf("work event shadow_memory_decision %q is not in the closed vocabulary", event.ShadowMemoryDecision)
+	}
+	switch event.ShadowPredictionSource {
+	case "", predictionByKey, predictionByLoad, predictionByClass, predictionFallback:
+	default:
+		return fmt.Errorf("work event shadow_prediction_source %q is not in the closed vocabulary", event.ShadowPredictionSource)
+	}
+	if event.ShadowPredictedPeakMB < 0 {
+		return errors.New("work event shadow_predicted_peak_mb must not be negative")
 	}
 	if event.PlacementKey != "" && !validSHA256Digest(event.PlacementKey) {
 		return errors.New("work placement_key must be an opaque sha256 digest")

@@ -31,6 +31,7 @@ and an oldest-feasible floor, then applies a separate selector overhead gate.
 
 Subcommands:
   status
+  headroom                         Memory headroom and peak RSS history (shadow admission input)
   history [--since DURATION] [--limit N] [--class CLASS] [--event EVENT] [--operation-id ID] [--full]
   stats [--since DURATION] [--full]
   report [--since DURATION] [--full]
@@ -182,6 +183,18 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 		payload := map[string]any{"ok": true, "action": "work.status", "work": status}
 		text := pressureWorkStatusText(status)
 		return emitPressure(g, payload, text, 0)
+	case "headroom":
+		if len(args) != 0 {
+			return sessionPressureError("work headroom accepts no arguments", 2)
+		}
+		headroomCtx, headroomCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		headroom, err := sessionpressure.ReadMemoryHeadroom(headroomCtx, runtime.dir, coordinator, time.Now())
+		headroomCancel()
+		if err != nil {
+			return sessionPressureError(err.Error(), 1)
+		}
+		payload := map[string]any{"ok": true, "action": "work.headroom", "headroom": headroom}
+		return emitPressure(g, payload, pressureWorkHeadroomText(headroom), 0)
 	case "override":
 		return cmdSessionPressureWorkOverride(g, coordinator, args)
 	case "inspect":
@@ -814,4 +827,25 @@ func pressureAdmissionReason(admission sessionpressure.Admission) string {
 
 func pressureWorkEnvironment(base []string, limits sessionpressure.WorkLimits, class sessionpressure.WorkClass) ([]string, error) {
 	return sessionpressure.WorkEnvironment(base, limits, class)
+}
+
+func pressureWorkHeadroomText(headroom sessionpressure.MemoryHeadroom) string {
+	var b strings.Builder
+	if !headroom.SampleFresh {
+		b.WriteString("Memory headroom: no fresh resident sample (shadow decisions refuse with no_sample).\n")
+	}
+	fmt.Fprintf(&b, "Memory headroom: %d MB (available %d - reserve %d - in-flight %d), level %s\n",
+		headroom.HeadroomMB, headroom.AvailableMB, headroom.ReserveMB, headroom.InflightMB, headroom.Level)
+	fmt.Fprintf(&b, "Leases: %d, predicted %d MB, leased RSS %d MB (known %v). Swap %d MB, swap-out %.1f MB/s, thrash latched %v\n",
+		headroom.LeaseCount, headroom.LeasePredictedMB, headroom.LeasedRSSMB, headroom.LeasedRSSKnown,
+		headroom.SwapUsedMB, headroom.SwapOutMBPerSecond, headroom.SwapThrashLatched)
+	fmt.Fprintf(&b, "Peak RSS history (%dh, completed work, largest process per command):\n", headroom.PeakRSSWindowHours)
+	for _, row := range headroom.PeakRSS {
+		if row.Scope == "placement_key" {
+			continue
+		}
+		fmt.Fprintf(&b, "  %-9s %-24s n=%-5d p50 %5d MB  p90 %5d MB\n", row.Scope, row.Name, row.Samples, row.P50MB, row.P90MB)
+	}
+	b.WriteString("Shadow only: live admission still uses capacity units. JSON includes per-check rows.\n")
+	return b.String()
 }

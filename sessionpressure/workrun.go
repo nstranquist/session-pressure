@@ -1138,6 +1138,9 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		PressureLevel: initialAdmission.Level, PressureDimension: pressureDimension(initialAdmission), PressureReason: initialPressureReason,
 	}
 	applyCoordinatedWorkEvidence(&queuedEvent, initialAdmission, queuedEvent.PressureDimension)
+	shadowMemory := &shadowMemoryProbe{dir: coordinator.Dir, class: options.Class, workload: options.Workload,
+		key: placementKey, interactive: options.Interactive, weight: weight, fastLane: coordinator.limits().FastLaneMaxWeight}
+	shadowMemory.decide(initialAdmission, initialStatus.Leases, time.Now()).apply(&queuedEvent)
 	if err := appendEvent(queuedEvent); err != nil {
 		return 1, fmt.Errorf("persist queued work event: %w", err)
 	}
@@ -1356,7 +1359,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	}
 	acquiredAt = time.Now().UTC()
 	queueWaitMS = max(int64(0), acquiredAt.Sub(admissionReadyAt).Milliseconds())
-	if eventErr := appendEvent(WorkEvent{
+	acquiredEvent := WorkEvent{
 		Event: WorkEventAcquired, LeaseID: lease.Record().ID, PID: lease.Record().PID,
 		Capacity: status.Capacity, Used: status.Used, Available: status.Available,
 		Blocker: experiencedBlocker, QueuePosition: waiterPosition(firstQueueStatus, operationID), QueueDepth: firstQueueStatus.QueueDepth,
@@ -1379,7 +1382,16 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		BypassedCount:             status.BypassedCount,
 		CandidateSchedulingPolicy: status.CandidateSchedulingPolicy, ShadowSelectedOperationID: status.ShadowSelectedOperationID,
 		ShadowProtectedOperationID: status.ShadowProtectedOperationID, ShadowDecisionReason: status.ShadowDecisionReason,
-	}); eventErr != nil {
+	}
+	// The shadow sees the leases running beside this one, not itself.
+	otherLeases := make([]WorkLeaseStatus, 0, len(status.Leases))
+	for _, other := range status.Leases {
+		if other.ID != lease.Record().ID {
+			otherLeases = append(otherLeases, other)
+		}
+	}
+	shadowMemory.decide(admissionAfterWait, otherLeases, acquiredAt).apply(&acquiredEvent)
+	if eventErr := appendEvent(acquiredEvent); eventErr != nil {
 		releaseErr := release()
 		stopWaiting()
 		cancel()
