@@ -26,6 +26,9 @@ type RemoteWorkPolicy struct {
 	Host    string `json:"host,omitempty"`
 	User    string `json:"user,omitempty"`
 	Fleet   string `json:"fleet,omitempty"`
+	// Node opts Node verification commands into remote routing (work queue
+	// v2 slice 3, remote_node.go). Go routing does not depend on it.
+	Node bool `json:"node,omitempty"`
 }
 
 func SetRemoteWork(dir string, enabled bool) error {
@@ -466,8 +469,11 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if err != nil {
 		return true, 1, err
 	}
-	if !policy.Enabled || runtime.GOOS != "darwin" || !RemoteGoCommand(options.Command) {
+	if !policy.Enabled || runtime.GOOS != "darwin" {
 		return false, 0, nil
+	}
+	if !RemoteGoCommand(options.Command) {
+		return tryRemoteNodeWork(dir, policy, options, streams)
 	}
 	if streams.Stdin == nil {
 		streams.Stdin = os.Stdin
