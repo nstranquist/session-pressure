@@ -1,6 +1,10 @@
 package sessionpressure
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestClassifyLightWorkArgv(t *testing.T) {
 	cases := []struct {
@@ -55,5 +59,66 @@ func TestResolveWorkClassDemotesLightCommandsFromCoarseCallerClass(t *testing.T)
 	// a full test suite is still a test.
 	if got := ResolveWorkClass(WorkClassBuild, false, []string{"bash", "-c", "npm ci && npm test"}); got == WorkClassInstall {
 		t.Fatalf("compound install+test demoted to install")
+	}
+}
+
+func TestWorkToolFamily(t *testing.T) {
+	cases := []struct {
+		argv []string
+		want string
+	}{
+		{[]string{"go", "test", "./..."}, ToolFamilyGo},
+		{[]string{"npm", "ci"}, ToolFamilyNode},
+		{[]string{"npx", "vitest", "run"}, ToolFamilyNode},
+		{[]string{"CI=1", "pnpm", "test"}, ToolFamilyNode},
+		{[]string{"swift", "build"}, ToolFamilySwift},
+		{[]string{"xcrun", "xcodebuild", "-scheme", "A"}, ToolFamilyXcodebuild},
+		{[]string{"xcrun", "devicectl", "list", "devices"}, ToolFamilyXcrun},
+		{[]string{"cargo", "test"}, ToolFamilyRust},
+		{[]string{"make", "test"}, ToolFamilyMake},
+		{[]string{"ndev", "--json", "repo", "architecture"}, ToolFamilyNDev},
+		{[]string{"/opt/tool/unknown"}, ToolFamilyOther},
+		// The hook-wrapped compound from 2026-11-15: the heavy step names it.
+		{[]string{"bash", "-c", "python3 edit.py && npx vitest run src"}, ToolFamilyNode},
+		{[]string{"bash", "-c", "xcrun devicectl device info details"}, ToolFamilyXcrun},
+	}
+	for _, tc := range cases {
+		got := WorkToolFamily(tc.argv)
+		if got != tc.want {
+			t.Errorf("WorkToolFamily(%q) = %q, want %q", tc.argv, got, tc.want)
+		}
+		if !ValidToolFamily(got) {
+			t.Errorf("WorkToolFamily(%q) returned %q outside the vocabulary", tc.argv, got)
+		}
+	}
+}
+
+func TestSummarizeToolFamilies(t *testing.T) {
+	events := []WorkEvent{
+		{OperationID: "a", Event: WorkEventQueued, ToolFamily: ToolFamilyNode},
+		{OperationID: "a", Event: WorkEventAcquired, ToolFamily: ToolFamilyNode, WaitMilliseconds: 9000},
+		{OperationID: "a", Event: WorkEventCompleted, ToolFamily: ToolFamilyNode, RuntimeMillis: 100},
+		{OperationID: "b", Event: WorkEventQueued, ToolFamily: ToolFamilyGo},
+		{OperationID: "b", Event: WorkEventCancelled, ToolFamily: ToolFamilyGo},
+		{OperationID: "c", Event: WorkEventAcquired, WaitMilliseconds: 10},
+	}
+	rows := summarizeToolFamilies(events)
+	if len(rows) != 3 || rows[0].ToolFamily != ToolFamilyNode || rows[0].WaitTotalMS != 9000 || rows[0].WaitP95MS != 9000 || rows[0].Completed != 1 {
+		t.Fatalf("node row first by wait: %+v", rows)
+	}
+	found := map[string]WorkToolFamilyStats{}
+	for _, row := range rows {
+		found[row.ToolFamily] = row
+	}
+	if found[ToolFamilyGo].Cancelled != 1 || found[ToolFamilyGo].Acquired != 0 || found["unrecorded"].Operations != 1 {
+		t.Fatalf("go/unrecorded rows: %+v", found)
+	}
+}
+
+func TestWorkEventRejectsUnknownToolFamily(t *testing.T) {
+	event := WorkEvent{SchemaVersion: WorkEventSchemaVersion, Timestamp: time.Now(), EventID: strings.Repeat("a", 32),
+		OperationID: strings.Repeat("b", 32), ToolFamily: "rm -rf /"}
+	if err := event.Validate(); err == nil || !strings.Contains(err.Error(), "tool_family") {
+		t.Fatalf("free-text tool family accepted: %v", err)
 	}
 }

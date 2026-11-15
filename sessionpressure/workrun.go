@@ -1065,6 +1065,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		fmt.Fprintln(streams.Stderr, "ndev session pressure: prune work output preview:", pruneErr)
 	}
 	commandDigest := CommandShapeDigest(resolvedExecutable, len(options.Command)-1)
+	toolFamily := WorkToolFamily(options.Command)
 	sessionDigest := DetectedAgentSessionDigest(os.Environ())
 	// Declared ahead of appendEvent so every persisted row can carry the gate's
 	// admission decision; it is constructed once the storage/reclaim probes below
@@ -1082,6 +1083,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		event.Weight = weight
 		event.SessionDigest = sessionDigest
 		event.CommandDigest = commandDigest
+		event.ToolFamily = toolFamily
 		if event.BatchStepCount == 0 {
 			event.BatchStepCount = options.BatchStepCount
 		}

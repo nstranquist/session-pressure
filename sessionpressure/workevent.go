@@ -92,6 +92,8 @@ const (
 // WorkEvent is the privacy-bounded audit row for one heavy-work lifecycle.
 // CommandDigest covers only the resolved executable identity and argument
 // count; arguments, environment, cwd, and prompts are never serialized.
+// ToolFamily is a closed-vocabulary toolchain name (work_toolfamily.go), never
+// arguments; it lets placement telemetry tell Go from Node or Swift.
 type WorkEvent struct {
 	HostID                              string                    `json:"host_id,omitempty"`
 	HostOS                              string                    `json:"host_os,omitempty"`
@@ -113,6 +115,7 @@ type WorkEvent struct {
 	PID                                 int                       `json:"pid,omitempty"`
 	SessionDigest                       string                    `json:"session_digest,omitempty"`
 	CommandDigest                       string                    `json:"command_digest,omitempty"`
+	ToolFamily                          string                    `json:"tool_family,omitempty"`
 	Blocker                             WorkBlocker               `json:"blocker,omitempty"`
 	QueuePosition                       int                       `json:"queue_position,omitempty"`
 	QueueDepth                          int                       `json:"queue_depth,omitempty"`
@@ -208,6 +211,9 @@ func (event WorkEvent) Validate() error {
 	}
 	if event.SessionDigest != "" && !validSHA256Digest(event.SessionDigest) {
 		return errors.New("work session_digest must be an opaque sha256 digest")
+	}
+	if event.ToolFamily != "" && !ValidToolFamily(event.ToolFamily) {
+		return fmt.Errorf("work event tool_family %q is not in the closed vocabulary", event.ToolFamily)
 	}
 	if event.CommandDigest != "" && !validSHA256Digest(event.CommandDigest) {
 		return errors.New("work command_digest must be an opaque sha256 digest")
@@ -1321,6 +1327,7 @@ type WorkStats struct {
 	OperationCount                  int                                 `json:"operation_count"`
 	OpenOperations                  int                                 `json:"open_operations"`
 	ByClass                         []WorkClassStats                    `json:"by_class"`
+	ByToolFamily                    []WorkToolFamilyStats               `json:"by_tool_family"`
 	ReviewSignals                   WorkReviewSignals                   `json:"review_signals"`
 	ServiceLevel                    WorkServiceLevel                    `json:"service_level"`
 	PressureConditionedServiceLevel WorkPressureConditionedServiceLevel `json:"pressure_conditioned_service_level"`
@@ -1777,7 +1784,7 @@ func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkS
 		ReviewSignals: signals, ServiceLevel: serviceLevel,
 		PressureConditionedServiceLevel: conditioned, CalibrationCohorts: cohorts,
 		SwapDerate: swapDerate, WaitAttribution: waitAttribution,
-		LeaseCPU: summarizeLeaseCPU(events),
+		LeaseCPU: summarizeLeaseCPU(events), ByToolFamily: summarizeToolFamilies(events),
 	}
 }
 

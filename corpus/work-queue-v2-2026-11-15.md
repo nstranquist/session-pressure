@@ -243,6 +243,16 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
   kept. Compound commands keep their strongest statement. Proof: suite on
   runner-3 passes (both packages, two HEAD-failing tests skipped), vet
   clean.
+- 2026-11-15, v2 slice 2, tool-family telemetry. Work events carry
+  `tool_family` from a closed vocabulary (go, node, rust, swift, xcodebuild,
+  xcrun, make, python, ndev, shell, other), validated on write. A
+  `bash -c` compound takes the family of its heaviest classified statement.
+  `work stats` adds `by_tool_family` (operations, outcomes, wait total and
+  p95, runtime), sorted by total wait, with older rows under `unrecorded`.
+  This is the measurement the closed-loop placer and slice 3 need. Proof: HEAD
+  plus only these files passes both packages on runner-3. (The shared tree
+  did not build at the time because of another agent's unfinished
+  `sampler.go` change.)
 
 ## 5. Open items
 
