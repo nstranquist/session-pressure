@@ -325,6 +325,14 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
 
 ## 5. Open items
 
+- [ ] Delivery Darwin ordering (request from the commit-delivery session,
+  2026-11-15, design note nicos-commit-delivery
+  `docs/11-15-parallel-landing/parallel-landing-kep.md` P5). Decision: no
+  protected waiter, because protection holds the drain and caused the v1
+  stall. Plan: the delivery worker declares `--workload delivery-darwin`, and
+  the selector orders it ahead of unprotected background work without a drain
+  hold, as for interactive work. Use of the capped red lane by delivery is
+  Nico's decision. Status: not started. Owner: claude (work queue v2).
 - [ ] Install the v1.1 binary and confirm in live status that parked
       reservations no longer block (needs the old waiters to drain).
 - [ ] Swift app: show `pressure_parked` as `parked`, not `held`.
