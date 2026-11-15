@@ -13,7 +13,7 @@ import (
 
 func cmdSessionPressureGaterunner(g *Flags, args []string) int {
 	if len(args) == 0 {
-		return sessionPressureError("remote inspection requires inspect or job-log", 2)
+		return sessionPressureError("remote inspection requires inspect, job-log, or capacity", 2)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 14*time.Second)
 	defer cancel()
@@ -75,6 +75,25 @@ func cmdSessionPressureGaterunner(g *Flags, args []string) int {
 		}
 		report := gaterunner.InspectSince(ctx, home, box, known)
 		return emitPressure(g, map[string]any{"ok": true, "action": "remote.inspect", "inspection": report}, fmt.Sprintf("Gate runner: reachable=%t runs=%d jobs=%d local_error=%s box_error=%s\n", report.BoxReachable, len(report.Runs), len(report.Jobs), report.LocalError, report.BoxError), 0)
+	case "capacity":
+		window := "24h"
+		for i := 1; i < len(args); i++ {
+			if args[i] != "--window" || i+1 >= len(args) {
+				return sessionPressureError("remote capacity accepts --window 6h|24h|7d|14d", 2)
+			}
+			i++
+			window = args[i]
+		}
+		w, e := gaterunner.ParseCapacityWindow(window)
+		if e != nil {
+			return sessionPressureError(e.Error(), 2)
+		}
+		home, e := os.UserHomeDir()
+		if e != nil {
+			return sessionPressureError(e.Error(), 1)
+		}
+		report := gaterunner.Capacity(ctx, home, dir, w)
+		return emitPressure(g, map[string]any{"ok": true, "action": "remote.capacity", "capacity": report}, gaterunner.CapacityText(report), 0)
 	case "job-log":
 		if len(args) != 3 || args[1] != "--id" {
 			return sessionPressureError("remote job-log requires --id JOB", 2)
@@ -85,6 +104,6 @@ func cmdSessionPressureGaterunner(g *Flags, args []string) int {
 		}
 		return emitPressure(g, map[string]any{"ok": true, "action": "remote.job-log", "log": log}, log, 0)
 	default:
-		return sessionPressureError("remote inspection requires inspect or job-log", 2)
+		return sessionPressureError("remote inspection requires inspect, job-log, or capacity", 2)
 	}
 }

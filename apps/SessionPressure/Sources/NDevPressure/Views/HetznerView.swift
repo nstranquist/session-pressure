@@ -30,6 +30,7 @@ struct HetznerView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 statusCard
+                RunnerCapacityCard()
                 fleetLiveCard
                 delegateCard
                 jobsCard

@@ -22,3 +22,5 @@ product decisions have all been reconstructed.
 - [Kernel, display and swap profile](kernel-display-swap-2026-11-11.md): WORK-619 current paging attribution and protected Cowork investigation.
 
 - [Per-repository storage floor](storage-repository-override-2026-11-11.md): Garrid-only 5 GiB admission floor, repository resolution through the Git object store, fail-closed policy reads.
+
+- [Runner capacity and usage view](runner-capacity-2026-11-15.md): Hetzner tab capacity card, `remote capacity` contract, traffic terms and first live findings.

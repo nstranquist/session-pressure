@@ -196,6 +196,14 @@ public struct NDevPressureClient: Sendable {
                                  maximumResponseBytes: 2 * 1024 * 1024, timeoutSeconds: 16)
     }
 
+    /// Reads every fleet runner in parallel (one SSH round trip each, 12 s
+    /// bound) and records NIC counters locally for bandwidth history.
+    public func runnerCapacity(window: RunnerCapacityWindow) async throws -> RunnerCapacityEnvelope {
+        try await runJSON(RunnerCapacityEnvelope.self,
+                          arguments: ["--json", "session", "pressure", "remote", "capacity", "--window", window.rawValue],
+                          maximumResponseBytes: 2 * 1024 * 1024, timeoutSeconds: 18)
+    }
+
     public func gateRunnerJobLog(id: String, host: String? = nil, user: String? = nil) async throws -> String {
         struct Envelope: Decodable { let ok: Bool; let log: String }
         var args = ["--json", "session", "pressure", "remote", "job-log", "--id", id]
