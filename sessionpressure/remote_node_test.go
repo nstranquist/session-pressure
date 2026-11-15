@@ -95,7 +95,7 @@ func TestPlanRemoteNodeWork(t *testing.T) {
 	previous := localToolVersion
 	t.Cleanup(func() { localToolVersion = previous })
 	localToolVersion = func(tool string) string {
-		return map[string]string{"node": "24.22.2", "pnpm": "11.22.0"}[tool]
+		return map[string]string{"node": "v24.18.0", "pnpm": "11.22.0"}[tool]
 	}
 
 	root := gitRepo(t, map[string]string{
@@ -133,7 +133,7 @@ func TestPlanRemoteNodeWork(t *testing.T) {
 	if _, reason := planRemoteNodeWork(unpinned, []string{"pnpm", "test"}); !strings.Contains(reason, `pnpm "10.24.0" is not pinned`) {
 		t.Fatalf("unpinned pnpm reason: %q", reason)
 	}
-	// No declared Node: the Mac's own version selects the pin.
+	// No declared Node: the Mac major (v24.18.0) selects the 24 pin.
 	npmRepo := gitRepo(t, map[string]string{"package.json": `{}`, "package-lock.json": "{}"})
 	plan, reason = planRemoteNodeWork(npmRepo, []string{"npm", "test"})
 	if reason != "" || plan.manager != "npm" || plan.nodeVersion != "24.22.2" || !strings.Contains(remoteNodeRunnerCommand(plan, "1"), "npm ci --no-audit --no-fund --prefer-offline") {

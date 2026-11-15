@@ -71,8 +71,11 @@ type WorkRunOptions struct {
 	// PlacementReason.
 	Placement       WorkPlacement
 	PlacementReason string
-	reusePreparer   func() ExpressReuseRefusalReason
-	reuseFinalizer  func() ExpressReuseRefusalReason
+	// placementProbe reports whether the Mac could start this command now
+	// (work_placer.go). Nil means unknown, and the placer keeps remote.
+	placementProbe func() (idle bool, reason string)
+	reusePreparer  func() ExpressReuseRefusalReason
+	reuseFinalizer func() ExpressReuseRefusalReason
 }
 
 type WorkProgressMode string
@@ -985,6 +988,9 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 			}
 		}
 	}
+	if options.Placement == WorkPlacementAuto {
+		options.placementProbe = macIdleProbe(coordinator, options.Class, admissionCheck)
+	}
 	if options.Placement == WorkPlacementLocal {
 		recordLocalPlacement(coordinator.Dir, options, streams)
 	} else if handled, code, err := TryRemoteWork(coordinator.Dir, options, streams); handled {
@@ -1066,6 +1072,8 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	}
 	commandDigest := CommandShapeDigest(resolvedExecutable, len(options.Command)-1)
 	toolFamily := WorkToolFamily(options.Command)
+	placementCwd, _ := os.Getwd()
+	placementKey := PlacementKey(placementCwd, options.Command)
 	sessionDigest := DetectedAgentSessionDigest(os.Environ())
 	// Declared ahead of appendEvent so every persisted row can carry the gate's
 	// admission decision; it is constructed once the storage/reclaim probes below
@@ -1084,6 +1092,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		event.SessionDigest = sessionDigest
 		event.CommandDigest = commandDigest
 		event.ToolFamily = toolFamily
+		event.PlacementKey = placementKey
 		if event.BatchStepCount == 0 {
 			event.BatchStepCount = options.BatchStepCount
 		}

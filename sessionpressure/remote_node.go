@@ -45,6 +45,8 @@ type remoteNodePlan struct {
 	nodeVersion string   // exact runner pin
 	pnpmVersion string   // exact runner pin when manager is pnpm
 	argv        []string // the single verification command
+	// placementKey joins this run to its local history (work_placer.go).
+	placementKey string
 }
 
 // localToolVersion reports the Mac's version of a tool ("node" or "pnpm").
@@ -92,7 +94,9 @@ func planRemoteNodeWork(cwd string, command []string) (remoteNodePlan, string) {
 		declared = strings.TrimSpace(strings.SplitN(string(body), "\n", 2)[0])
 	}
 	if declared == "" {
-		declared = localToolVersion("node")
+		// Nothing declared: the Mac's own Node selects the runner pin of the
+		// same major. 26.13.1 on the Mac runs on 26.13.0, never on 24.
+		declared = strings.SplitN(strings.TrimPrefix(localToolVersion("node"), "v"), ".", 2)[0]
 	}
 	if plan.nodeVersion = matchPin(declared, runnerNodePins); plan.nodeVersion == "" {
 		return remoteNodePlan{}, fmt.Sprintf("Node %q is not pinned on the runner", declared)
@@ -399,6 +403,7 @@ func runRemoteNodeWork(dir string, policy RemoteWorkPolicy, plan remoteNodePlan,
 			"package_manager": plan.manager, "node_version": plan.nodeVersion, "runner_host": policy.Host, "runner_user": policy.User,
 			"request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0,
 			"source_upload_mode": uploadMode, "source_files_sent": uploadFiles, "source_bytes_sent": uploadBytes,
+			"placement_key": plan.placementKey,
 		}
 		for name, ms := range timingMS {
 			event[name] = ms
@@ -514,6 +519,10 @@ func tryRemoteNodeWork(dir string, policy RemoteWorkPolicy, options WorkRunOptio
 	}
 	if streams.Stderr == nil {
 		streams.Stderr = os.Stderr
+	}
+	plan.placementKey = PlacementKey(cwd, options.Command)
+	if placeLocally(dir, policy, options, plan.placementKey, ToolFamilyNode, streams.Stderr) {
+		return false, 0, nil
 	}
 	code, err := runRemoteNodeWork(dir, policy, plan, options, streams)
 	return true, code, err

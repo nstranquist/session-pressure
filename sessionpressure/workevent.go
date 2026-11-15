@@ -94,6 +94,9 @@ const (
 // count; arguments, environment, cwd, and prompts are never serialized.
 // ToolFamily is a closed-vocabulary toolchain name (work_toolfamily.go), never
 // arguments; it lets placement telemetry tell Go from Node or Swift.
+// PlacementKey is an opaque sha256 of the working directory and argv
+// (work_placer.go). The placer matches it against remote_work_finished rows to
+// learn local and remote durations for the same check; it is never reversed.
 type WorkEvent struct {
 	HostID                              string                    `json:"host_id,omitempty"`
 	HostOS                              string                    `json:"host_os,omitempty"`
@@ -116,6 +119,7 @@ type WorkEvent struct {
 	SessionDigest                       string                    `json:"session_digest,omitempty"`
 	CommandDigest                       string                    `json:"command_digest,omitempty"`
 	ToolFamily                          string                    `json:"tool_family,omitempty"`
+	PlacementKey                        string                    `json:"placement_key,omitempty"`
 	Blocker                             WorkBlocker               `json:"blocker,omitempty"`
 	QueuePosition                       int                       `json:"queue_position,omitempty"`
 	QueueDepth                          int                       `json:"queue_depth,omitempty"`
@@ -211,6 +215,9 @@ func (event WorkEvent) Validate() error {
 	}
 	if event.SessionDigest != "" && !validSHA256Digest(event.SessionDigest) {
 		return errors.New("work session_digest must be an opaque sha256 digest")
+	}
+	if event.PlacementKey != "" && !validSHA256Digest(event.PlacementKey) {
+		return errors.New("work placement_key must be an opaque sha256 digest")
 	}
 	if event.ToolFamily != "" && !ValidToolFamily(event.ToolFamily) {
 		return fmt.Errorf("work event tool_family %q is not in the closed vocabulary", event.ToolFamily)

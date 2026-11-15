@@ -29,6 +29,10 @@ type RemoteWorkPolicy struct {
 	// Node opts Node verification commands into remote routing (work queue
 	// v2 slice 3, remote_node.go). Go routing does not depend on it.
 	Node bool `json:"node,omitempty"`
+	// Placer lets auto placement keep a small eligible check on an idle Mac
+	// when its measured local time beats the measured remote time (work queue
+	// v2 slice 4, work_placer.go). Explicit remote placement is unaffected.
+	Placer bool `json:"placer,omitempty"`
 }
 
 func SetRemoteWork(dir string, enabled bool) error {
@@ -520,6 +524,10 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if err != nil {
 		return reject(err.Error())
 	}
+	placementKey := PlacementKey(cwd, options.Command)
+	if placeLocally(dir, policy, options, placementKey, ToolFamilyGo, streams.Stderr) {
+		return false, 0, nil
+	}
 	job, err := NewWorkOperationID()
 	if err != nil {
 		return true, 1, err
@@ -542,7 +550,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	var sourceDelta remoteSourceUpload
 	defer func() {
 		finishStage()
-		event := map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "timing_ms": timingMS, "source_bytes": sourceBytes, "delivery_id": os.Getenv("NDEV_COMMIT_DELIVERY_ID"), "operation": options.Command[1], "profile": profile, "runner_host": policy.Host, "runner_user": policy.User, "request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0}
+		event := map[string]any{"event": "remote_work_finished", "duration_ms": time.Since(started).Milliseconds(), "timing_ms": timingMS, "source_bytes": sourceBytes, "delivery_id": os.Getenv("NDEV_COMMIT_DELIVERY_ID"), "operation": options.Command[1], "profile": profile, "runner_host": policy.Host, "runner_user": policy.User, "request_key": "pressure-" + job, "exit_code": exitCode, "failed": resultErr != nil || exitCode != 0, "placement_key": placementKey}
 		// The shared SQLite telemetry projection retains scalar attributes.
 		for stage, ms := range timingMS {
 			event[stage] = ms
