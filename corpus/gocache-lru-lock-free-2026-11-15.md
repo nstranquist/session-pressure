@@ -1,8 +1,8 @@
 # gocache-lru: lock-free gets, lazy index, journal never cut
 
 Owner: claude (session 86759fdf), took over from the previous owner with
-their agreement. Status: built, pushed (5d74df7), installed on runner-3
-2026-11-15; runner release with the new binary pending (see Deploy).
+their agreement. Status: live on runner-3 since 2026-11-15T20:52:15Z (scheduler
+release 0742176 carries the pinned binary).
 
 ## Problem (runner-3, 2026-11-15)
 
@@ -66,10 +66,15 @@ Benchmarks on runner-3, 860,000-row journal (`scale_bench_test.go`):
   (delivery 00602f48).
 - `install-tools.sh --host runner-3` installed the binary into
   `/srv/build/bin` with both checksums verified.
-- Open: a scheduler release built from main with the new pins
-  (`gaterunner-upgrade --host runner-3 --commit <main>`) after both
-  deliveries land. Only then do jobs use the new helper. Then re-count
-  "still waiting for GOCACHEPROG" in new job logs.
+- Live: scheduler release 0742176 (installed by another session from
+  main, which carried the pins) has run since 20:52:15Z with gocache-lru
+  `d9fd0a86…b592`. Job logs with "still waiting for GOCACHEPROG": 61 of
+  about 360 jobs from 14:00 to 17:59Z, 0 of 76 jobs in the first 25 min
+  on the new release. Waits had already stopped near 18:00Z, when
+  intermediate releases briefly ran without the prog or with the new
+  binary, so the clean comparison is the 0 of 76.
+- Not yet re-tested: the delivery-queue-3d corpus check timeout (no job
+  from that repository ran in the first window).
 - runner-1 is a reserve: not installed there.
 
 ## Known limits
