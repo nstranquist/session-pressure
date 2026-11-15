@@ -1158,6 +1158,9 @@ public struct WorkWaiter: Codable, Sendable, Identifiable, Hashable {
     public var protectionReason: String?
     public var reservationKind: String?
     public var reservedAt: Date?
+    /// The reservation's owner still waits on host pressure. Since selector
+    /// schema 8 the queue runs past it; it blocks nobody until it resumes.
+    public var pressureParked: Bool
     /// 1-based place in the operator promotion sequence; 1 is the active head.
     /// Zero means this waiter is not pinned.
     public var overridePosition: Int
@@ -1177,6 +1180,7 @@ public struct WorkWaiter: Codable, Sendable, Identifiable, Hashable {
         case protectionReason = "protection_reason"
         case reservationKind = "reservation_kind"
         case reservedAt = "reserved_at"
+        case pressureParked = "pressure_parked"
         case overridePosition = "override_position"
     }
 
@@ -1195,6 +1199,8 @@ public struct WorkWaiter: Codable, Sendable, Identifiable, Hashable {
         protectionReason = try c.decodeIfPresent(String.self, forKey: .protectionReason)
         reservationKind = try c.decodeIfPresent(String.self, forKey: .reservationKind)
         reservedAt = try c.decodeIfPresent(Date.self, forKey: .reservedAt)
+        // Absent before selector schema 8: the reservation still held the drain.
+        pressureParked = try c.decodeIfPresent(Bool.self, forKey: .pressureParked) ?? false
         // Absent on an n-1 helper: unpinned, never a decode failure.
         overridePosition = try c.decodeIfPresent(Int.self, forKey: .overridePosition) ?? 0
     }

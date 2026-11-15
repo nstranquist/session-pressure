@@ -293,6 +293,10 @@ final class PressureStore: ObservableObject {
     @Published var workDetailError: String?
     @Published var workDetailLoadedAt: Date?
     @Published var workInspect: WorkInspectReport?
+    @Published var workPlacement: WorkPlacementReport?
+    @Published var workPlacementError: String?
+    @Published var workPlacementLoadedAt: Date?
+    private var isWorkPlacementRefreshing = false
     @Published var pendingWorkCancel: WorkInspectReport?
     @Published var pendingWorkReschedule: WorkInspectReport?
 
@@ -803,6 +807,24 @@ final class PressureStore: ObservableObject {
             board.sectionErrors["work"] = error.localizedDescription
             lastError = error.localizedDescription
         }
+        await refreshWorkPlacement(force: false)
+    }
+
+    /// The placement view probes runner hosts over SSH, so it refreshes at
+    /// most every 30 s, or at once while a stall is open.
+    func refreshWorkPlacement(force: Bool) async {
+        guard let client, !isWorkPlacementRefreshing else { return }
+        let interval: TimeInterval = workPlacement?.activeStall != nil ? 5 : 30
+        if !force, let loaded = workPlacementLoadedAt, Date().timeIntervalSince(loaded) < interval { return }
+        isWorkPlacementRefreshing = true
+        defer { isWorkPlacementRefreshing = false }
+        do {
+            workPlacement = try await client.workPlacement().placement
+            workPlacementError = nil
+        } catch {
+            workPlacementError = error.localizedDescription
+        }
+        workPlacementLoadedAt = Date()
     }
 
     func refreshIdentity() async {
@@ -900,6 +922,12 @@ final class PressureStore: ObservableObject {
     func handleDeepLink(_ url: URL) {
         if url.scheme == "ndev-pressure", url.host == "overview" {
             selectedSection = .overview
+            return
+        }
+        if url.scheme == "ndev-pressure", url.host == "work" {
+            // The stall guard's toast opens here.
+            selectedSection = .work
+            Task { await refreshWorkPlacement(force: true) }
             return
         }
         if url.scheme == "ndev-pressure", url.host == "settings" {

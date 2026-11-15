@@ -23,6 +23,9 @@ struct WorkView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
 				BrowserControlView()
+                if let stall = store.workPlacement?.activeStall {
+                    WorkStallBanner(stall: stall)
+                }
                 if let work {
                     SectionCard(title: "Shared capacity", systemImage: "cpu") {
                         CapacityBar(used: work.used, capacity: work.capacity, available: work.available)
@@ -90,6 +93,8 @@ struct WorkView: View {
                                 .foregroundStyle(PressureTheme.levelColor(.warning))
                         }
                     }
+
+                    WorkPlacementCard(report: store.workPlacement, error: store.workPlacementError, loadedAt: store.workPlacementLoadedAt)
 
                     // Held work sits above leases and waiters because it is the
                     // state that used to be invisible: blocked before the queue,
@@ -354,6 +359,15 @@ struct WorkView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(width: 72, alignment: .trailing)
+                if let eta = store.workPlacement?.eta(for: waiter.operationID) {
+                    Text(eta.isKnown ? "eta \(PressureFormat.durationMS(eta.etaMS))" : "eta ?")
+                        .font(PressureTheme.monoCaption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 72, alignment: .trailing)
+                        .help(eta.isKnown
+                            ? "Estimated start: \(store.workPlacement?.etaBasis ?? "FIFO estimate")."
+                            : "No estimate: \(eta.basis ?? "unknown").")
+                }
                 Image(systemName: "chevron.right")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.tertiary)
@@ -382,11 +396,13 @@ struct WorkView: View {
                 // This operation already won its turn and is parked on host
                 // pressure. Promoting it changes nothing, so offering "Run now"
                 // would be a control that cannot do what it says.
-                Label("held", systemImage: "pause.circle.fill")
+                Label(waiter.pressureParked ? "parked" : "held", systemImage: "pause.circle.fill")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(PressureTheme.levelColor(.warning))
+                    .foregroundStyle(waiter.pressureParked ? Color.secondary : PressureTheme.levelColor(.warning))
                     .frame(width: 96, alignment: .trailing)
-                    .help("Reserved and waiting for host pressure to clear. It keeps its place; Run now cannot start it sooner.")
+                    .help(waiter.pressureParked
+                        ? "Waiting for host pressure to clear. It keeps its place, but work behind it that fits runs meanwhile. Run now cannot start it sooner."
+                        : "Reserved and waiting for host pressure to clear. It keeps its place; Run now cannot start it sooner.")
             } else {
                 Button {
                     Task { await store.overrideWork(waiter: waiter) }

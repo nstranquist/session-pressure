@@ -1,0 +1,128 @@
+{
+  "action": "work.placement",
+  "ok": true,
+  "placement": {
+    "generated_at": "2026-11-15T17:42:18.999219Z",
+    "window_seconds": 21600,
+    "remote": {
+      "enabled": true,
+      "placer": true,
+      "node": true,
+      "host": "runner-3"
+    },
+    "decisions": {
+      "total": 16,
+      "local": 0,
+      "remote": 16,
+      "by_reason": {
+        "mac_busy: 6 waiters queued": 1,
+        "mac_busy: 8 waiters queued": 2,
+        "mac_busy: 9 waiters queued": 1,
+        "no_local_history": 12
+      },
+      "recent": [
+        {
+          "at": "2026-11-15T17:37:30.183455Z",
+          "placement": "remote",
+          "reason": "no_local_history",
+          "class": "express-test",
+          "tool_family": "go",
+          "local_samples": 0,
+          "remote_samples": 0
+        },
+        {
+          "at": "2026-11-15T17:33:44.820563Z",
+          "placement": "remote",
+          "reason": "no_local_history",
+          "class": "express-build",
+          "tool_family": "go",
+          "local_samples": 0,
+          "remote_samples": 0
+        }
+      ]
+    },
+    "remote_runs": {
+      "total": 138,
+      "failed": 45,
+      "p50_ms": 129154,
+      "p90_ms": 852652,
+      "recent": [
+        {
+          "at": "2026-11-15T17:25:37.463936Z",
+          "operation": "test",
+          "profile": "linux-native",
+          "duration_ms": 943454,
+          "exit_code": 1,
+          "failed": true,
+          "runner_host": "runner-3"
+        },
+        {
+          "at": "2026-11-15T17:20:43.391407Z",
+          "operation": "test",
+          "profile": "linux-native",
+          "duration_ms": 990526,
+          "exit_code": 0,
+          "failed": false,
+          "runner_host": "runner-3"
+        }
+      ]
+    },
+    "local_fallbacks": {
+      "darwin-cgo-sqlite-binary": 9,
+      "darwin-installed-hooks": 1,
+      "darwin-installed-inbox-acceptance": 1,
+      "darwin-installed-inbox-benchmark": 10,
+      "darwin-installed-observer-smoke": 2,
+      "darwin-only-check": 1,
+      "darwin-parity-baseline": 9,
+      "lane-git-checkout": 2,
+      "mac-side-driver-binary": 3,
+      "swift-macos-app": 3
+    },
+    "waiters": [
+      {
+        "operation_id": "op-stalled",
+        "class": "test",
+        "weight": 2,
+        "position": 1,
+        "wait_ms": 95000,
+        "eta_ms": 40000,
+        "basis": "fifo_p50"
+      },
+      {
+        "operation_id": "op-next",
+        "class": "browser",
+        "weight": 2,
+        "position": 2,
+        "wait_ms": 1000,
+        "eta_ms": -1,
+        "basis": "earlier waiter class test unmeasured"
+      }
+    ],
+    "eta_basis": "FIFO estimate from 7-day class p50 runtimes; ignores pressure holds and lookahead",
+    "runners": [
+      {
+        "name": "runner-3",
+        "state": "active",
+        "healthy": true,
+        "heavy_slots": 8,
+        "heavy_jobs": 9,
+        "light_slots": 2,
+        "light_jobs": 1
+      }
+    ],
+    "active_stall": {
+      "since": "2026-11-15T16:00:00Z",
+      "detected_at": "2026-11-15T16:00:35Z",
+      "duration_ms": 95000,
+      "operation_id": "op-stalled",
+      "class": "test",
+      "weight": 2,
+      "used": 0,
+      "effective_capacity": 8,
+      "queue_depth": 1,
+      "level": "normal",
+      "decision_reason": "protected_pressure_reservation"
+    }
+  }
+}
