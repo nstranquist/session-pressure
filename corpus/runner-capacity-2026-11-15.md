@@ -76,3 +76,97 @@ First live 7-day read: runner-3 ran 3,288 jobs at 4.3% average CPU and
 - Offscreen render (SwiftUI ImageRenderer, no window) of the live 7-day report
   checked alerts, tiles and aligned charts. Segmented controls do not render
   offscreen; that is a renderer limitation, not an app defect.
+
+## Hetzner page review and performance sweep (2026-11-15)
+
+Request: review the Hetzner page, sweep its performance, error handling and
+displays, find feature and design gaps, and lazy-load to save CPU and RAM.
+
+### Findings (before)
+
+Measured with the installed CLI `f710c0b` on this Mac:
+
+| Read | Wall | Peak RSS | Payload |
+| --- | --- | --- | --- |
+| `remote capacity` (every poll) | 1.9-2.4 s | about 17 MB | 34-85 KB |
+| `remote inspect` without box (every 15 s) | 0.3-0.4 s | 23 MB | 705 KB when the ledger changed |
+| `remote inspect` with box (every 60 s) | 2.7 s | 31 MB | 1.26 MB, about 550 KB of it unchanged job receipts |
+
+1. Capacity polling started on `onAppear` only, so it kept reading over SSH
+   while the window was hidden or the app inactive.
+2. A window change during an in-flight read was dropped until the next poll,
+   and the labels showed the new window over the old data.
+3. One failed host read blanked that host's tile.
+4. The page was an eager `VStack`: every card, chart and up to 1,000 rows
+   were built even when off screen; `filteredRuns`/`filteredJobs` were
+   recomputed about four times per render, on every 15-second refresh.
+5. Two separate runner selections (capacity tile, job-history picker).
+6. The job log sat at the bottom of the page, far from the selected row, as
+   one SwiftUI `Text` (slow for a 100 KB log).
+7. Raw error codes (`gate_runner_read_failed`) were shown to the operator, and
+   SSH failures could not be told apart (timeout vs. connect vs. remote).
+8. `DateFormatter` was allocated per alert row.
+9. No way to read exact values on the charts, or to see when an alert happened.
+
+### Decisions
+
+1. Jobs cursor in the CLI: `--known-jobs SHA256` returns
+   `jobs_unchanged=true` and no rows. Same shape as the existing ledger cursor.
+2. Typed SSH failure kinds (`timeout`, `connect_failed`, `remote_failed`,
+   `output_too_large`) in `box_failure` and `runner_capacity_<kind>`; the app
+   maps every code to operator text.
+3. Capacity store moved to `ContentView`; it reads only while the pane is
+   active (window visible, app active, Hetzner selected) AND the card is on
+   screen. Cadence follows the bucket size: 6h every 60 s, 24h every 120 s,
+   7d/14d every 300 s. Returning within the cadence does not re-read.
+4. Mid-read window change sets a pending refresh; a result for a stale window
+   is not shown. While the new window loads, the card says which window the
+   shown data covers.
+5. Per-host stale merge: a failed host keeps its last good data with a STALE
+   badge, the failure text and the data age.
+6. Page is a `LazyVStack` of separate cards; filtered lists are cached in
+   `@State`, keyed by store revision counters plus filters; rows are
+   `Equatable`; search is debounced 180 ms.
+7. One runner selection: a capacity tile or alert also points the job receipts
+   at that runner. The runner picker moved into the receipts card.
+8. Job log opens inline under the selected row in an `NSTextView`.
+9. Charts share one hover position (`chartXSelection`) with a readout line;
+   tapping an alert highlights its episode as a band on every chart. Plots
+   are clipped to the window.
+
+### After (installed CLI `14c7d24`)
+
+| Read | Wall | Peak RSS | Payload |
+| --- | --- | --- | --- |
+| `remote inspect` with box, both cursors match (steady state) | 2.6 s | 25 MB | 33 KB |
+| same, new receipt landed | 2.6 s | 25 MB | 583 KB |
+| unknown host | fails fast | - | `box_failure=connect_failed` |
+
+The steady-state per-minute box read went from 1.26 MB to 33 KB (97% less
+JSON for the app to decode). Wall time is SSH-bound and did not change.
+
+### Verification
+
+- Go: `gofmt`, `go vet`, `go test ./internal/gaterunner ./sessionpressurecmd`
+  pass (new `TestClassifySSHFailures`).
+- Swift: 140 tests pass, including new tests for stale host merge,
+  mid-read window change, pane/card visibility gating, cadence and the jobs
+  cursor (unchanged receipts do not bump `jobsRevision`).
+- Installed CLI `14c7d24` built on runner-3 from a verified bundle
+  (`/srv/build/exports/hetzner-perf-14c7d24`), installed with
+  `--expected-current f710c0b`. Installed-CLI contract tests: 25 pass.
+- App installed with `make install-headless` (Team ID C82D23RNQ9, rollback
+  kept, not relaunched).
+- Offscreen render of the card checked layout, tiles, stale-safe charts and
+  the hover hint. The fixture alert has no time range, so the episode band is
+  covered by code review, not by the render.
+
+### Open gaps (not done here)
+
+- Critical capacity alerts reach the operator only when the tab is open.
+  A background check that feeds the app's notification bell (or the
+  commit-delivery digest) would catch spikes while away.
+- Network history is sampled only while the app polls; a runner-side sampler
+  (decision 5 above) would make it continuous.
+- runner-1 records no `host_samples`; its CPU/slot history stays empty
+  until its runner build is updated.
