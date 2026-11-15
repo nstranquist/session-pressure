@@ -115,9 +115,8 @@ func decidePlacement(idle bool, busyReason string, history placementHistory) pla
 func readPlacementHistory(dir, key string, now time.Time) placementHistory {
 	since := now.Add(-placementHistoryWindow)
 	var history placementHistory
-	if events, err := NewWorkEventStore(dir).Read(WorkEventFilter{Since: since, Event: WorkEventCompleted}); err == nil {
+	if events, err := NewWorkEventStore(dir).completedRowsSince(since); err == nil {
 		for _, event := range events {
-			// The filter selects whole operations; keep only their completions.
 			if event.Event == WorkEventCompleted && event.PlacementKey == key && event.RuntimeMillis > 0 {
 				history.localMS = append(history.localMS, event.RuntimeMillis)
 			}

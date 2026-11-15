@@ -492,3 +492,20 @@ func (store *WorkEventStore) pruneWorkEventIndex() error {
 	}
 	return store.syncWorkEventIndex(db, "")
 }
+
+// completedRowsSince reads only completed rows at or after since, without
+// whole-operation lifecycle validation. It serves advisory statistics such as
+// the peak RSS history (work_headroom.go), never admission authority. The
+// general Read path loads whole operations and cost about 1.1 s for three
+// days of events on 2026-11-15; this query reads a few hundred rows.
+func (store *WorkEventStore) completedRowsSince(since time.Time) ([]WorkEvent, error) {
+	db, err := store.workEventIndex()
+	if err != nil {
+		return nil, err
+	}
+	if err := store.syncWorkEventIndex(db, ""); err != nil {
+		return nil, err
+	}
+	return queryWorkEventRows(db, nil, `SELECT operation_id, row_json FROM work_events WHERE event = ? AND ts_unix_nano >= ?`,
+		string(WorkEventCompleted), since.UTC().UnixNano())
+}

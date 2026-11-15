@@ -38,18 +38,21 @@ const (
 	headroomScopeMinSamples = 5
 	headroomMaxKeyStats     = 40
 	// Decision vocabulary, recorded as "admit:<reason>" or "refuse:<reason>".
-	headroomFits       = "fits"
-	headroomRedLane    = "red_lane"
-	headroomNoRoom     = "no_headroom"
-	headroomRed        = "red"
-	headroomCritical   = "critical"
-	headroomThrash     = "swap_thrash"
-	headroomNoSample   = "no_sample"
-	headroomSampleTTL  = 2 * time.Minute
-	predictionByKey    = "placement_key"
-	predictionByLoad   = "workload"
-	predictionByClass  = "class"
-	predictionFallback = "fallback"
+	headroomFits      = "fits"
+	headroomRedLane   = "red_lane"
+	headroomNoRoom    = "no_headroom"
+	headroomRed       = "red"
+	headroomCritical  = "critical"
+	headroomThrash    = "swap_thrash"
+	headroomNoSample  = "no_sample"
+	headroomSampleTTL = 2 * time.Minute
+	// headroomSwapOutRefuseMBPerSecond matches the default
+	// Thresholds.SwapOutThrashMBPerSecond.
+	headroomSwapOutRefuseMBPerSecond = 32
+	predictionByKey                  = "placement_key"
+	predictionByLoad                 = "workload"
+	predictionByClass                = "class"
+	predictionFallback               = "fallback"
 )
 
 // PeakRSSStats is one row of the peak RSS history the delivery worker reads.
@@ -226,7 +229,10 @@ func decideMemoryAdmission(headroom MemoryHeadroom, predicted int64, source stri
 		if interactive && fastLaneMaxWeight > 0 && weight <= fastLaneMaxWeight {
 			decision.Admit, decision.Reason = true, headroomRedLane
 		}
-	case headroom.SwapThrashLatched:
+	case headroom.SwapThrashLatched || headroom.SwapOutMBPerSecond >= headroomSwapOutRefuseMBPerSecond:
+		// "No swap-out in the window": free memory overstates headroom while
+		// the kernel is evicting (165 MB/s swap-out beside 3 GB headroom,
+		// observed 2026-11-15 16:47Z).
 		decision.Reason = headroomThrash
 	case predicted <= headroom.HeadroomMB:
 		decision.Admit, decision.Reason = true, headroomFits
@@ -247,7 +253,7 @@ func validShadowMemoryDecision(label string) bool {
 }
 
 func readPeakRSSHistory(dir string, now time.Time) peakRSSHistory {
-	events, err := NewWorkEventStore(dir).Read(WorkEventFilter{Since: now.Add(-headroomHistoryWindow), Event: WorkEventCompleted})
+	events, err := NewWorkEventStore(dir).completedRowsSince(now.Add(-headroomHistoryWindow))
 	if err != nil {
 		return buildPeakRSSHistory(nil)
 	}

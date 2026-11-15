@@ -93,6 +93,7 @@ func TestDecideMemoryAdmission(t *testing.T) {
 		"red background":            {MemoryHeadroom{SampleFresh: true, Level: LevelRed, HeadroomMB: 9000}, 1, false, 1, "refuse:red"},
 		"red lane kept (Nico)":      {MemoryHeadroom{SampleFresh: true, Level: LevelRed, HeadroomMB: -500}, 200, true, 2, "admit:red_lane"},
 		"red lane is weight capped": {MemoryHeadroom{SampleFresh: true, Level: LevelRed, HeadroomMB: 9000}, 200, true, 5, "refuse:red"},
+		"swap-out rate":             {MemoryHeadroom{SampleFresh: true, Level: LevelWarning, SwapOutMBPerSecond: 40, HeadroomMB: 9000}, 1, false, 1, "refuse:swap_thrash"},
 		"swap thrash":               {MemoryHeadroom{SampleFresh: true, Level: LevelWarning, SwapThrashLatched: true, HeadroomMB: 9000}, 1, false, 1, "refuse:swap_thrash"},
 	}
 	for name, tc := range cases {
