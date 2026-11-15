@@ -231,6 +231,13 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 		}
 		replay := sessionpressure.ReplayWorkEvents(events, runtime.policy.WorkLimits)
 		replay.ApplySelectorBenchmark(report.SelectorBenchmark)
+		if telemetry, err := sessionpressure.NewTelemetryStore(runtime.dir).ReadEvents(200_000, since); err == nil {
+			stalls := sessionpressure.ReplayQueueStalls(events, sessionpressure.LevelTimeline(telemetry), runtime.policy.WorkLimits, sessionpressure.QueueStallThreshold)
+			replay.QueueStalls = &stalls
+			if stalls.Episodes > 0 {
+				replay.ReviewSignals = append(replay.ReviewSignals, fmt.Sprintf("queue stalls: %d episodes, %.0f s idle beyond the %.0f s threshold, longest %.0f s", stalls.Episodes, stalls.StallSeconds, stalls.ThresholdSeconds, stalls.LongestStallSeconds))
+			}
+		}
 		report.Replay = &replay
 		if !replay.PromotionReady {
 			report.OK = false
@@ -239,6 +246,9 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 		payload := map[string]any{"ok": report.OK, "action": "work.evaluate", "since": since, "window": window.String(), "work_evaluation": report}
 		addWorkEventDiagnostics(payload, diagnostics)
 		text := fmt.Sprintf("work evaluation ok=%v scenarios=%d passed=%d failed=%d runtime=%s monitor_projection=%dB/day total_projection=%dB/day max_work_event=%dB\n", report.OK, report.ScenarioCount, report.Passed, report.Failed, time.Duration(report.RuntimeMilliseconds)*time.Millisecond, report.ProjectedMonitorBytesDay, report.ProjectedTelemetryBytesDay, report.MaximumWorkEventBytes)
+		if replay.QueueStalls != nil {
+			text += fmt.Sprintf("queue stalls: episodes=%d idle_beyond_threshold=%.0fs longest=%.0fs level_known=%.0fs\n", replay.QueueStalls.Episodes, replay.QueueStalls.StallSeconds, replay.QueueStalls.LongestStallSeconds, replay.QueueStalls.LevelKnownSeconds)
+		}
 		text += workEventDiagnosticsText(diagnostics)
 		exit := 0
 		if !report.OK {

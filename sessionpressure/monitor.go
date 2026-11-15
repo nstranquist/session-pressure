@@ -174,6 +174,11 @@ type Monitor struct {
 	DiskObserver      *DiskWriteObserver
 	DiskNotifier      func(DiskWriteAlert) error
 	ProcessGuard      *ProcessGuard
+	// WorkCoordinator and QueueStallNotifier enable the stall guard
+	// (work_stall.go). Nil coordinator disables it.
+	WorkCoordinator    *WorkCoordinator
+	QueueStallNotifier func(QueueStall) error
+	queueStalls        QueueStallDetector
 }
 
 type monitorStats struct {
@@ -634,6 +639,7 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 					return err
 				}
 			}
+			monitor.observeQueueStall(snapshot)
 			pruneAt := monitor.Now()
 			if lastPrune.IsZero() || pruneAt.Sub(lastPrune) >= telemetryPruneInterval || pruneAt.Before(lastPrune) {
 				// Treat an attempted prune as scheduled even if it fails. Retrying an

@@ -297,7 +297,8 @@ func run(ctx context.Context) error {
 	if !persisted {
 		return fmt.Errorf("policy is not initialized; run session-pressure policy init")
 	}
-	sampler.WithWorkCoordinator(sessionpressure.NewWorkCoordinator(dir, policy.WorkLimits))
+	workCoordinator := sessionpressure.NewWorkCoordinator(dir, policy.WorkLimits)
+	sampler.WithWorkCoordinator(workCoordinator)
 	lifecycle, recoveryHint, err := sessionpressure.StartLifecycle(dir, os.Getpid(), time.Now)
 	if err != nil {
 		return err
@@ -336,6 +337,8 @@ func run(ctx context.Context) error {
 	monitor := sessionpressure.NewMonitor(sampler, store, policy)
 	monitor.DiskObserver = sessionpressure.NewDiskWriteObserver(dir, policy.DiskWrite)
 	monitor.DiskNotifier = notifyDiskWriteAlert
+	monitor.WorkCoordinator = workCoordinator
+	monitor.QueueStallNotifier = notifyQueueStall
 	monitor.ResidentStarts24h = starts24h
 	monitor.Cleaner = commandResourceCleaner{
 		dir: dir, controlBinary: os.Getenv(sessionpressure.ControlBinaryEnv),
@@ -367,6 +370,20 @@ func notifyDiskWriteAlert(alert sessionpressure.DiskWriteAlert) error {
 		Source:         "session-pressure-helper",
 		Seconds:        "12",
 		ExecuteCommand: "/usr/bin/open ndev-pressure://disk-writes",
+	}, time.Now)
+}
+
+// notifyQueueStall raises one toast per stall episode (work queue v2 slice 5).
+func notifyQueueStall(stall sessionpressure.QueueStall) error {
+	body := fmt.Sprintf("Work queue idle for %ds: %d of %d capacity used while a %s waiter (weight %d) fits. Selector: %s.",
+		stall.DurationMS/1000, stall.Used, stall.EffectiveCapacity, stall.Class, stall.Weight, stall.DecisionReason)
+	return notifyinbox.Append(notifyinbox.Path(os.Getenv("HOME"), ""), notifyinbox.Toast{
+		Title:          "Work queue stalled",
+		Body:           body,
+		Severity:       "warning",
+		Source:         "session-pressure-helper",
+		Seconds:        "12",
+		ExecuteCommand: "/usr/bin/open ndev-pressure://work",
 	}, time.Now)
 }
 

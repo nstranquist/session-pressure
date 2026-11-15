@@ -43,6 +43,9 @@ type WorkReplayComparison struct {
 	SelectorBenchmark          WorkSelectorBenchmark    `json:"selector_benchmark"`
 	PromotionReady             bool                     `json:"promotion_ready"`
 	ReviewSignals              []string                 `json:"review_signals"`
+	// QueueStalls is the trace measurement of the stall guard condition
+	// (work_stall.go). The CLI attaches it with the resident level timeline.
+	QueueStalls *WorkStallReplay `json:"queue_stalls,omitempty"`
 }
 
 // WorkReplayMinimumRegressionSamples is the smallest per-class population on
