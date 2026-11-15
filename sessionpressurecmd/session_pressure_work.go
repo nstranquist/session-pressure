@@ -70,11 +70,13 @@ the default auto placement rejects ineligible Go work while remote routing is en
 Use --placement remote to require remote execution. Disabled routing and unsupported
 commands fail before local admission; this option never falls back to the Mac.
 Use --priority for an audited agent self-priority request. It appends behind any
-operator-pinned sequence and changes queue order only; it cannot bypass host
-pressure, capacity, storage, active leases, or the operator's existing order.
+operator-pinned sequence. By default it changes queue order only. If
+work_limits.allow_override_beyond_capacity is enabled, priority and operator
+overrides may exceed weighted capacity. They never bypass host-pressure or
+storage admission, preempt active leases, or replace the operator's order.
 Override is a one-shot queue-priority mutation. It runs the selected live waiters
-next, in the order given, but never preempts leases or bypasses host-pressure or
-capacity safety. Repeat --operation-id to pin an explicit order, or use --all to
+next, in the order given, subject to that same capacity policy and host-pressure
+admission. Repeat --operation-id to pin an explicit order, or use --all to
 pin every waiter in current queue order; each entry inherits the head
 reservation as its predecessor acquires. A later override replaces the whole
 pinned sequence rather than adding to it, and --clear releases it so the queue
@@ -268,7 +270,7 @@ func cmdSessionPressureWorkOverride(g *Flags, coordinator *sessionpressure.WorkC
 		return sessionPressureError("work override requires --operation-id from the current work status, --all to pin the whole queue, or --clear to release it", 2)
 	}
 	if !confirmed {
-		return sessionPressureError("work override requires --confirm; it changes queue priority but preserves pressure and capacity safety", 2)
+		return sessionPressureError("work override requires --confirm; it changes queue priority and follows the configured capacity policy and host-pressure admission", 2)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	var results []sessionpressure.WorkOverrideResult
