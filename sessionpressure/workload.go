@@ -17,7 +17,17 @@ var workloadBudgets = map[string]int64{
 	"docgraph-ask": 60000, "browser-mcp-script": 90000,
 	"docs.noop": 15000, "docs.incremental": 60000, "docs.full": 180000,
 	"candidate-verify-path": 960000,
+	// delivery-darwin is the commit-delivery worker's Mac-only required checks
+	// (Swift, codesign, ndev Darwin build). It also selects interactive
+	// ordering and the capped red lane (ParseWorkRunArgs).
+	WorkloadDeliveryDarwin: 600000,
 }
+
+// WorkloadDeliveryDarwin marks commit-delivery Darwin checks. The delivery
+// worker sets it explicitly; it is never inferred from argv. Decision record:
+// corpus/work-queue-v2-2026-11-15.md, "Delivery Darwin ordering". Nico
+// approved red-lane use on 2026-11-15.
+const WorkloadDeliveryDarwin = "delivery-darwin"
 
 func ValidateWorkload(workload, cohort string) error {
 	if workload != "" {

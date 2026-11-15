@@ -334,6 +334,15 @@ func ParseWorkRunArgs(args []string) (WorkRunOptions, error) {
 	if !interactiveSet {
 		options.Interactive, options.InteractiveSource = interactiveFromEnv(workRunGetenv)
 	}
+	// Delivery Darwin checks get the attended-chat treatment: ordering ahead
+	// of unprotected background work with no drain hold, and the same capped
+	// red lane. They gain no protection, override or extra capacity.
+	if options.Workload == WorkloadDeliveryDarwin {
+		if interactiveSet && !options.Interactive {
+			return WorkRunOptions{}, errors.New("--no-interactive conflicts with --workload " + WorkloadDeliveryDarwin)
+		}
+		options.Interactive, options.InteractiveSource = true, interactiveSourceDeliveryDarwin
+	}
 	if err := ValidateWorkload(options.Workload, options.Cohort); err != nil {
 		return WorkRunOptions{}, err
 	}

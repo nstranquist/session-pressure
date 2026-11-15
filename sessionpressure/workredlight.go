@@ -19,7 +19,9 @@ import (
 // It stays narrow because the guard exists to prevent memory-driven kernel
 // panics. Every condition must hold:
 //
-//   - the operation comes from an attended (interactive) session.
+//   - the operation comes from an attended (interactive) session, or is a
+//     commit-delivery Darwin check (--workload delivery-darwin, approved by
+//     Nico on 2026-11-15).
 //   - the pressure level is red, never critical, and the dimension is memory
 //     or swap. Storage and unknown dimensions fail closed.
 //   - the class weight is within FastLaneMaxWeight (the express classes).
@@ -205,6 +207,9 @@ const (
 	interactiveSourceFlag      = "flag"
 	interactiveSourceEnvNDev   = "env:" + InteractiveEnv
 	interactiveSourceEnvClaude = "env:" + claudeSessionAttendedEnv
+	// interactiveSourceDeliveryDarwin: the commit-delivery worker's Darwin
+	// checks, by explicit --workload delivery-darwin.
+	interactiveSourceDeliveryDarwin = "workload:" + WorkloadDeliveryDarwin
 )
 
 func interactiveFromEnv(getenv func(string) string) (bool, string) {

@@ -176,6 +176,29 @@ func TestWorkRunInteractiveComesFromAttendedSession(t *testing.T) {
 	}
 }
 
+func TestWorkRunDeliveryDarwinIsInteractiveWithoutPriority(t *testing.T) {
+	previous := workRunGetenv
+	defer func() { workRunGetenv = previous }()
+	// The delivery worker runs headless: no attended-session environment.
+	workRunGetenv = func(string) string { return "" }
+	options, err := ParseWorkRunArgs([]string{"--workload", WorkloadDeliveryDarwin, "--class", "test", "--wait", "30m",
+		"--placement", "local", "--placement-reason", "swift-macos-app", "--", "swift", "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ordering and the capped red lane only: never an operator pin.
+	if !options.Interactive || options.Priority || options.InteractiveSource != interactiveSourceDeliveryDarwin {
+		t.Fatalf("delivery-darwin: %+v", options)
+	}
+	if _, err := ParseWorkRunArgs([]string{"--workload", WorkloadDeliveryDarwin, "--no-interactive", "--", "swift", "test"}); err == nil {
+		t.Fatal("--no-interactive with delivery-darwin accepted")
+	}
+	options, err = ParseWorkRunArgs([]string{"--workload", "precommithook", "--", "swift", "test"})
+	if err != nil || options.Interactive {
+		t.Fatalf("other workloads must not become interactive: %+v err=%v", options, err)
+	}
+}
+
 func interactiveTestWaiter(id string, class WorkClass, weight int, interactive bool) WorkWaiterRecord {
 	return WorkWaiterRecord{OperationID: id, Class: class, Weight: weight, Interactive: interactive}
 }
