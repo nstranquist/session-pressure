@@ -143,6 +143,14 @@ func TestPlanRemoteNodeWork(t *testing.T) {
 	if _, reason := planRemoteNodeWork(npmRepo, []string{"pnpm", "test"}); reason == "" {
 		t.Fatal("pnpm command against an npm lockfile accepted")
 	}
+	// A script that calls a Mac-only tool stays local, also one level deep.
+	macRepo := gitRepo(t, map[string]string{
+		"package.json":      `{"scripts":{"test":"vitest run && npm run test:ios","test:ios":"xcrun simctl list"}}`,
+		"package-lock.json": "{}",
+	})
+	if _, reason := planRemoteNodeWork(macRepo, []string{"npm", "test"}); reason != "package script uses Mac-only xcrun" {
+		t.Fatalf("mac-only script reason: %q", reason)
+	}
 	// No lockfile, no remote.
 	bare := gitRepo(t, map[string]string{"package.json": `{}`})
 	if _, reason := planRemoteNodeWork(bare, []string{"npx", "vitest", "run"}); !strings.Contains(reason, "lockfile") {

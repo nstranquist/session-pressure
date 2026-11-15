@@ -106,7 +106,63 @@ func planRemoteNodeWork(cwd string, command []string) (remoteNodePlan, string) {
 			return remoteNodePlan{}, fmt.Sprintf("pnpm %q is not pinned on the runner", wanted)
 		}
 	}
+	if tool := macOnlyScriptTool(dir, argv); tool != "" {
+		return remoteNodePlan{}, "package script uses Mac-only " + tool
+	}
 	return plan, ""
+}
+
+// macOnlyTools are commands a Linux runner cannot provide. A package script
+// that names one would fail remotely with no fallback, so it stays local.
+var macOnlyTools = []string{"xcrun", "xcodebuild", "swift", "swiftc", "osascript", "launchctl", "codesign", "security", "sw_vers", "defaults", "pbcopy", "pbpaste", "plutil", "ditto", "hdiutil", "open"}
+
+// macOnlyScriptTool reads the npm/pnpm script the command runs from the
+// nearest package.json and reports a Mac-only tool it names. It checks the
+// named script and the scripts it runs through `npm run`/`pnpm run` one level
+// deep; deeper indirection is not followed.
+func macOnlyScriptTool(dir string, argv []string) string {
+	tokens := lightCommandTokens(argv)
+	base := strings.ToLower(filepath.Base(tokens[0]))
+	if base != "npm" && base != "pnpm" {
+		return ""
+	}
+	script, ok := nodePackageScript(base, tokens[1:])
+	if !ok {
+		return ""
+	}
+	pkgDir, name := findUpward(dir, "/", "package.json")
+	if name == "" {
+		return ""
+	}
+	body, err := os.ReadFile(filepath.Join(pkgDir, name))
+	if err != nil {
+		return ""
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(body, &pkg) != nil {
+		return ""
+	}
+	texts := []string{pkg.Scripts[script], pkg.Scripts["pre"+script], pkg.Scripts["post"+script]}
+	for _, field := range strings.Fields(pkg.Scripts[script]) {
+		if nested, ok := pkg.Scripts[field]; ok {
+			texts = append(texts, nested)
+		}
+	}
+	for _, text := range texts {
+		for _, word := range strings.FieldsFunc(text, func(r rune) bool {
+			return r == ' ' || r == '\t' || r == '&' || r == '|' || r == ';' || r == '(' || r == ')' || r == '"' || r == '\''
+		}) {
+			word = filepath.Base(word)
+			for _, tool := range macOnlyTools {
+				if word == tool {
+					return tool
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // remoteNodeCommand unwraps a single-statement shell command (cd allowed)

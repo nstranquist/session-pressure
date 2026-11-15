@@ -254,6 +254,46 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
   did not build at the time because of another agent's unfinished
   `sampler.go` change.)
 
+- 2026-11-15, release `e5bb660` (CLI and launchd helper, drift false). Live
+  check at 15:23Z: a new `npm ci` requested as `test` was queued as
+  `install` with `tool_family: node`.
+
+### Slice 3, Node verification on runner-3 (landed 2026-11-15)
+
+- Runner prerequisite: nicos-ops `tools/runner-tools/pnpm` installs pinned
+  pnpm 11.22.0, 11.15.1, 9.15.0 and 9.12.0 under
+  `/srv/build/opt/pnpm-<v>`, each SHA-256 pinned and cross-checked against
+  the registry sha512. Installed on runner-3 by job
+  `e14a5882-7823-4deb-b088-ddcab12e7d5e` (tests, vet and four
+  `pnpm --version` checks passed). The source waits in the nicos-ops delivery
+  queue (delivery `a3ba107d`). The install is live already.
+- Release `d91858c`: `remote_node.go` plans a Node job (Git root, lockfile,
+  Node pin from `.node-version` or the Mac, pnpm pin from `packageManager`),
+  installs from the lockfile on the runner with a private HOME and npm cache,
+  and runs only verification (test runners, `tsc --noEmit`, eslint). Write-back
+  flags, compound shell commands and unpinned versions stay local with a
+  `remote_work_declined` event. Enabled with `"node": true` in
+  `remote-work.json`.
+- Proof: delivery-queue-3d `npm test` on runner-3, 77 files and 266 tests
+  passed, 34 s wall, about 0.6 s Mac CPU, upload 6.7 s and 22.6 MB.
+  patina-ui `pnpm test` (pnpm 11.15.1), 19 files and 376 tests passed.
+- Follow-up guard (this commit): a package script that calls a Mac-only tool
+  (xcrun, xcodebuild, swift, osascript, launchctl, codesign and others),
+  directly, in a pre or post script, or one `npm run` level deep, stays local
+  with reason `package script uses Mac-only <tool>`. Tested on runner-3.
+- Not done: the generic remote job refactor of `TryRemoteWork`.
+
+### Next slices (planned, not started)
+
+- Slice 4, closed-loop placer: per tool family and repository, compare local
+  ETA (queue wait estimate plus local runtime, including host-blocked wait)
+  with remote ETA (runner wait plus preparation plus runtime) from
+  `by_tool_family` and `remote_work_finished` events.
+- Slice 5, stall guard: free capacity, a ready waiter that fits, and no
+  admission for 30 s records `queue_stall` and raises a bell alert; replay of
+  2026-11-15 events in `work evaluate`.
+- Slice 6, app: placement column, ETA, remote slot bar.
+
 ## 5. Open items
 
 - [ ] Install the v1.1 binary and confirm in live status that parked
