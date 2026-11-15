@@ -2,6 +2,7 @@ package gocachelru
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -150,22 +151,37 @@ func TestTornJournalTailRecovered(t *testing.T) {
 		t.Fatalf("torn tail must not fail New: %v", err)
 	}
 	defer b.Close()
-	// Truncation happens during New's replay, before any new rows are
-	// recorded by the gets below.
+	// Nothing truncates the journal: a final row without its newline may
+	// be a lock-free append still in flight.
 	info, err := os.Stat(journal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Size() != good.Size() {
-		t.Fatalf("journal not truncated to last good row: %d != %d", info.Size(), good.Size())
+	if want := good.Size() + int64(len("kkkk not json\n{\"key\":\"torn")); info.Size() != want {
+		t.Fatalf("journal size %d, want %d (nothing cut)", info.Size(), want)
 	}
 	if got := b.get(Request{ID: 2, ActionID: []byte("keep")}); got.Miss || got.Size != 3 {
 		t.Fatalf("entry before torn tail lost: %+v", got)
 	}
+	// A locked writer terminates the torn row before its own, so its rows
+	// replay; the joined torn row is skipped.
+	if r := b.put(Request{ID: 3, ActionID: []byte("after"), OutputID: []byte("o"), BodySize: 2}, []byte("xy")); r.Err != "" {
+		t.Fatal(r.Err)
+	}
+	fresh := &Cache{dir: dir, index: map[string]indexEntry{}}
+	if err := fresh.replayJournal(false); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"action-" + hex.EncodeToString([]byte("keep")), "action-" + hex.EncodeToString([]byte("after"))} {
+		if _, ok := fresh.index[key]; !ok {
+			t.Fatalf("replay lost %s", key)
+		}
+	}
 }
 
-// Under lock contention a get degrades to a miss and a put serves its
-// already-written object unindexed; neither may error into the build.
+// A get needs no authority lock, so it hits while a peer holds it. A put
+// under contention serves its already-written object unindexed; neither may
+// error into the build.
 func TestGetPutFailSoftUnderLockContention(t *testing.T) {
 	old := authorityLockTimeout
 	authorityLockTimeout = 150 * time.Millisecond
@@ -195,8 +211,8 @@ func TestGetPutFailSoftUnderLockContention(t *testing.T) {
 	defer holder.Close()
 	err = holder.withLock(func() error {
 		got := victim.get(Request{ID: 2, ActionID: []byte("seeded")})
-		if got.Err != "" || !got.Miss {
-			t.Errorf("contended get = %+v, want clean miss", got)
+		if got.Err != "" || got.Miss || got.Size != 3 {
+			t.Errorf("get under a held lock = %+v, want a hit", got)
 		}
 		put := victim.put(Request{ID: 3, ActionID: []byte("fresh"), OutputID: []byte("out2"), BodySize: 4}, []byte("data"))
 		if put.Err != "" {
@@ -302,5 +318,119 @@ func TestPeerCloseCompactionDoesNotDisturbLiveClient(t *testing.T) {
 	r = a.put(Request{ID: 3, ActionID: []byte("via-a"), OutputID: []byte("out"), BodySize: 3}, []byte("xyz"))
 	if r.Err != "" {
 		t.Fatalf("live client put after peer compaction: %s", r.Err)
+	}
+}
+
+// Regression test for the 2026-11-15 runner-3 lock starvation. A
+// client whose offset survived a truncation and regrowth of the journal
+// resumed mid-row, failed to parse, and truncated the shared journal at its
+// own offset, cutting a peer's appended row. Each cut misaligned more
+// clients. A reader must never shrink the journal for a row it cannot
+// parse, and a misaligned offset must replay from zero.
+func TestMisalignedReaderNeverCutsPeerRows(t *testing.T) {
+	dir := t.TempDir()
+	a, err := New(dir, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b, err := New(dir, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	put := func(c *Cache, name string) {
+		t.Helper()
+		if r := c.put(Request{ID: 1, ActionID: []byte(name), OutputID: []byte("out-" + name), BodySize: 3}, []byte("abc")); r.Err != "" {
+			t.Fatal(r.Err)
+		}
+	}
+	put(a, "first")
+	put(a, "second")
+	if got := b.get(Request{ID: 2, ActionID: []byte("second")}); got.Miss {
+		t.Fatalf("b did not see a's rows: %+v", got)
+	}
+	journal := filepath.Join(dir, "index.jsonl")
+	// A peer (or a killed append) shortens the journal by part of its last
+	// row; a's next appends regrow it past b's recorded offset.
+	info, err := os.Stat(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(journal, info.Size()-10); err != nil {
+		t.Fatal(err)
+	}
+	a.offset = 0 // a replays and repairs the tail as the next locked writer.
+	a.journalID = nil
+	put(a, "third")
+	put(a, "fourth")
+	before, err := os.Stat(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Size() <= b.offset {
+		t.Fatalf("repro needs regrowth past b's offset: size %d, offset %d", before.Size(), b.offset)
+	}
+	if got := b.get(Request{ID: 3, ActionID: []byte("fourth")}); got.Miss || got.Err != "" {
+		t.Fatalf("b lost a's row after misaligned resume: %+v", got)
+	}
+	after, err := os.Stat(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Size() < before.Size() {
+		t.Fatalf("reader shrank the shared journal: %d -> %d", before.Size(), after.Size())
+	}
+	if got := a.get(Request{ID: 4, ActionID: []byte("third")}); got.Miss || got.Err != "" {
+		t.Fatalf("a lost its own row: %+v", got)
+	}
+}
+
+// A client's first put replays the journal before taking the authority
+// lock, so a held lock costs it only the rows appended meanwhile.
+func TestUnlockedSnapshotReplayLeavesInFlightRows(t *testing.T) {
+	dir := t.TempDir()
+	a, err := New(dir, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 50; i++ {
+		id := []byte{'k', byte(i)}
+		if r := a.put(Request{ID: int64(i + 1), ActionID: id, OutputID: id, BodySize: 1}, []byte("x")); r.Err != "" {
+			t.Fatal(r.Err)
+		}
+	}
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	c := &Cache{dir: dir, index: map[string]indexEntry{}}
+	if err := c.replayJournal(false); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "index.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.offset != info.Size() || len(c.index) < 50 {
+		t.Fatalf("unlocked snapshot replayed %d of %d bytes, %d entries", c.offset, info.Size(), len(c.index))
+	}
+	// An incomplete final row seen without the lock is left in place.
+	f, err := os.OpenFile(filepath.Join(dir, "index.jsonl"), os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"key":"in-flight`); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if err := c.replayJournal(false); err != nil {
+		t.Fatal(err)
+	}
+	grown, err := os.Stat(filepath.Join(dir, "index.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grown.Size() != info.Size()+int64(len(`{"key":"in-flight`)) || c.offset != info.Size() {
+		t.Fatalf("unlocked replay touched an in-flight row: size %d offset %d", grown.Size(), c.offset)
 	}
 }

@@ -47,14 +47,39 @@ func TestPinnedCandidatesDoNotStarveLaterEviction(t *testing.T) {
 	}
 }
 
+// A journal row naming a path outside the cache must never reach eviction.
+// Startup no longer reads the journal (a get needs no index), so the guard
+// sits in every replay: the put that would evict cannot load the index, and
+// degrades to an unindexed object instead of deleting anything.
 func TestCorruptIndexCannotEscapeCache(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "index.jsonl"), []byte("{\"key\":\"../../outside\",\"size\":1,\"access\":1}\n"), 0600); err != nil {
+	root := t.TempDir()
+	dir := filepath.Join(root, "cache")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if c, err := New(dir, 1); err == nil {
-		c.Close()
-		t.Fatal("unsafe index accepted")
+	outside := filepath.Join(root, "outside")
+	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.jsonl"), []byte("{\"key\":\"../outside\",\"size\":1,\"access\":1}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(dir, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.withLock(c.loadIndex); err == nil {
+		t.Fatal("unsafe index accepted by replay")
+	}
+	c.resetJournal()
+	c.journalID = nil
+	put := c.put(Request{ID: 1, ActionID: []byte("a"), OutputID: []byte("o"), BodySize: 2}, []byte("xy"))
+	if put.Err != "" || put.DiskPath == "" {
+		t.Fatalf("put on an unsafe journal must degrade: %+v", put)
+	}
+	c.Close()
+	if raw, err := os.ReadFile(outside); err != nil || string(raw) != "keep" {
+		t.Fatalf("eviction escaped the cache: %q %v", raw, err)
 	}
 }
 

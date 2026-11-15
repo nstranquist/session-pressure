@@ -78,6 +78,10 @@ type Cache struct {
 	journalGen string
 	total      int64
 	eviction   evictionHeap
+	// indexed is set once this client has replayed the journal under the
+	// authority lock. Only a client that puts needs the index: a get and a
+	// get-only close never read it (see get and Close).
+	indexed bool
 }
 
 // Lock patience is a var so tests can shrink it. Startup gets the long
@@ -168,6 +172,11 @@ func New(dir string, maxBytes int64) (*Cache, error) {
 		return nil, err
 	}
 	c := &Cache{dir: dir, maxBytes: maxBytes, lock: lock, index: map[string]indexEntry{}}
+	// Startup does not read the journal. On runner-3 (2026-11-15) it held
+	// 861,885 live keys in 1.1 M rows; a full replay cost 1.8 s of CPU and
+	// about 400 MB per Go process, and every go command starts a helper.
+	// A get needs no index, so a warm build never replays; a client loads
+	// the index on its first put (ensureIndex).
 	err = c.withLockWithin(authorityStartupLockTimeout, func() error {
 		// Client locks are held for the complete protocol lifetime. A dead process
 		// releases its OS lock; PID reuse cannot make an abandoned pin live again.
@@ -201,10 +210,7 @@ func New(dir string, maxBytes int64) (*Cache, error) {
 		if err != nil {
 			return err
 		}
-		if err = unix.Flock(int(c.clientLock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-			return err
-		}
-		return c.loadIndex()
+		return unix.Flock(int(c.clientLock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 	})
 	if err != nil {
 		if c.clientLock != nil {
@@ -259,13 +265,22 @@ func peekJournalFirstKey(f *os.File) (string, bool) {
 	} else if n > 4096 {
 		return "", false
 	}
+	return journalGeneration(line), true
+}
+
+// journalGeneration names a journal by its first row: the row's key, or a
+// digest of the raw row when it does not parse, so a journal that starts
+// with a skipped torn row still has a stable generation.
+func journalGeneration(line []byte) string {
+	line = bytes.TrimSuffix(line, []byte("\n"))
 	var head struct {
 		Key string `json:"key"`
 	}
-	if json.Unmarshal(line, &head) != nil || head.Key == "" {
-		return "", false
+	if json.Unmarshal(line, &head) == nil && head.Key != "" {
+		return head.Key
 	}
-	return head.Key, true
+	sum := sha256.Sum256(line)
+	return "raw:" + hex.EncodeToString(sum[:])
 }
 
 // Replay only journal bytes added since this client last held the authority.
@@ -274,8 +289,34 @@ func peekJournalFirstKey(f *os.File) (string, bool) {
 // whose recorded inode happens to match a later incarnation of the file
 // would otherwise resume at a stale offset mid-row and fail requests with
 // "invalid cache index: invalid character ..." against a healthy file.
+//
+// The journal is shared and append-only between compactions, so a reader
+// never shrinks it for a row it cannot parse: it skips that row. Truncating
+// at the reader's own offset (the previous rule) let one misaligned client
+// cut rows other clients had appended, which misaligned their offsets in
+// turn. On runner-3 (2026-11-15) the 132 MB journal shrank several times
+// a minute, every client fell back to full replays, and the authority lock
+// was held 100% of the time in 2.3-2.5 s replays: Go jobs waited minutes for
+// GOCACHEPROG and hit their deadlines. The only truncation left is an
+// incomplete final row read under the authority lock, which only a killed
+// append can leave.
 func (c *Cache) loadIndex() error {
-	f, err := os.OpenFile(filepath.Join(c.dir, "index.jsonl"), os.O_CREATE|os.O_RDWR, 0600)
+	return c.replayJournal(true)
+}
+
+// replayJournal applies journal rows past c.offset. locked reports whether
+// the caller holds the authority lock. Without it (the startup snapshot) the
+// file may grow or be replaced while it is read, so an incomplete final row
+// is left for the next locked replay instead of being truncated.
+func (c *Cache) replayJournal(locked bool) error {
+	flags := os.O_RDONLY
+	if locked {
+		flags = os.O_CREATE | os.O_RDWR
+	}
+	f, err := os.OpenFile(filepath.Join(c.dir, "index.jsonl"), flags, 0600)
+	if errors.Is(err, os.ErrNotExist) && !locked {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -288,7 +329,7 @@ func (c *Cache) loadIndex() error {
 		c.resetJournal()
 	}
 	if c.offset > 0 {
-		if key, ok := peekJournalFirstKey(f); !ok || key != c.journalGen {
+		if key, ok := peekJournalFirstKey(f); !ok || key != c.journalGen || !rowBoundary(f, c.offset) {
 			c.resetJournal()
 		}
 	}
@@ -299,10 +340,11 @@ func (c *Cache) loadIndex() error {
 	r := bufio.NewReader(f)
 	for {
 		line, e := r.ReadSlice('\n')
-		if e == io.EOF { // A killed append leaves no trusted transaction. Drop only the incomplete tail.
-			if len(line) > 0 {
-				return f.Truncate(c.offset)
-			}
+		if e == io.EOF {
+			// A final row without its newline is left in place and not
+			// consumed: gets append without the lock, so it may still be
+			// in flight. A killed append is terminated by the next locked
+			// writer (record), and the joined row is then skipped below.
 			return nil
 		}
 		if e != nil {
@@ -313,21 +355,17 @@ func (c *Cache) loadIndex() error {
 		}
 		var row indexEntry
 		if err = json.Unmarshal(line, &row); err != nil {
-			// A syntactically torn row means the tail past the last good
-			// row cannot be trusted (killed append, or a reader that
-			// resumed mid-journal despite the generation check). Drop
-			// it and serve what replayed cleanly: a cache index must
-			// never fail a build. Rows with valid syntax but invalid
-			// identity still hard-fail below — that is the escape
-			// guard, and it is not reachable from a torn read of a
-			// flat row.
-			if terr := f.Truncate(c.offset); terr != nil {
-				return terr
-			}
+			// A syntactically torn row (for example a killed append that
+			// a later append completed with its own row) is skipped, and
+			// the rows after it still apply: a cache index must never
+			// fail a build, and the journal is not this reader's to cut.
+			// Rows with valid syntax but invalid identity still
+			// hard-fail below; that is the escape guard.
 			if c.offset == 0 {
-				c.journalGen = ""
+				c.journalGen = journalGeneration(line)
 			}
-			return nil
+			c.offset += int64(len(line))
+			continue
 		}
 		key := strings.TrimPrefix(row.Key, "action-")
 		decoded, decodeErr := hex.DecodeString(key)
@@ -350,30 +388,104 @@ func (c *Cache) loadIndex() error {
 		c.offset += int64(len(line))
 	}
 }
+
+// rowBoundary reports whether offset starts a row: the byte before it ends
+// the previous row. A client whose offset survived a truncation and regrowth
+// of the same journal would otherwise resume mid-row.
+func rowBoundary(f *os.File, offset int64) bool {
+	if offset == 0 {
+		return true
+	}
+	b := []byte{0}
+	n, err := f.ReadAt(b, offset-1)
+	return n == 1 && err == nil && b[0] == '\n'
+}
+
 func (c *Cache) record(row indexEntry) error {
 	raw, err := json.Marshal(row)
 	if err != nil {
 		return err
 	}
 	raw = append(raw, '\n')
-	f, err := os.OpenFile(filepath.Join(c.dir, "index.jsonl"), os.O_APPEND|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(filepath.Join(c.dir, "index.jsonl"), os.O_APPEND|os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
 		return err
+	}
+	// A killed append can leave a final row without its newline. Start a
+	// new row so this one is not glued to it; a get still appending at
+	// this moment finishes first (appends are serialized by the kernel),
+	// which leaves at most an empty row, and replay skips it.
+	if !endsWithNewline(f) {
+		raw = append([]byte{'\n'}, raw...)
 	}
 	_, err = f.Write(raw)
 	if err == nil {
 		err = f.Sync()
 	}
+	var end int64
+	if err == nil {
+		end, err = f.Seek(0, io.SeekCurrent) // after an append: the end of this row
+	}
 	f.Close()
 	if err != nil {
 		return err
 	}
-	if c.offset == 0 {
-		c.journalGen = row.Key
-	}
 	c.applyRow(row)
-	c.offset += int64(len(raw))
+	// Advance only when this row directly follows what this client has
+	// replayed. Otherwise rows it has not read (a peer's lock-free hint, a
+	// torn tail) lie before it; the next locked replay reads them and this
+	// row again, and applyRow is idempotent.
+	if start := end - int64(len(raw)); start == c.offset {
+		if c.offset == 0 {
+			c.journalGen = row.Key
+		}
+		c.offset = end
+	}
 	return nil
+}
+
+// endsWithNewline reports whether the journal is empty or its last byte ends
+// a row.
+func endsWithNewline(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil || info.Size() == 0 {
+		return err == nil
+	}
+	b := []byte{0}
+	n, err := f.ReadAt(b, info.Size()-1)
+	return n == 1 && err == nil && b[0] == '\n'
+}
+
+// appendHint records a get's access time without the authority lock and
+// without fsync. It is an eviction-order hint only: losing it (a crash, or
+// a compaction that replaced the file just before the write) costs nothing
+// but LRU precision. It leaves this client's offset alone; the next locked
+// replay reads the row like any peer's row.
+func (c *Cache) appendHint(row indexEntry) {
+	raw, err := json.Marshal(row)
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(c.dir, "index.jsonl"), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		return
+	}
+	_, _ = f.Write(append(raw, '\n'))
+	f.Close()
+}
+
+// ensureIndex loads the index for a client about to change the cache. The
+// bulk of the journal replays before the authority lock; the locked
+// loadIndex then reads only rows appended meanwhile. The caller must not
+// hold the lock.
+func (c *Cache) ensureIndex() {
+	if c.indexed {
+		return
+	}
+	if c.replayJournal(false) != nil {
+		c.resetJournal()
+		c.journalID = nil
+	}
 }
 
 // newJournalMarker returns a fresh 64-hex journal generation key. The
@@ -431,10 +543,12 @@ func (c *Cache) get(req Request) Response {
 	if c.closed || !validID(req.ActionID) {
 		return resp
 	}
-	err := c.withLock(func() error {
-		if err := c.loadIndex(); err != nil {
-			return err
-		}
+	// A get takes no authority lock. Every file it reads is published
+	// atomically (rename or link), and eviction never removes an object
+	// with a pin link, so a get that races an eviction either pins the
+	// object first or sees it gone and misses. Under the lock, eight
+	// clients on runner-3 waited 33-40 ms per get (2026-11-15).
+	err := func() error {
 		raw, err := os.ReadFile(c.actionPath(req.ActionID))
 		if os.IsNotExist(err) {
 			return nil
@@ -460,15 +574,13 @@ func (c *Cache) get(req Request) Response {
 		if err != nil {
 			return err
 		}
-		if err = c.record(indexEntry{Key: meta.Object, Size: meta.Size, Access: time.Now().UnixNano()}); err != nil {
-			return err
-		}
+		c.appendHint(indexEntry{Key: meta.Object, Size: meta.Size, Access: time.Now().UnixNano()})
 		resp = Response{ID: req.ID, OutputID: meta.OutputID, Size: meta.Size, DiskPath: path, Time: &meta.PutAt}
 		return nil
-	})
+	}()
 	if err != nil {
-		// A get must never fail a build: lock contention or a journal
-		// problem degrades to a miss, and the caller recompiles.
+		// A get must never fail a build: a file problem degrades to a
+		// miss, and the caller recompiles.
 		return Response{ID: req.ID, Miss: true}
 	}
 	return resp
@@ -514,10 +626,12 @@ func (c *Cache) putReader(req Request, body io.Reader) Response {
 	if c.closed {
 		return fail(fmt.Errorf("cache is closed"))
 	}
+	c.ensureIndex()
 	err = c.withLock(func() error {
 		if err := c.loadIndex(); err != nil {
 			return err
 		}
+		c.indexed = true
 		// Register before publish: a crash can conservatively overcount a missing
 		// object, but never leave an unaccounted published object.
 		if err := c.record(indexEntry{Key: key, Size: n, Access: time.Now().UnixNano()}); err != nil {
@@ -619,6 +733,17 @@ func (c *Cache) Close() error {
 		return nil
 	}
 	c.closed = true
+	if !c.indexed {
+		// A get-only client added no bytes, so it owes no eviction and no
+		// compaction: dropping its pins is all its close does. Removing a
+		// pin needs no authority lock; eviction re-reads link counts.
+		err := os.RemoveAll(c.pins)
+		if c.clientLock != nil {
+			c.clientLock.Close()
+		}
+		c.lock.Close()
+		return err
+	}
 	err := c.withLock(func() error {
 		if err := c.loadIndex(); err != nil {
 			return err
