@@ -31,3 +31,5 @@ product decisions have all been reconstructed.
 - [All admission guards disabled](guards-disabled-2026-11-15.md): at Nico's request, host, storage, launch admission and the weighted cap are off on the Mac; backup and revert steps.
 
 - [Memory attribution and the swap lag release](memory-attribution-swap-lag-2026-11-15.md): memory families (LSP, agent host, build/test, browser) in latest.json, heartbeats and the delivery doctor; swap lag release (default off) enabled at 15 minutes on this host after approval, with telemetry evidence.
+
+- [gocache-lru lock-free gets](gocache-lru-lock-free-2026-11-15.md): runner-3 GOCACHEPROG waits; no startup replay, lock-free gets, journal never cut; benchmarks and deploy state.
