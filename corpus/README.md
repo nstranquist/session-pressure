@@ -28,5 +28,6 @@ product decisions have all been reconstructed.
 - [Work queue v1 rating and v2 plan](work-queue-v2-2026-11-15.md): 2026-11-15 parked-reservation stall, v1 score from telemetry, v1.1 selector schema 8 hotfix, v2 placement-first plan with runner-3 offload.
 
 - [Interactive priority and the interactive red lane](interactive-priority-2026-11-15.md): attended agent chats go ahead of unprotected background work; capped light work under red memory, never critical or storage.
+- [All admission guards disabled](guards-disabled-2026-11-15.md): at Nico's request, host, storage, launch admission and the weighted cap are off on the Mac; backup and revert steps.
 
 - [Memory attribution and the swap lag release](memory-attribution-swap-lag-2026-11-15.md): memory families (LSP, agent host, build/test, browser) in latest.json, heartbeats and the delivery doctor; swap lag release (default off) enabled at 15 minutes on this host after approval, with telemetry evidence.
