@@ -196,6 +196,15 @@ func macIdleProbe(coordinator *WorkCoordinator, class WorkClass, admission func(
 		if host := admission(); !host.Allowed || host.Level != LevelNormal {
 			return false, "host pressure " + string(host.Level)
 		}
+		// Admission reports normal in observe mode, whatever the host does.
+		// The resident sample is the host's real level.
+		resident, ok := NewTelemetryStore(coordinator.Dir).ReadLatest()
+		if !ok || resident.Timestamp.IsZero() || time.Since(resident.Timestamp) > headroomSampleTTL {
+			return false, "no fresh resident sample"
+		}
+		if resident.Level != LevelNormal {
+			return false, "host level " + string(resident.Level)
+		}
 		return true, ""
 	}
 }

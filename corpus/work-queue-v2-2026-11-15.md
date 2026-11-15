@@ -316,12 +316,99 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
   need an idle Mac. Check `work_placement_decided` rows after the next quiet
   period.
 
-### Next slices (planned, not started)
+### Slice 5, stall guard (landed 2026-11-15, commits 0ebf4d4, 4fde84e)
 
-- Slice 5, stall guard: free capacity, a ready waiter that fits, and no
-  admission for 30 s records `queue_stall` and raises a bell alert; replay of
-  2026-11-15 events in `work evaluate`.
-- Slice 6, app: placement column, ETA, remote slot bar.
+- Condition: free capacity beside a live waiter that fits (heartbeat within
+  30 s, not a parked pressure reservation), while work admission allows it,
+  with no new lease for 30 s. `admission.Allowed` carries the policy: with
+  enforcement on, red refuses and is not a stall; in observe mode red admits,
+  so an idle queue at red is a stall. At warning, the derated ceiling is the
+  capacity.
+- Live (`work_stall.go`, `monitor.go`, helper): the resident monitor runs
+  `QueueStallDetector.Observe` on each sample from the published queue
+  snapshot (no mutation lock). The first crossing of an episode records
+  `work_queue_stall` (operation, class, weight, used, effective capacity,
+  selector decision, protected operation) and raises one toast "Work queue
+  stalled". The end records `work_queue_stall_cleared` with the duration. Gap:
+  the app routes only `ndev-pressure://disk-writes`, so the toast's
+  `ndev-pressure://work` link opens the app but not the Work tab. That is
+  slice 6.
+- Replay: `work evaluate` adds `replay.queue_stalls`, built from work events
+  (queue entry = acquired_at - queue_wait_ms, capacity as recorded on the
+  events at that time) and the resident level timeline (state transitions,
+  heartbeats, resident stops). Only normal-level time is judged, because the
+  enforcement mode and warning derate at event time are not recorded.
+- First version error, found and fixed the same day: the replay used the
+  current policy capacity (1000 since the guards were disabled) for history,
+  which produced a false 1117 s stall. 4fde84e uses event-time capacity.
+- Proof: tests and vet passed on runner-3. Release 4fde84e installed,
+  helper promoted, drift false. `work evaluate --since 24h` on real events:
+  3 episodes, 529 s idle beyond the 30 s threshold, longest 518 s
+  (12:17Z, 6 of 8 used, a weight-2 waiter fitting, normal level). That is
+  before the v1.1 fix went live. No live stall event yet; the queue has run
+  at capacity 1000 since 17:13Z.
+- Known v1.1 gap, seen in `guards-disabled-2026-11-15.md`: a resumed pressure
+  reservation whose owner process kept an older policy (derated capacity 4,
+  weight 5) never acquired, while other processes honoured its protection.
+  The guard detects this shape. An automatic remedy (expire a protected
+  selection that has not acquired within a bound while capacity is free) is
+  still open.
+
+### Observe-mode level fix (2026-11-15, with slice 6)
+
+- Found while reviewing slices 4 and 5 under the observe-only policy (all
+  guards disabled at 16:27Z, `guards-disabled-2026-11-15.md`). In observe mode
+  `ConfiguredWorkHostAdmission` returns `{Allowed: true, Level: normal,
+  Source: observe-only}` whatever the host does. The placer then saw a red
+  Mac as idle, and the shadow memory admitter copied that `normal` level over
+  the resident's real level.
+- Fix: `macIdleProbe` also reads the resident `latest.json`. No sample within
+  the 2 min TTL means busy ("no fresh resident sample"), and a level other
+  than normal means busy ("host level <level>"). `work_headroom.go` no longer
+  overrides the resident level with the admission level. Test:
+  `TestMacIdleProbeUsesTheResidentLevel`.
+
+### Slice 6, app (2026-11-15)
+
+- Helper: `session-pressure --json work placement [--window D]
+  [--no-runners]` (`work_placement_view.go`). It is one read-only join:
+  - placer decisions (`work_placement_decided`), grouped by reason prefix,
+    with the last 10 in full;
+  - offloaded runs (`remote_work_finished`): count, non-zero exits, p50 and
+    p90 duration, last 10;
+  - Mac-only local placements (`work_local_placement`) by reason;
+  - the stall guard's last episode. An episode is open only while its
+    waiter is still queued, because a stopped monitor cannot record the clear;
+  - a start ETA for each waiter. This is a strict FIFO simulation from the
+    7-day class p50 runtimes. An unmeasured class makes every later ETA
+    unknown, not guessed. It ignores pressure holds and lookahead, and the
+    payload states that basis;
+  - live slots of the active fleet hosts only (`runnerfleet.Observe`; reserve
+    and retired hosts are never probed). The 8 s bound and 2.7 s measured
+    cost are the reasons the app polls it slower than work status.
+- App: a "Placement & offload" card in the Work view (offload and placer
+  chips, a runner slot bar with queued overflow, decision and remote-run
+  stats, reasons, recent decisions). A red stall banner shows at the top
+  while an episode is open. Each waiter row has an ETA. The
+  `ndev-pressure://work` deep link, which the stall toast opens, now selects
+  the Work view. The placement view refreshes at most every 30 s while the
+  Work view is focused, or every 5 s during a stall. The parked badge from
+  the v1.1 work ships in the same build.
+- Evidence: offscreen `ImageRenderer` renders (no window) of a fixture with
+  a stall and of the live payload. The Swift suite passed (150 tests). The
+  first render showed three defects that are now fixed: "in 0s" age text,
+  `mac_busy` reasons split by waiter count, and "remote failed" counting
+  real test failures as runner trouble (now "remote exit ≠ 0" with help
+  text).
+- Live numbers at 17:50Z (6 h window): 16 placer decisions, 0 kept local.
+  Reasons were 12 `no_local_history` and 4 `mac_busy`. There were 142 remote
+  runs: 47 with a non-zero exit, p50 2 min, p90 10 min. Runner heavy slots
+  were seen at 3/8 to 13/8 (13 includes queued jobs).
+- Finding for the placer: placement keys hardly repeat. Of 35 keyed remote
+  runs there were 23 distinct keys, and only 3 keys had the 2 successful
+  samples the placer needs. Agents vary `-run` patterns and work in temp
+  checkouts, so the exact cwd+argv key rarely matches. The placer will stay
+  remote-only until a coarser fallback key exists (open item below).
 
 ## 5. Open items
 
@@ -381,7 +468,19 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
   Tests and vet passed on runner-3. Owner: claude (work queue v2).
 - [ ] Install the v1.1 binary and confirm in live status that parked
       reservations no longer block (needs the old waiters to drain).
-- [ ] Swift app: show `pressure_parked` as `parked`, not `held`.
+- [x] Swift app: show `pressure_parked` as `parked`, not `held` (slice 6
+      build, 2026-11-15).
+- [ ] Placer fallback key: when the exact placement key has fewer than 2
+      samples, fall back to a coarser key (repo root + tool + subcommand +
+      package set, with `-run` and temp-checkout paths normalised). Measured
+      need: only 3 of 23 keys have 2 successes. Owner: claude (work queue v2).
+- [ ] Runner gocache-lru: go test jobs on runner-3 wait for
+      GOCACHEPROG for more than 6 min while one gocache-lru holds
+      `authority.lock` and reads the 26 GB cache under a 2-CPU cgroup cap.
+      Two jobs of this workstream hung this way on 2026-11-15. Nico asked the
+      "Cost center Mac menu bar" session to fix it. The uncommitted
+      `gocachelru/lru.go` edit seen at 17:44Z does not belong to this
+      workstream.
 - [x] Fix the `runner-2` code default in `remote_work.go`.
 - [ ] Make `TestGoReuseSingleflightAndExplicitExecution` and
       `TestGoProfileSurvivesFailureTimeoutAndSignal` pass on runner-3

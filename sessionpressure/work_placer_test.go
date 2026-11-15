@@ -153,3 +153,28 @@ func TestPlaceLocallyRecordsEveryDecision(t *testing.T) {
 		t.Fatalf("decisions recorded = %d, want 2 (busy and explore; disabled and explicit are not decisions)", got)
 	}
 }
+
+func TestMacIdleProbeUsesTheResidentLevel(t *testing.T) {
+	dir := t.TempDir()
+	coordinator := NewWorkCoordinator(dir, defaultWorkLimits(8))
+	observeOnly := func() Admission { return Admission{Allowed: true, Level: LevelNormal, Source: "observe-only"} }
+	probe := macIdleProbe(coordinator, WorkClassTest, observeOnly)
+	if idle, reason := probe(); idle || reason != "no fresh resident sample" {
+		t.Fatalf("no sample: idle=%v %q", idle, reason)
+	}
+	write := func(level Level) {
+		body, _ := json.Marshal(Snapshot{Timestamp: time.Now().UTC(), Level: level, FreePercent: 30, PhysicalMemoryMB: 16384})
+		if err := os.WriteFile(filepath.Join(dir, "latest.json"), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Observe mode admits at red; the placer must still see a busy Mac.
+	write(LevelRed)
+	if idle, reason := probe(); idle || reason != "host level red" {
+		t.Fatalf("red host: idle=%v %q", idle, reason)
+	}
+	write(LevelNormal)
+	if idle, reason := probe(); !idle {
+		t.Fatalf("normal idle host: %q", reason)
+	}
+}

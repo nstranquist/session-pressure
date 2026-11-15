@@ -314,10 +314,10 @@ func (probe *shadowMemoryProbe) decide(admission Admission, leases []WorkLeaseSt
 	// live decision no_sample on 2026-11-15.
 	snapshot, haveSample := NewTelemetryStore(probe.dir).ReadLatest()
 	headroom := computeHeadroom(snapshot, haveSample, leases, *probe.history, now)
-	if admission.Level != "" {
-		// The work admission level is authoritative for this operation.
-		headroom.Level = admission.Level
-	}
+	// The level is the resident's too. Work admission reports normal in
+	// observe mode (guards disabled 2026-11-15), which would read as "fits"
+	// on a red host.
+	_ = admission
 	predicted, source := probe.history.predict(probe.class, probe.workload, probe.key)
 	return decideMemoryAdmission(headroom, predicted, source, probe.interactive, probe.weight, probe.fastLane)
 }

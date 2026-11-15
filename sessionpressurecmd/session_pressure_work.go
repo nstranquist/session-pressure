@@ -32,6 +32,7 @@ and an oldest-feasible floor, then applies a separate selector overhead gate.
 Subcommands:
   status
   headroom                         Memory headroom and peak RSS history (shadow admission input)
+  placement [--window D] [--no-runners]  Placer decisions, remote runs, stall, waiter ETAs, runner slots
   history [--since DURATION] [--limit N] [--class CLASS] [--event EVENT] [--operation-id ID] [--full]
   stats [--since DURATION] [--full]
   report [--since DURATION] [--full]
@@ -195,6 +196,31 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 		}
 		payload := map[string]any{"ok": true, "action": "work.headroom", "headroom": headroom}
 		return emitPressure(g, payload, pressureWorkHeadroomText(headroom), 0)
+	case "placement":
+		window, probeRunners := 6*time.Hour, true
+		for i := 0; i < len(args); i++ {
+			switch {
+			case args[i] == "--no-runners":
+				probeRunners = false
+			case args[i] == "--window" && i+1 < len(args):
+				parsed, err := time.ParseDuration(args[i+1])
+				if err != nil || parsed <= 0 || parsed > 7*24*time.Hour {
+					return sessionPressureError("work placement --window must be a duration up to 168h", 2)
+				}
+				window = parsed
+				i++
+			default:
+				return sessionPressureError("usage: work placement [--window D] [--no-runners]", 2)
+			}
+		}
+		statusCtx, statusCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		status, _ := coordinator.StatusSnapshot(statusCtx)
+		statusCancel()
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), 8*time.Second)
+		report := sessionpressure.BuildPlacementReport(probeCtx, runtime.dir, status, window, probeRunners, nil, time.Now())
+		probeCancel()
+		payload := map[string]any{"ok": true, "action": "work.placement", "placement": report}
+		return emitPressure(g, payload, pressureWorkPlacementText(report), 0)
 	case "override":
 		return cmdSessionPressureWorkOverride(g, coordinator, args)
 	case "inspect":
@@ -857,5 +883,40 @@ func pressureWorkHeadroomText(headroom sessionpressure.MemoryHeadroom) string {
 		fmt.Fprintf(&b, "  %-9s %-24s n=%-5d p50 %5d MB  p90 %5d MB\n", row.Scope, row.Name, row.Samples, row.P50MB, row.P90MB)
 	}
 	b.WriteString("Shadow only: live admission still uses capacity units. JSON includes per-check rows.\n")
+	return b.String()
+}
+
+func pressureWorkPlacementText(report sessionpressure.PlacementReport) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "remote: enabled=%t placer=%t node=%t host=%s\n", report.Remote.Enabled, report.Remote.Placer, report.Remote.Node, report.Remote.Host)
+	window := time.Duration(report.WindowSeconds) * time.Second
+	fmt.Fprintf(&b, "placer (%s): %d decisions, %d local, %d remote\n", window, report.Decisions.Total, report.Decisions.Local, report.Decisions.Remote)
+	for reason, count := range report.Decisions.ByReason {
+		fmt.Fprintf(&b, "  %-40s %d\n", reason, count)
+	}
+	fmt.Fprintf(&b, "remote runs: %d, %d failed, p50 %s, p90 %s\n", report.RemoteRuns.Total, report.RemoteRuns.Failed,
+		time.Duration(report.RemoteRuns.P50MS)*time.Millisecond, time.Duration(report.RemoteRuns.P90MS)*time.Millisecond)
+	for reason, count := range report.LocalFallbacks {
+		fmt.Fprintf(&b, "  local placement %-32s %d\n", reason, count)
+	}
+	if stall := report.ActiveStall; stall != nil {
+		fmt.Fprintf(&b, "STALL: %s (%s, weight %d) idle for %s with %d/%d used\n", stall.OperationID, stall.Class, stall.Weight,
+			time.Duration(stall.DurationMS)*time.Millisecond, stall.Used, stall.EffectiveCapacity)
+	} else if stall := report.LastStall; stall != nil {
+		fmt.Fprintf(&b, "last stall: %s at %s (%s)\n", stall.OperationID, stall.Since.Local().Format("15:04:05"), time.Duration(stall.DurationMS)*time.Millisecond)
+	}
+	for _, waiter := range report.Waiters {
+		eta := "unknown"
+		if waiter.ETAMS >= 0 {
+			eta = (time.Duration(waiter.ETAMS) * time.Millisecond).Round(time.Second).String()
+		}
+		fmt.Fprintf(&b, "waiter #%d %s %s eta %s (%s)\n", waiter.Position, waiter.OperationID, waiter.Class, eta, waiter.Basis)
+	}
+	for _, runner := range report.Runners {
+		fmt.Fprintf(&b, "runner %s: heavy %d/%d light %d/%d healthy=%t %s\n", runner.Name, runner.HeavyJobs, runner.HeavySlots, runner.LightJobs, runner.LightSlots, runner.Healthy, runner.Error)
+	}
+	if report.RunnersError != "" {
+		fmt.Fprintf(&b, "runners: %s\n", report.RunnersError)
+	}
 	return b.String()
 }
