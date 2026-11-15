@@ -200,6 +200,7 @@ type WorkEvent struct {
 	// decided at this point, recorded on queued and acquired events. It never
 	// admits or refuses work. ShadowHeadroomMB may be negative.
 	ShadowMemoryDecision   string `json:"shadow_memory_decision,omitempty"`
+	ShadowMemoryRule       string `json:"shadow_memory_rule,omitempty"`
 	ShadowPredictedPeakMB  int64  `json:"shadow_predicted_peak_mb,omitempty"`
 	ShadowPredictionSource string `json:"shadow_prediction_source,omitempty"`
 	ShadowHeadroomMB       int64  `json:"shadow_headroom_mb,omitempty"`
@@ -226,6 +227,9 @@ func (event WorkEvent) Validate() error {
 	}
 	if !validShadowMemoryDecision(event.ShadowMemoryDecision) {
 		return fmt.Errorf("work event shadow_memory_decision %q is not in the closed vocabulary", event.ShadowMemoryDecision)
+	}
+	if event.ShadowMemoryRule != "" && event.ShadowMemoryRule != HeadroomRuleVersion {
+		return fmt.Errorf("work event shadow_memory_rule %q is not a known rule version", event.ShadowMemoryRule)
 	}
 	switch event.ShadowPredictionSource {
 	case "", predictionByKey, predictionByLoad, predictionByClass, predictionFallback:

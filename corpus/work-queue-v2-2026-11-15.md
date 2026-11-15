@@ -350,6 +350,17 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
     beside 3 GB of free-percent headroom, which is why swap-out refuses.
   - Known limit: `command_peak_rss_mb` is the largest single process of a
     command (wait4), not its tree. Parallel test binaries can exceed it.
+    Promotion condition (agreed with the commit-delivery session,
+    2026-11-15): the placement-key and workload tiers are not promoted for
+    multi-process commands (`go test`, Swift builds) until the tree peak is
+    measured.
+  - Review fixes the same day: completed rows with a peak under 8 MB are not
+    samples. They are argv probes or wrappers whose work ran in a process
+    wait4 never saw. 440 s express-build runs reported about 1 MB, and so did
+    two `delivery-darwin` probes. The estimator is versioned
+    (`mac-headroom-p90-v1`, in `shadow_memory_rule` and the view's `rule`),
+    so replay never mixes it with the runner's memadmit (p95 x 1.10,
+    5 samples, 2 GiB default).
   - Next: after 24 to 48 h, compare shadow decisions with live outcomes in
     `work evaluate` (shadow admit while live waited; shadow refuse while
     live ran, and what pressure followed). Decide the CPU bound from that

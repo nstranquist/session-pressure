@@ -24,6 +24,10 @@ func TestPeakRSSPredictionPrefersTheMostSpecificScope(t *testing.T) {
 	}
 	events = append(events, completedPeak(WorkClassTest, "", key, 3000), completedPeak(WorkClassTest, "", key, 3100))
 	events = append(events, WorkEvent{Event: WorkEventStarted, Class: WorkClassTest, CommandPeakRSSMB: 9999})
+	// Probes and unwaited wrappers report about 1 MB; they are not samples.
+	for range 5 {
+		events = append(events, completedPeak(WorkClassTest, WorkloadDeliveryDarwin, "", 1))
+	}
 	history := buildPeakRSSHistory(events)
 
 	// Two key samples are not enough: the workload decides.
@@ -108,9 +112,14 @@ func TestShadowMemoryFieldsValidate(t *testing.T) {
 	event := validWorkEvent(time.Now().UTC(), WorkEventQueued)
 	event.EventID = workEventID(event.OperationID, event.Event, event.LeaseID)
 	ShadowMemoryDecision{Admit: false, Reason: headroomNoRoom, PredictedPeakMB: 900, PredictionSource: predictionByClass, HeadroomMB: -120}.apply(&event)
-	if err := event.Validate(); err != nil {
-		t.Fatalf("valid shadow fields rejected: %v", err)
+	if err := event.Validate(); err != nil || event.ShadowMemoryRule != HeadroomRuleVersion {
+		t.Fatalf("valid shadow fields rejected or unversioned: %v %q", err, event.ShadowMemoryRule)
 	}
+	event.ShadowMemoryRule = "runner-memadmit-p95"
+	if err := event.Validate(); err == nil {
+		t.Fatal("foreign rule version accepted")
+	}
+	event.ShadowMemoryRule = HeadroomRuleVersion
 	event.ShadowMemoryDecision = "admit:because"
 	if err := event.Validate(); err == nil {
 		t.Fatal("unknown shadow decision accepted")

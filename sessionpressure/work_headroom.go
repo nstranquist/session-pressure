@@ -46,6 +46,11 @@ const (
 	headroomThrash    = "swap_thrash"
 	headroomNoSample  = "no_sample"
 	headroomSampleTTL = 2 * time.Minute
+	// HeadroomRuleVersion names this estimator in events and the headroom
+	// view, so replay never mixes it with the runner's memadmit (p95 x 1.10,
+	// 5 samples, 2 GiB default). Change it with any estimator change.
+	HeadroomRuleVersion       = "mac-headroom-p90-v1"
+	headroomMinMeasuredPeakMB = 8
 	// headroomSwapOutRefuseMBPerSecond matches the default
 	// Thresholds.SwapOutThrashMBPerSecond.
 	headroomSwapOutRefuseMBPerSecond = 32
@@ -73,7 +78,11 @@ type peakRSSHistory struct {
 func buildPeakRSSHistory(events []WorkEvent) peakRSSHistory {
 	history := peakRSSHistory{byClass: map[string][]float64{}, byWorkload: map[string][]float64{}, byKey: map[string][]float64{}}
 	for _, event := range events {
-		if event.Event != WorkEventCompleted || event.CommandPeakRSSMB <= 0 {
+		// A peak under headroomMinMeasuredPeakMB is not a measurement: argv
+		// probes (`true`, `exit 0`) and wrappers whose real work ran in a
+		// process wait4 never saw (440 s express-build runs at about 1 MB on
+		// 2026-11-15). Counting them would predict about 1 MB for real work.
+		if event.Event != WorkEventCompleted || event.CommandPeakRSSMB < headroomMinMeasuredPeakMB {
 			continue
 		}
 		history.byClass[string(event.Class)] = append(history.byClass[string(event.Class)], event.CommandPeakRSSMB)
@@ -142,6 +151,7 @@ func (history peakRSSHistory) stats() []PeakRSSStats {
 // MemoryHeadroom is the one source both Mac admission layers read
 // (`session-pressure --json work headroom`).
 type MemoryHeadroom struct {
+	Rule               string         `json:"rule"`
 	SchemaVersion      int            `json:"schema_version"`
 	SampledAt          time.Time      `json:"sampled_at,omitzero"`
 	SampleFresh        bool           `json:"sample_fresh"`
@@ -165,7 +175,7 @@ type MemoryHeadroom struct {
 // computeHeadroom is pure. A stale or missing sample yields SampleFresh false
 // and the shadow decision refuses with no_sample.
 func computeHeadroom(snapshot Snapshot, haveSample bool, leases []WorkLeaseStatus, history peakRSSHistory, now time.Time) MemoryHeadroom {
-	headroom := MemoryHeadroom{SchemaVersion: headroomSchemaVersion, PeakRSSWindowHours: int(headroomHistoryWindow.Hours())}
+	headroom := MemoryHeadroom{Rule: HeadroomRuleVersion, SchemaVersion: headroomSchemaVersion, PeakRSSWindowHours: int(headroomHistoryWindow.Hours())}
 	for _, lease := range leases {
 		if lease.Parked {
 			continue
@@ -317,6 +327,7 @@ func (decision ShadowMemoryDecision) apply(event *WorkEvent) {
 		return
 	}
 	event.ShadowMemoryDecision = decision.Label()
+	event.ShadowMemoryRule = HeadroomRuleVersion
 	event.ShadowPredictedPeakMB = decision.PredictedPeakMB
 	event.ShadowPredictionSource = decision.PredictionSource
 	event.ShadowHeadroomMB = decision.HeadroomMB
