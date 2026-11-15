@@ -283,12 +283,41 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
   with reason `package script uses Mac-only <tool>`. Tested on runner-3.
 - Not done: the generic remote job refactor of `TryRemoteWork`.
 
+### Slice 4, closed-loop placer (landed 2026-11-15, commit 6a6141c)
+
+- Data that set the design (2026-11-14 to 15 events): local Node `test` run
+  p50 5.5 s, remote Node job p50 32 s. Remote Go `test` p50 161 s, of which
+  `runner_wait_and_run_ms` p50 117 s. Local waits have long tails (p90 250 s
+  for `test`, 600 s for `build`). So the right answer depends on the Mac's
+  state at the moment of the request, not on a static rule.
+- `work_placer.go`. For an eligible auto-placed Go or Node check, the placer
+  keeps it local only when the Mac can start it now (no waiters, no admission
+  holds, capacity for its weight, host level normal) and the measured local
+  p75 runtime of the same check is below its measured remote p50 duration.
+  "Same check" is `placement_key`, an opaque sha256 of cwd and argv, now on
+  every work event and every `remote_work_finished` row. With no local
+  history, a check with remote p50 at most 45 s runs locally to measure it.
+  Busy or unknown keeps remote. Explicit `--placement remote` is never
+  overridden. Each decision is a `work_placement_decided` control event with
+  both ETAs and sample counts, and a local decision prints one stderr line.
+  Opt-in with `"placer": true` in `remote-work.json` (enabled 2026-11-15,
+  backup `remote-work.json.bak-claude-placer-20261115`).
+- Also in this commit: with no `.node-version`, the Mac's Node major selects
+  the runner pin (Mac 26.13.1 runs on 26.13.0). Three declines on
+  2026-11-15 had the reason `Node "26.13.1" is not pinned`.
+- Proof: package tests and vet passed on runner-3 (two suites skip the
+  two tests that fail on clean HEAD there). Release `6a6141c` installed, helper
+  promoted, drift false. Live at 16:20Z: delivery-queue-3d `npm test`
+  recorded `placement: remote, reason: mac_busy: 8 waiters queued`, then 77
+  test files passed on runner-3. The Mac was at memory red then (swap
+  9.3 GB, swap-out 64 MB/s), so this host-pressure hold was correct, not a
+  queue stall.
+- Not yet observed live: a `local_faster` or `explore_local` decision. Both
+  need an idle Mac. Check `work_placement_decided` rows after the next quiet
+  period.
+
 ### Next slices (planned, not started)
 
-- Slice 4, closed-loop placer: per tool family and repository, compare local
-  ETA (queue wait estimate plus local runtime, including host-blocked wait)
-  with remote ETA (runner wait plus preparation plus runtime) from
-  `by_tool_family` and `remote_work_finished` events.
 - Slice 5, stall guard: free capacity, a ready waiter that fits, and no
   admission for 30 s records `queue_stall` and raises a bell alert; replay of
   2026-11-15 events in `work evaluate`.
