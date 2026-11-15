@@ -55,7 +55,7 @@ func TestRunWorkPrestartRefusals(t *testing.T) {
 			}
 			constructed := false
 			code, err := RunWorkCommand(coordinator,
-				WorkRunOptions{Class: WorkClassTest, Wait: wait, Progress: WorkProgressQuiet, Command: []string{"/bin/true"}},
+				WorkRunOptions{Class: WorkClassTest, Wait: wait, Progress: WorkProgressQuiet, Command: []string{"/usr/bin/true"}},
 				admission, time.Millisecond,
 				WorkRunStreams{Stdout: io.Discard, Stderr: io.Discard, CommandFactory: func(string, []string) (*exec.Cmd, io.WriteCloser, error) {
 					constructed = true
