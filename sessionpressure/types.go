@@ -618,13 +618,39 @@ func swapLagMaxGrowthMB(t Thresholds) float64 {
 	return defaultSwapLagMaxGrowthMB
 }
 
-// treeLSPSuffix names the language-server share of a breaching tree, the
-// part a restart_on_demand stop frees without losing agent work.
+// treeRungRSSMB is the tree size the tree rung judges: the RSS sum without
+// the tree's language servers. One Claude desktop tree hosts every desktop
+// session and their per-session LSPs, so on 2026-11-15 about 6 GB of gopls,
+// tsserver and pyright alone held the tree past warning and, through the
+// swap rung, every gate at red. Language servers restart on demand and are
+// attributed as their own memory family; free memory, the agent total and
+// swap still count them. Nico chose this exclusion on 2026-11-15.
+func treeRungRSSMB(tree AgentTree) float64 {
+	return max(0, tree.RSSSumMB-tree.LSPRSSSumMB)
+}
+
+// topRungTree is the tree with the largest rung size. Trees are ordered by
+// raw RSS, so a tree that is mostly language servers can sort first.
+func topRungTree(trees []AgentTree) (AgentTree, bool) {
+	if len(trees) == 0 {
+		return AgentTree{}, false
+	}
+	best := trees[0]
+	for _, tree := range trees[1:] {
+		if treeRungRSSMB(tree) > treeRungRSSMB(best) {
+			best = tree
+		}
+	}
+	return best, true
+}
+
+// treeLSPSuffix says what the rung left out, so the reason still shows the
+// raw tree size and the language-server share.
 func treeLSPSuffix(tree AgentTree) string {
 	if tree.LSPRSSSumMB < 1 || tree.LSPProcessCount == 0 {
 		return ""
 	}
-	return fmt.Sprintf(" (language servers %.0f MB in %d processes)", tree.LSPRSSSumMB, tree.LSPProcessCount)
+	return fmt.Sprintf(" without language servers (tree %.0f MB, language servers %.0f MB in %d processes)", tree.RSSSumMB, tree.LSPRSSSumMB, tree.LSPProcessCount)
 }
 
 func evaluate(snapshot Snapshot, policy Policy, includeCPU bool) Snapshot {
@@ -658,15 +684,15 @@ func evaluate(snapshot Snapshot, policy Policy, includeCPU bool) Snapshot {
 		add(LevelWarning, "agent RSS sum %.0f MB >= warning %.0f MB", snapshot.AgentRSSSumMB, policy.Thresholds.AgentTotalWarningMB)
 	}
 
-	if len(snapshot.TopAgentTrees) > 0 {
-		top := snapshot.TopAgentTrees[0]
+	if top, ok := topRungTree(snapshot.TopAgentTrees); ok {
+		rss := treeRungRSSMB(top)
 		switch {
-		case top.RSSSumMB >= policy.Thresholds.TreeCriticalMB:
-			add(LevelCritical, "%s tree %d RSS sum %.0f MB >= critical %.0f MB%s", top.Agent, top.RootPID, top.RSSSumMB, policy.Thresholds.TreeCriticalMB, treeLSPSuffix(top))
-		case top.RSSSumMB >= policy.Thresholds.TreeRedMB:
-			add(LevelRed, "%s tree %d RSS sum %.0f MB >= red %.0f MB%s", top.Agent, top.RootPID, top.RSSSumMB, policy.Thresholds.TreeRedMB, treeLSPSuffix(top))
-		case top.RSSSumMB >= policy.Thresholds.TreeWarningMB:
-			add(LevelWarning, "%s tree %d RSS sum %.0f MB >= warning %.0f MB%s", top.Agent, top.RootPID, top.RSSSumMB, policy.Thresholds.TreeWarningMB, treeLSPSuffix(top))
+		case rss >= policy.Thresholds.TreeCriticalMB:
+			add(LevelCritical, "%s tree %d RSS sum %.0f MB%s >= critical %.0f MB", top.Agent, top.RootPID, rss, treeLSPSuffix(top), policy.Thresholds.TreeCriticalMB)
+		case rss >= policy.Thresholds.TreeRedMB:
+			add(LevelRed, "%s tree %d RSS sum %.0f MB%s >= red %.0f MB", top.Agent, top.RootPID, rss, treeLSPSuffix(top), policy.Thresholds.TreeRedMB)
+		case rss >= policy.Thresholds.TreeWarningMB:
+			add(LevelWarning, "%s tree %d RSS sum %.0f MB%s >= warning %.0f MB", top.Agent, top.RootPID, rss, treeLSPSuffix(top), policy.Thresholds.TreeWarningMB)
 		}
 	}
 

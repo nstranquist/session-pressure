@@ -137,6 +137,35 @@ desktop app, or a tree rung that excludes `lsp`), not part of this change.
   journal entry of this session. Darwin vet: `GOOS=darwin go vet ./sessionpressure/`.
 - commit-delivery: `go test ./internal/commitdelivery/ -run 'MemoryHold|HostPressure|...'`.
 
+## Change 3: the tree rung excludes language servers (Nico, 2026-11-15)
+
+Decision: the tree rung judges each agent tree without its language servers
+(`rss_sum_mb - lsp_rss_sum_mb`), and it judges the largest such tree, not the
+first tree by raw RSS. Free memory, the agent total and swap still count the
+LSPs. The inventory refresh trigger uses the same size.
+
+Why: one Claude desktop tree (pid 92881) hosts every desktop session and its
+per-session LSPs. On 2026-11-15 about 5.8 GB of LSPs alone held that tree past
+warning, and through the swap rung every gate at red. LSPs restart on demand
+and now have their own memory family, so the tree rung keeps measuring agent
+work, which is what it was built for.
+
+Effect on the incident shape (test `TestTreeRungExcludesLanguageServers`):
+raw tree 8706 MB, 5800 MB of LSPs, rung 2906 MB under the 3072 MB warning, so
+swap 9724 MB with free 33% is normal, not red. Agent work of 3200 MB beside the
+same LSPs still breaches warning and is corroborated to red by swap.
+
+The reason names the exclusion:
+`claude tree 92881 RSS sum 3200 MB without language servers (tree 9000 MB, language servers 5800 MB in 50 processes) >= warning 3072 MB`.
+
+Worker consistency: commit-delivery's pinned library (v0.5.2) still counts
+LSPs. The worker now follows the fresh resident's published level whenever it
+is below `block_new_at` and the library computes a memory block. This
+replaces the narrower lag-release check.
+
+Not changed: relief and shedding still choose trees by raw RSS, because
+shedding a tree frees its LSPs too.
+
 ## Installed acceptance (2026-11-15 15:41Z)
 
 - Commit `b5f09f7`. Bundle cloned on runner-3 under
@@ -169,4 +198,4 @@ desktop app, or a tree rung that excludes `lsp`), not part of this change.
 - [x] After install, `latest.json` carries `memory_families` (see above).
 - [ ] The `other` family holds `sha256-*` session-pressure helper processes
       (about 15). Name them as their own member or family.
-- [ ] Tree-rung design for the desktop app (separate decision).
+- [x] Tree rung excludes language servers (Change 3).

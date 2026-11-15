@@ -100,7 +100,7 @@ func TestMemoryFamiliesNameLanguageServersInsideAgentTrees(t *testing.T) {
 	}
 }
 
-func TestTreeReasonNamesLanguageServerShare(t *testing.T) {
+func TestTreeRungExcludesLanguageServers(t *testing.T) {
 	processes, trees := incident20261115Processes()
 	_, familyByPID := classifyMemoryFamilies(processes, trees)
 	annotateTreeLSP(trees, processes, familyByPID)
@@ -108,12 +108,32 @@ func TestTreeReasonNamesLanguageServerShare(t *testing.T) {
 		t.Fatalf("tree lsp = %d / %.1f", trees[0].LSPProcessCount, trees[0].LSPRSSSumMB)
 	}
 	policy := DefaultPolicy(16 * 1024)
-	trees[0].RSSSumMB = 6000
+	// The incident tree: Claude 386 + 21 sessions x 120 + 5800 of LSPs.
+	trees[0].RSSSumMB = 386 + 21*120 + 5800
 	got := Evaluate(Snapshot{FreePercent: 33, SwapUsedMB: 9724, TopAgentTrees: trees}, policy)
+	if got.Level != LevelNormal || len(got.Reasons) != 0 {
+		t.Fatalf("2906 MB of agent work under warning: level=%s reasons=%v", got.Level, got.Reasons)
+	}
+
+	// The same sessions grown past warning without their LSPs still breach,
+	// and sticky swap still corroborates that live warning to red.
+	trees[0].RSSSumMB = 3200 + 5800
+	got = Evaluate(Snapshot{FreePercent: 33, SwapUsedMB: 9724, TopAgentTrees: trees}, policy)
 	joined := strings.Join(got.Reasons, "; ")
-	if got.Level != LevelRed || !strings.Contains(joined, "claude tree 92881 RSS sum 6000 MB >= red 5120 MB (language servers 5800 MB in 50 processes)") {
+	if got.Level != LevelRed || !strings.Contains(joined, "claude tree 92881 RSS sum 3200 MB without language servers (tree 9000 MB, language servers 5800 MB in 50 processes) >= warning 3072 MB") {
 		t.Fatalf("level=%s reasons=%s", got.Level, joined)
 	}
+
+	// The rung judges the largest tree without LSPs, not the first by raw RSS.
+	mixed := []AgentTree{
+		{Agent: "claude", RootPID: 1, RSSSumMB: 6000, LSPRSSSumMB: 5500, LSPProcessCount: 30},
+		{Agent: "codex", RootPID: 2, RSSSumMB: 5200},
+	}
+	got = Evaluate(Snapshot{FreePercent: 60, TopAgentTrees: mixed}, policy)
+	if len(got.Reasons) != 1 || got.Reasons[0] != "codex tree 2 RSS sum 5200 MB >= red 5120 MB" {
+		t.Fatalf("mixed reasons = %#v", got.Reasons)
+	}
+
 	// A tree without language servers keeps the historical reason text.
 	plain := Evaluate(Snapshot{FreePercent: 60, TopAgentTrees: []AgentTree{{Agent: "codex", RootPID: 7, RSSSumMB: 3100}}}, policy)
 	if len(plain.Reasons) != 1 || plain.Reasons[0] != "codex tree 7 RSS sum 3100 MB >= warning 3072 MB" {
@@ -170,7 +190,7 @@ func TestDoctorNamesMemoryFamiliesUnderMemoryRed(t *testing.T) {
 	processes, trees := incident20261115Processes()
 	families, familyByPID := classifyMemoryFamilies(processes, trees)
 	annotateTreeLSP(trees, processes, familyByPID)
-	trees[0].RSSSumMB = 6000
+	trees[0].RSSSumMB = 3200 + 5800
 	policy := DefaultPolicy(16 * 1024)
 	latest := Snapshot{FreePercent: 33, SwapUsedMB: 9724, TopAgentTrees: trees, MemoryFamilies: families}
 	warnings := memoryFamilyDoctorWarnings(PressureDoctorInput{HasLatest: true, Latest: latest, Policy: policy})

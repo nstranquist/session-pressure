@@ -337,10 +337,10 @@ func (sampler *Sampler) Sample(ctx context.Context, policy Policy) (Snapshot, er
 	processes = enrichSampleProcesses(ctx, processes, sampler.sessionStateDir, inventoryFresh, sampler.role)
 	phases["identity"] = phase(&mark)
 	allTrees := buildAgentTrees(processes)
-	sampler.recordInventoryPressure(allTrees)
 	topHostConsumers := buildHostConsumers(processes, allTrees)
 	memoryFamilies, familyByPID := classifyMemoryFamilies(processes, allTrees)
 	annotateTreeLSP(allTrees, processes, familyByPID)
+	sampler.recordInventoryPressure(allTrees)
 	topTrees := allTrees
 	if len(topTrees) > maxProjectedAgentTrees {
 		topTrees = topTrees[:maxProjectedAgentTrees]
@@ -942,7 +942,7 @@ func (sampler *Sampler) recordInventoryPressure(trees []AgentTree) {
 	topRSSMB := 0.0
 	for _, tree := range trees {
 		agentRSSMB += tree.RSSSumMB
-		topRSSMB = max(topRSSMB, tree.RSSSumMB)
+		topRSSMB = max(topRSSMB, treeRungRSSMB(tree))
 	}
 	sampler.inventoryMu.Lock()
 	sampler.inventoryAgentRSSMB = agentRSSMB
