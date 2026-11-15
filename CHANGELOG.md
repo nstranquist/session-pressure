@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.7.2 — 2026-11-15
+
+### Memory attribution, swap lag release, tree rung without LSPs
+
+- **`memory_families`.** latest.json, state transitions and heartbeats
+  attribute resident memory to closed families (`lsp`, `agent_host`,
+  `build_test`, `browser`, `other`) with process count, RSS, reclaimable MB
+  and a relief hint. Each agent tree carries `lsp_process_count` and
+  `lsp_rss_sum_mb`. No PID, path or argument is projected.
+- **Swap lag release** (`thresholds.swap_lag_release_minutes`, 0 = off, else
+  at least 5; `thresholds.swap_lag_max_growth_mb`, default 256). Sticky swap
+  use no longer escalates a live warning to red after a calm swap-out window
+  with no thrash latch, bounded swap growth and free memory above warning.
+  Snapshots report `swap_calm_seconds` and `swap_lag_released`.
+- **The tree rung excludes language servers.** It judges each agent tree
+  without its LSP share and picks the largest such tree. Free memory, the
+  agent total and swap still count LSPs; relief still chooses by raw RSS.
+
+
 ### Guard - per-repository storage floor
 
 - **`storage_policy.repository_overrides`.** A typed, persisted override keyed
