@@ -137,6 +137,26 @@ desktop app, or a tree rung that excludes `lsp`), not part of this change.
   journal entry of this session. Darwin vet: `GOOS=darwin go vet ./sessionpressure/`.
 - commit-delivery: `go test ./internal/commitdelivery/ -run 'MemoryHold|HostPressure|...'`.
 
+## Installed acceptance (2026-11-15 15:41Z)
+
+- Commit `b5f09f7`. Bundle cloned on runner-3 under
+  `/srv/build/exports/sp-b5f09f7`, clean HEAD checked, `go vet ./...` clean,
+  `go test ./... -count=1` ok for every package except
+  `internal/filelock` `TestExclusiveCriticalSectionAcrossProcesses`, which
+  this change does not touch and which passed 3/3 on rerun (flaky).
+  darwin/arm64 built with Go 1.27.4 and `pressure-darwin-clang`.
+- On the Mac before release: the targeted tests and
+  `TestResidentSampler64SampleCPUAndLatencySoak` passed alone (the soak
+  missed its p95 budget once inside a full run under host thrash).
+  `/bin/true` and the singleflight reuse test failed in the full local run
+  for reasons outside this change.
+- `session-pressure-release install --expected-current e5bb660`, then
+  `session-pressure monitor install`: resident reports source `b5f09f75be7b`.
+- Live latest.json: `memory_families` = agent_host 3616 MB (claude x30,
+  Claude helpers x21), other 2124 MB, browser 1843 MB, build_test 85 MB,
+  lsp 9.5 MB (gopls x4, after the hand relief). Tree reason reads
+  `claude tree 92881 RSS sum 4114 MB >= warning 3072 MB (language servers 10 MB in 4 processes)`.
+
 ## Open
 
 - [x] Nico approved `swap_lag_release_minutes: 15` (2026-11-15, in chat).
@@ -146,6 +166,7 @@ desktop app, or a tree rung that excludes `lsp`), not part of this change.
 - [ ] Install the release, then check that heartbeats carry
       `swap_calm_seconds` and that a calm 15-minute window logs
       `swap_lag_released`.
-- [ ] After install, read the first memory-red `latest.json` and check that
-      `memory_families` names the LSPs (live dogfood).
+- [x] After install, `latest.json` carries `memory_families` (see above).
+- [ ] The `other` family holds `sha256-*` session-pressure helper processes
+      (about 15). Name them as their own member or family.
 - [ ] Tree-rung design for the desktop app (separate decision).
