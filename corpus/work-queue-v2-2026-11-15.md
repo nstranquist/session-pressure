@@ -329,14 +329,31 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
   2026-11-15, parallel-landing note P4, delivery 3b9a7f2c: remove slots,
   admit by predicted peak memory against measured headroom). Nico decided in
   chat on 2026-11-15: the capped red lane stays (attended chat work and
-  `delivery-darwin`); "admit nothing new at red" does not apply to it. Our
-  conditions: charge in-flight predicted peaks against headroom, keep a
-  coarse CPU concurrency bound until shadow data shows it is not needed, and
-  run the headroom admitter in shadow before it replaces the capacity units.
-  Exposure: one read-only `session-pressure --json work headroom` for the
-  delivery worker (headroom inputs plus p50/p90 peak RSS per class, workload
-  and placement key, with sample counts). Status: not started. Owner: claude
-  (work queue v2).
+  `delivery-darwin`). Nico said "Yes, start it" for the headroom view and the
+  shadow admitter.
+  - Done 2026-11-15 (ae71ac0, 9f647d4, f3b34f6, live, helper promoted):
+    `session-pressure --json work headroom` and shadow decisions on every
+    queued and acquired work event (`shadow_memory_decision`,
+    `shadow_predicted_peak_mb`, `shadow_prediction_source`,
+    `shadow_headroom_mb`). Model in `work_headroom.go`: headroom = free
+    percent x physical - physical/8 - in-flight, where in-flight is the class
+    p90 predictions of running leases minus measured leased RSS. Prediction
+    is p90 by placement key (3 or more samples), then workload (5 or more),
+    then class (5 or more), else 1024 MB, over 72 h of completed work.
+    Refusals: no fresh sample, critical, red (except red-lane candidates),
+    swap thrash latched or swap-out at 32 MB/s or more, no headroom.
+  - Findings while building: the generic event Read cost 1.1 s for 72 h
+    (whole-operation load and lifecycle validation). A narrow completed-row
+    query brought `work headroom` to 0.08 s, and the slice 4 placer uses it
+    too. A storage-warning admission carries no memory snapshot, so the probe
+    reads the resident sample directly. At 16:47Z, 165 MB/s of swap-out sat
+    beside 3 GB of free-percent headroom, which is why swap-out refuses.
+  - Known limit: `command_peak_rss_mb` is the largest single process of a
+    command (wait4), not its tree. Parallel test binaries can exceed it.
+  - Next: after 24 to 48 h, compare shadow decisions with live outcomes in
+    `work evaluate` (shadow admit while live waited; shadow refuse while
+    live ran, and what pressure followed). Decide the CPU bound from that
+    data. Promotion needs Nico's approval. Owner: claude (work queue v2).
 - [x] Delivery Darwin ordering (request from the commit-delivery session,
   2026-11-15, design note nicos-commit-delivery
   `docs/11-15-parallel-landing/parallel-landing-kep.md` P5, recorded there in
