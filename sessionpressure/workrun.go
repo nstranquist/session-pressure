@@ -1710,13 +1710,33 @@ func finalizeWorkLease(recordTerminal, release func() error) error {
 	return errors.Join(terminalErr, releaseErr)
 }
 
+// workCapacityReason explains a capacity wait. It names the long lease it
+// points at (operation, PID, weight) so a reader can attribute it. On
+// 2026-11-15 an unnamed "finite express-test lease … may be a resident
+// service" led an agent to blame its own dev server; the lease was another
+// session's package go test that spent 24 minutes compiling under swap
+// thrash. Age alone does not prove a resident service, so the text says what
+// is known and where to check, and prefers the heaviest long lease.
 func workCapacityReason(status WorkStatus) string {
 	reason := "weighted capacity unavailable"
-	for _, lease := range status.Leases {
+	var long *WorkLeaseStatus
+	for index := range status.Leases {
+		lease := &status.Leases[index]
 		// A parked lease is charged nothing, so it cannot be the blocker.
-		if lease.Review && !lease.Parked {
-			return fmt.Sprintf("%s; finite %s lease has run %s and may be a resident service (inspect work status; use ndev dev for future launches)", reason, lease.Class, time.Duration(lease.AgeMS)*time.Millisecond)
+		if !lease.Review || lease.Parked {
+			continue
 		}
+		if long == nil || lease.Weight > long.Weight || lease.Weight == long.Weight && lease.AgeMS > long.AgeMS {
+			long = lease
+		}
+	}
+	if long != nil {
+		used := ""
+		if status.Capacity > 0 {
+			used = fmt.Sprintf(" of %d/%d used", status.Used, status.Capacity)
+		}
+		return fmt.Sprintf("%s; longest finite lease: %s op %s pid %d, weight %d%s, running %s (past the 15m review age; check `ndev session pressure work status` before assuming a resident service; long-lived servers belong in ndev dev)",
+			reason, long.Class, shortWorkID(long.OperationID), long.PID, long.Weight, used, (time.Duration(long.AgeMS) * time.Millisecond).Round(time.Second))
 	}
 	if status.DecisionReason == "no_waiter_fits_capacity" || status.DecisionReason == "fifo_head_does_not_fit" {
 		return reason + "; no queued operation currently fits the remaining weighted capacity"
@@ -1936,4 +1956,14 @@ func configuredWorkCPURedPercent(dir string) float64 {
 		red = policy.Thresholds.HostCPURedPercent
 	}
 	return red
+}
+
+func shortWorkID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	if id == "" {
+		return "unknown"
+	}
+	return id
 }

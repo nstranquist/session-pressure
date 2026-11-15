@@ -27,6 +27,11 @@ func TestWorkRefusalContract(t *testing.T) {
 			if tc.kind != "" && !strings.Contains(tc.err.Error(), WorkRefusalMarker+" kind="+tc.kind+": ") {
 				t.Fatalf("missing %s marker: %v", tc.kind, tc.err)
 			}
+			// A refusal must say that nothing ran, so a caller whose compound
+			// command was wrapped whole knows its earlier statements were skipped.
+			if tc.kind != "" && !strings.Contains(tc.err.Error(), WorkRefusalNotRun) {
+				t.Fatalf("refusal does not say nothing ran: %v", tc.err)
+			}
 		})
 	}
 	// Callers match the literal; keep it stable.

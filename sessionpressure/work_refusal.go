@@ -26,12 +26,20 @@ const (
 	WorkRefusalBrowser       = "browser"
 )
 
+// WorkRefusalNotRun is the plain statement every refusal carries. Agent hooks
+// route a whole compound shell command through one lease (`bash -c '<all>'`),
+// so a refusal also skips the statements written before the heavy step.
+// On 2026-11-15 an agent ran `python3 <edit> && npx vitest run …`; admission
+// timed out, the edit never ran, and the agent believed the edit was lost.
+// The refusal must say that nothing ran, not only that the lease failed.
+const WorkRefusalNotRun = "NOT RUN: no part of the command started, including any statements before the heavy step; re-run all of it"
+
 // workRefusal tags err as a refusal of kind. The command did not start.
 func workRefusal(kind string, err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("%s kind=%s: %w", WorkRefusalMarker, kind, err)
+	return fmt.Errorf("%s kind=%s: %s: %w", WorkRefusalMarker, kind, WorkRefusalNotRun, err)
 }
 
 // admissionRefusal tags an admission failure by its exit code. An interrupt

@@ -474,6 +474,27 @@ func TestWorkCapacityReasonExplainsLongFiniteLease(t *testing.T) {
 	}
 }
 
+// The reason must identify the lease it points at, and prefer the heaviest
+// long lease over a light one, so nobody attributes the wait to the wrong
+// process (2026-11-15: a weight-1 compile was blamed on a dev server).
+func TestWorkCapacityReasonNamesTheHeaviestLongLease(t *testing.T) {
+	minutes := func(n int) int64 { return int64((time.Duration(n) * time.Minute) / time.Millisecond) }
+	reason := workCapacityReason(WorkStatus{Capacity: 8, Used: 8, Leases: []WorkLeaseStatus{
+		{Class: WorkClassExpressTest, OperationID: "ca3d04bf0000", PID: 50749, Weight: 1, AgeMS: minutes(24), Review: true},
+		{Class: WorkClassBuild, OperationID: "8058cb680000", PID: 6692, Weight: 5, AgeMS: minutes(16), Review: true},
+		{Class: WorkClassTest, OperationID: "parked000000", PID: 7, Weight: 9, AgeMS: minutes(40), Review: true, Parked: true},
+		{Class: WorkClassTest, OperationID: "young0000000", PID: 8, Weight: 9, AgeMS: minutes(2)},
+	}})
+	for _, want := range []string{"build op 8058cb68 pid 6692", "weight 5 of 8/8 used", "running 16m0s", "work status"} {
+		if !strings.Contains(reason, want) {
+			t.Fatalf("reason missing %q: %s", want, reason)
+		}
+	}
+	if strings.Contains(reason, "ca3d04bf") || strings.Contains(reason, "parked") || strings.Contains(reason, "young") {
+		t.Fatalf("reason names a lighter, parked or young lease: %s", reason)
+	}
+}
+
 func TestWorkAdmissionHysteresisFiltersTransientCPUAndBlocksMemoryImmediately(t *testing.T) {
 	limits := testWorkLimits()
 	cpuRed := Admission{Allowed: false, Level: LevelRed, Reasons: []string{"host CPU 99.0% >= red 95.0%"}, Snapshot: &Snapshot{HostCPUAvailable: true, HostCPUPercent: 99}}
