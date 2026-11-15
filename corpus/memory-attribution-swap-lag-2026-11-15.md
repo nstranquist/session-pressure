@@ -186,6 +186,22 @@ shedding a tree frees its LSPs too.
   lsp 9.5 MB (gopls x4, after the hand relief). Tree reason reads
   `claude tree 92881 RSS sum 4114 MB >= warning 3072 MB (language servers 10 MB in 4 processes)`.
 
+## Installed acceptance of Change 3 (2026-11-15 15:55Z)
+
+- Commit `82a7ee5`. On runner-3: clean clone of the bundle, `go vet ./...`
+  clean, `go test ./... -count=1` with no failing package, darwin/arm64 built
+  with Go 1.27.4 and `pressure-darwin-clang`.
+- The install guard refused `--expected-current b5f09f7` because another
+  session had installed `d91858c`. `82a7ee5` contains `d91858c`, so the install
+  went ahead with `--expected-current d91858c`. Then
+  `session-pressure monitor install`: resident reports source `82a7ee558794`.
+- Live latest.json: level warning. Reasons: `claude tree 92881 RSS sum 4663 MB
+  without language servers (tree 4672 MB, language servers 9 MB in 4
+  processes) >= warning 3072 MB` and `swap 8148 MB >= warning 4096 MB with
+  live warning pressure`. The language servers were already relieved by
+  hand, so the rung is now real agent memory (`agent_host` 4057 MB). The
+  calm run started at the restart (`swap_calm_start_used_mb` 8097).
+
 ## Open
 
 - [x] Nico approved `swap_lag_release_minutes: 15` (2026-11-15, in chat).
