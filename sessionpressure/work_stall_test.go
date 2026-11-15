@@ -56,8 +56,6 @@ func TestQueueStallDetectorIgnoresPressureAndUnfitWork(t *testing.T) {
 	}{
 		"red holds all work": {Admission{Allowed: false, Level: LevelRed}, 8,
 			func(at time.Time) WorkStatus { return stallStatus(at, 0, nil, stallWaiter("w", WorkClassTest, 2, at)) }},
-		"red lane admission is not a stall claim": {Admission{Allowed: true, Level: LevelRed}, 8,
-			func(at time.Time) WorkStatus { return stallStatus(at, 0, nil, stallWaiter("w", WorkClassTest, 2, at)) }},
 		"heavy head above the derated ceiling": {Admission{Allowed: true, Level: LevelWarning}, 4,
 			func(at time.Time) WorkStatus { return stallStatus(at, 0, nil, stallWaiter("w", WorkClassBuild, 5, at)) }},
 		"full capacity": {Admission{Allowed: true, Level: LevelNormal}, 8,
@@ -83,6 +81,16 @@ func TestQueueStallDetectorIgnoresPressureAndUnfitWork(t *testing.T) {
 			}
 		}
 	}
+	// Observe mode admits at red, so an idle queue at red is a stall.
+	var observeMode QueueStallDetector
+	var redStall *QueueStall
+	for offset := time.Duration(0); offset <= 40*time.Second && redStall == nil; offset += 10 * time.Second {
+		at := start.Add(offset)
+		redStall, _ = observeMode.Observe(at, stallStatus(at, 0, nil, stallWaiter("w", WorkClassTest, 2, at)), Admission{Allowed: true, Level: LevelRed}, 1000)
+	}
+	if redStall == nil {
+		t.Fatal("observe-mode stall at red not detected")
+	}
 	// A lighter successor that fits behind a heavy head is a stall.
 	var detector QueueStallDetector
 	var stall *QueueStall
@@ -100,7 +108,7 @@ func TestReplayQueueStallsFromTrace(t *testing.T) {
 	base := time.Date(2026, 11, 15, 16, 0, 0, 0, time.UTC)
 	at := func(seconds int) time.Time { return base.Add(time.Duration(seconds) * time.Second) }
 	acquired := func(op string, seconds, weight int, queueWaitSeconds int) WorkEvent {
-		return WorkEvent{Event: WorkEventAcquired, OperationID: op, Timestamp: at(seconds), Weight: weight, QueueWaitMilliseconds: int64(queueWaitSeconds) * 1000}
+		return WorkEvent{Event: WorkEventAcquired, OperationID: op, Timestamp: at(seconds), Weight: weight, Capacity: 8, QueueWaitMilliseconds: int64(queueWaitSeconds) * 1000}
 	}
 	ended := func(op string, seconds int) WorkEvent {
 		return WorkEvent{Event: WorkEventCompleted, OperationID: op, Timestamp: at(seconds)}
@@ -119,6 +127,13 @@ func TestReplayQueueStallsFromTrace(t *testing.T) {
 	}
 	if len(replay.Limitations) == 0 {
 		t.Fatal("limitations must be stated")
+	}
+	// The capacity in force at event time decides, not today's policy: with
+	// capacity 1000 in the current policy, a weight-8 waiter beside 6 used
+	// at an 8-unit capacity is not a stall.
+	heavy := []WorkEvent{acquired("x", 0, 6, 0), acquired("y", 300, 8, 200), ended("x", 299), ended("y", 310)}
+	if got := ReplayQueueStalls(heavy, levels, WorkLimits{Capacity: 1000}, 30*time.Second); got.Episodes != 0 {
+		t.Fatalf("current policy capacity used for history: %+v", got)
 	}
 	// Unknown level is never judged.
 	if got := ReplayQueueStalls(events, nil, defaultWorkLimits(8), 30*time.Second); got.Episodes != 0 {

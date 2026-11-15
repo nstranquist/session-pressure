@@ -58,7 +58,10 @@ type QueueStallDetector struct {
 
 // stallCandidate returns the first live, unparked waiter that fits now.
 func stallCandidate(status WorkStatus, admission Admission, effectiveCapacity int, now time.Time) (WorkWaiterStatus, bool) {
-	if !admission.Allowed || admission.Level == LevelRed || admission.Level == LevelCritical {
+	// Allowed already encodes the policy: with enforcement on, red refuses;
+	// in observe mode (guards disabled 2026-11-15) red admits, so an idle
+	// queue at red is a real stall.
+	if !admission.Allowed {
 		return WorkWaiterStatus{}, false
 	}
 	free := effectiveCapacity - status.Used
@@ -195,13 +198,22 @@ func ReplayQueueStalls(events []WorkEvent, levels []LevelObservation, limits Wor
 	limits = normalizeWorkLimits(limits)
 	replay := WorkStallReplay{ThresholdSeconds: threshold.Seconds(), Limitations: []string{
 		"queue entry is reconstructed as acquired_at - queue_wait_ms; waiters that never acquired are not seen",
-		"host level comes from resident state transitions and heartbeats; time without a known level is not judged",
+		"host level comes from resident state transitions and heartbeats; only normal-level time is judged, because the enforcement mode and warning derate at event time are not recorded",
+		"capacity is the nominal capacity recorded on the work events at that time, not the current policy",
 		"storage admission is per repository and is not reconstructed",
 	}}
 	var waiters, leases []stallInterval
+	type capacityPoint struct {
+		at       time.Time
+		capacity int
+	}
+	var capacityPoints []capacityPoint
 	open := map[string]WorkEvent{}
 	var points []time.Time
 	for _, event := range events {
+		if event.Capacity > 0 {
+			capacityPoints = append(capacityPoints, capacityPoint{at: event.Timestamp, capacity: event.Capacity})
+		}
 		switch event.Event {
 		case WorkEventAcquired, WorkEventReacquired:
 			if event.QueueWaitMilliseconds > 0 {
@@ -233,6 +245,17 @@ func ReplayQueueStalls(events []WorkEvent, levels []LevelObservation, limits Wor
 	for _, started := range open {
 		leaseStarts[started.Timestamp.UnixNano()] = true
 	}
+	sort.SliceStable(capacityPoints, func(i, j int) bool { return capacityPoints[i].at.Before(capacityPoints[j].at) })
+	capacityAt := func(at time.Time) int {
+		index := sort.Search(len(capacityPoints), func(i int) bool { return capacityPoints[i].at.After(at) }) - 1
+		if index < 0 {
+			if len(capacityPoints) > 0 {
+				return capacityPoints[0].capacity
+			}
+			return limits.Capacity
+		}
+		return capacityPoints[index].capacity
+	}
 	levelAt := func(at time.Time) Level {
 		index := sort.Search(len(levels), func(i int) bool { return levels[i].At.After(at) }) - 1
 		if index < 0 {
@@ -262,14 +285,8 @@ func ReplayQueueStalls(events []WorkEvent, levels []LevelObservation, limits Wor
 		}
 		level := levelAt(start)
 		capacity := 0
-		switch level {
-		case LevelNormal:
-			capacity = limits.Capacity
-		case LevelWarning:
-			capacity = limits.Capacity
-			if limits.WarningCapacityEnabled {
-				capacity = limits.WarningCapacity
-			}
+		if level == LevelNormal {
+			capacity = capacityAt(start)
 		}
 		if level != "" {
 			replay.LevelKnownSeconds += end.Sub(start).Seconds()
