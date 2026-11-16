@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -143,5 +144,32 @@ func TestTMExcludeDiscoverStopsAtRebuildableFolders(t *testing.T) {
 		if !want[path] {
 			t.Fatalf("unexpected %s in %v", path, found)
 		}
+	}
+}
+
+func TestTMExcludePlanArithmeticAndPartialMeasures(t *testing.T) {
+	home := t.TempDir()
+	original := tmExcludeMeasure
+	t.Cleanup(func() { tmExcludeMeasure = original })
+	tmExcludeMeasure = func(path string) (int64, bool, string) {
+		switch {
+		case strings.HasSuffix(path, "Caches"):
+			return 10, true, ""
+		case strings.HasSuffix(path, ".Trash"):
+			return 0, true, "partial: exit status 1"
+		case path == "/Applications":
+			return 100, true, ""
+		}
+		return 0, false, ""
+	}
+	if err := os.MkdirAll(filepath.Join(home, "dev", "app", "node_modules"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	plan := buildTMExcludePlan(context.Background(), home, 1000, 900)
+	if plan.DefaultExcluded != 10 || plan.FixedBytes != 100 || plan.EstimatedIncluded != 890 || !plan.MeetsTarget {
+		t.Fatalf("plan arithmetic: %+v", plan)
+	}
+	if plan.MeasureErrors != 1 || len(plan.Rebuildable) != 1 {
+		t.Fatalf("errors=%d rebuildable=%d", plan.MeasureErrors, len(plan.Rebuildable))
 	}
 }

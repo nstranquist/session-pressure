@@ -6,10 +6,15 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
+
+	"github.com/nstranquist/session-pressure/sessionpressure"
 )
 
 // storage tm-exclude plan (repo restructure program S2, ST3). The plan lists
@@ -17,7 +22,47 @@ import (
 // folders under the code roots (sticky, no sudo), measures each, and estimates
 // the backed-up bytes. It never changes an exclusion.
 
-const tmExcludeSchema = 1
+const tmExcludeSchema = 2
+
+// tmExcludeMeasure measures one tree for the plan. The plan is a deliberate
+// long job, so each path gets 10 minutes instead of the 45 s interactive
+// bound, and a du that reports permission errors but prints a total is kept
+// as a partial (lower-bound) size.
+var tmExcludeMeasure = func(path string) (int64, bool, string) {
+	if _, err := os.Lstat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, false, ""
+		}
+		return 0, false, err.Error()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "/usr/bin/du", "-sk", path).Output()
+	fields := strings.Fields(string(output))
+	if len(fields) > 0 {
+		if kib, parseErr := strconv.ParseInt(fields[0], 10, 64); parseErr == nil && kib >= 0 {
+			if err != nil {
+				return kib * 1024, true, "partial: " + err.Error()
+			}
+			return kib * 1024, true, ""
+		}
+	}
+	if err == nil {
+		err = errors.New("empty du output")
+	}
+	return 0, true, err.Error()
+}
+
+// tmExcludeVolumeUsed is the data volume's own used bytes (blocks - free),
+// as df reports it. Capacity minus available would also count the other
+// APFS volumes in the container.
+var tmExcludeVolumeUsed = func(path string) (int64, error) {
+	var fs syscall.Statfs_t
+	if err := syscall.Statfs(path, &fs); err != nil {
+		return 0, err
+	}
+	return (int64(fs.Blocks) - int64(fs.Bfree)) * int64(fs.Bsize), nil
+}
 
 // tmExcludeRebuildableNames are folder names that a build or install
 // recreates. A match stops the descent.
@@ -50,6 +95,8 @@ type tmExcludePlan struct {
 	TargetIncluded     int64            `json:"target_included_bytes"`
 	MeetsTarget        bool             `json:"meets_target"`
 	Method             string           `json:"method"`
+	Default            []tmExcludeEntry `json:"default"`
+	MeasureErrors      int              `json:"measure_errors"`
 	Fixed              []tmExcludeEntry `json:"fixed"`
 	Rebuildable        []tmExcludeEntry `json:"rebuildable"`
 	RebuildableByRoot  map[string]int64 `json:"rebuildable_by_root"`
@@ -122,18 +169,19 @@ func tmExcludeDiscover(ctx context.Context, root string) ([]string, int, error) 
 
 func buildTMExcludePlan(ctx context.Context, home string, volumeUsed int64, target int64) tmExcludePlan {
 	plan := tmExcludePlan{SchemaVersion: tmExcludeSchema, GeneratedAt: time.Now().UTC(), VolumeUsedBytes: volumeUsed, TargetIncluded: target, RebuildableByRoot: map[string]int64{},
-		Method: "estimated_included = data volume used - default exclusions (~/Library/Caches, ~/.Trash) - fixed exclusions - rebuildable folders; system files and APFS clones make this an upper bound"}
+		Method: "estimated_included = data volume used (blocks - free) - default exclusions (~/Library/Caches, ~/.Trash, /private/var/vm) - fixed exclusions - rebuildable folders. Upper bound: other system exclusions and APFS clones are not subtracted; a partial or failed measurement (measure_errors) also raises it"}
 	measure := func(path, kind, directive string) tmExcludeEntry {
 		entry := tmExcludeEntry{Path: path, Kind: kind, Directive: directive}
-		size, present, err := storageDirectoryBytes(path)
-		entry.Bytes, entry.Present = size, present
-		if err != nil {
-			entry.Error = err.Error()
+		entry.Bytes, entry.Present, entry.Error = tmExcludeMeasure(path)
+		if entry.Error != "" {
+			plan.MeasureErrors++
 		}
 		return entry
 	}
-	for _, path := range []string{filepath.Join(home, "Library", "Caches"), filepath.Join(home, ".Trash")} {
-		plan.DefaultExcluded += measure(path, "default", "").Bytes
+	for _, path := range []string{filepath.Join(home, "Library", "Caches"), filepath.Join(home, ".Trash"), "/private/var/vm"} {
+		entry := measure(path, "default", "")
+		plan.DefaultExcluded += entry.Bytes
+		plan.Default = append(plan.Default, entry)
 	}
 	for _, path := range tmExcludeFixedPaths(home) {
 		entry := measure(path, "fixed_sudo", "sudo tmutil addexclusion -p "+shellQuote(path))
@@ -185,13 +233,13 @@ func cmdSessionPressureStorageTMExclude(g *Flags, args []string) int {
 	if err != nil {
 		return sessionPressureError(err.Error(), 1)
 	}
-	_, sample, err := loadStorageState()
+	used, err := tmExcludeVolumeUsed(sessionpressure.DefaultStorageVolumePath())
 	if err != nil {
-		return sessionPressureError(err.Error(), 1)
+		return sessionPressureError("measure data volume: "+err.Error(), 1)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancel()
-	plan := buildTMExcludePlan(ctx, home, sample.TotalBytes-sample.AvailableBytes, 300<<30)
+	plan := buildTMExcludePlan(ctx, home, used, 300<<30)
 	full := len(plan.Rebuildable)
 	if limit < full {
 		plan.Rebuildable = plan.Rebuildable[:limit]
