@@ -728,8 +728,12 @@ func remoteLane(options WorkRunOptions) (lane, procs, memlimit, parallel string)
 	if options.Class == WorkClassExpressTest && len(options.Command) > 1 && options.Command[1] == "test" {
 		return "light", "1", "768MiB", "1"
 	}
-	return "heavy", "2", "3GiB", "2"
+	return "heavy", heavyProcs, heavyMemlimit, heavyParallel
 }
+
+// Heavy-lane Go limits for fixed-mode runners (elastic runners drop the
+// GOMAXPROCS and -p pins and follow the unit's CPU quota).
+const heavyProcs, heavyMemlimit, heavyParallel = "2", "3GiB", "2"
 
 // remoteGoInvocation is the remote Go command with its CPU limits. A heavy
 // job on a runner under elastic CPU shares (the scheduler sets
@@ -737,15 +741,29 @@ func remoteLane(options WorkRunOptions) (lane, procs, memlimit, parallel string)
 // and -p from its unit's CPU quota, which Go 1.25+ reads from cpu.max and
 // follows; pinning 2 would cap it at 2 CPUs on a 16-thread host. Fixed-mode
 // runners and the light lane keep the explicit pins.
+//
+// A light request does not always run light: the runner reruns a light
+// attempt that outgrows its 1 CPU / 1 GiB / 300 s caps as heavy, and runs
+// it heavy outright where it has no light lane (memory admission). The
+// runner names the admitted lane in NCD_RUNNER_LANE, so the light pins
+// apply only to a light attempt. Without the variable (an older runner) the
+// requested lane decides, as before. On 2026-11-15 two heavy reruns of a
+// cmd/ndev-go express-test kept GOMAXPROCS=1 / -p=1, ran silent at a
+// fraction of a core, and were killed as stalled.
 func remoteGoInvocation(lane, procs, memlimit, parallel, goflags, buildEnv string, argv []string) string {
 	args := ""
 	for _, arg := range argv {
 		args += " " + shellQuote(arg)
 	}
-	pinned := "env GOWORK=off GOMAXPROCS=" + procs + " GOMEMLIMIT=" + memlimit + " GOFLAGS=" + shellQuote(strings.TrimSpace(goflags+" -p="+parallel)) + buildEnv + args
-	if lane != "heavy" {
-		return pinned
+	pinned := func(procs, memlimit, parallel string) string {
+		return "env GOWORK=off GOMAXPROCS=" + procs + " GOMEMLIMIT=" + memlimit + " GOFLAGS=" + shellQuote(strings.TrimSpace(goflags+" -p="+parallel)) + buildEnv + args
 	}
-	elastic := "env -u GOMAXPROCS GOWORK=off GOMEMLIMIT=" + memlimit + " GOFLAGS=" + shellQuote(strings.TrimSpace(goflags)) + buildEnv + args
-	return "if [ \"${NCD_CPU_MODE:-fixed}\" = elastic ]; then " + elastic + "; else " + pinned + "; fi"
+	heavy := func(procs, memlimit, parallel string) string {
+		elastic := "env -u GOMAXPROCS GOWORK=off GOMEMLIMIT=" + memlimit + " GOFLAGS=" + shellQuote(strings.TrimSpace(goflags)) + buildEnv + args
+		return "if [ \"${NCD_CPU_MODE:-fixed}\" = elastic ]; then " + elastic + "; else " + pinned(procs, memlimit, parallel) + "; fi"
+	}
+	if lane == "heavy" {
+		return heavy(procs, memlimit, parallel)
+	}
+	return "if [ \"${NCD_RUNNER_LANE:-" + lane + "}\" = " + lane + " ]; then " + pinned(procs, memlimit, parallel) + "; else " + heavy(heavyProcs, heavyMemlimit, heavyParallel) + "; fi"
 }

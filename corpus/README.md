@@ -33,3 +33,5 @@ product decisions have all been reconstructed.
 - [Memory attribution and the swap lag release](memory-attribution-swap-lag-2026-11-15.md): memory families (LSP, agent host, build/test, browser) in latest.json, heartbeats and the delivery doctor; swap lag release (default off) enabled at 15 minutes on this host after approval, with telemetry evidence.
 
 - [gocache-lru lock-free gets](gocache-lru-lock-free-2026-11-15.md): runner-3 GOCACHEPROG waits; no startup replay, lock-free gets, journal never cut; benchmarks and deploy state.
+
+- [Remote Go limits follow the admitted runner lane](light-rerun-lane-env-2026-11-15.md): light requests rerun or admitted heavy drop the GOMAXPROCS=1 / -p=1 pins via NCD_RUNNER_LANE.
