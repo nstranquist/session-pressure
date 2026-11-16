@@ -93,3 +93,59 @@ func TestStallGuardUsesPersistedCapacity(t *testing.T) {
 		t.Fatal("a real stall (capacity 1000, 16 used) was not detected")
 	}
 }
+
+func TestResidentRestartsOnlyForARunnablePolicyChange(t *testing.T) {
+	dir := t.TempDir()
+	path := PolicyPath(dir)
+	saves := 0
+	save := func(policy Policy) {
+		t.Helper()
+		saves++
+		if err := SavePolicy(path, policy); err != nil {
+			t.Fatal(err)
+		}
+		// Each save gets a distinct mtime, as real edits seconds apart do.
+		stamp := time.Now().Add(time.Duration(saves) * time.Minute)
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := stallTestPolicy(16)
+	base.Enabled = true
+	save(base)
+	loaded, _, err := LoadPolicy(path, 16384)
+	if err != nil {
+		t.Fatal(err)
+	}
+	monitor := &Monitor{Store: NewTelemetryStore(dir), Policy: loaded}
+	resident := Snapshot{GuardRole: "resident", PhysicalMemoryMB: 16384}
+	if monitor.policyChangedOnDisk(resident) {
+		t.Fatal("unchanged file restarts the resident")
+	}
+	bigger := base
+	bigger.WorkLimits.Capacity = 24
+	save(bigger)
+	if monitor.policyChangedOnDisk(Snapshot{GuardRole: "manual", PhysicalMemoryMB: 16384}) {
+		t.Fatal("a foreground monitor restarts")
+	}
+	if monitor.policyChangedOnDisk(Snapshot{GuardRole: "resident"}) {
+		t.Fatal("restart without a measured memory size")
+	}
+	if !monitor.policyChangedOnDisk(resident) {
+		t.Fatal("capacity edit does not restart the resident")
+	}
+	// A broken file keeps the resident on its last policy, even though the
+	// last good copy (24) differs from the loaded one.
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if monitor.policyChangedOnDisk(resident) {
+		t.Fatal("broken file restarts the resident")
+	}
+	disabled := bigger
+	disabled.Enabled = false
+	save(disabled)
+	if monitor.policyChangedOnDisk(resident) {
+		t.Fatal("disabled policy restarts the resident")
+	}
+}

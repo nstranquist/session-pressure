@@ -563,10 +563,35 @@ to stop overload.
   reproduction (resident policy 1000, persisted 16, 16 of 16 used, a live
   waiter) records no stall, while the same queue under a persisted 1000
   does.
-- Scope note: other resident paths still use the policy loaded at start.
-  Relief already re-reads the policy at its own boundary (monitor.go). The
-  release flow's `monitor install` restarts the resident when policy
-  enforcement fields change, but a hand edit of capacity does not.
+- Scope note (superseded by the next entry): other resident paths still
+  used the policy loaded at start.
+
+### Resident restarts on a persisted policy change (2026-11-16, Nico: "Yes, build it")
+
+- Gap: the resident wires the policy into the sampler, work coordinator,
+  disk-write observer and cleaner at start. After a hand edit, those parts
+  kept the old copy, and relief refused to act at all, because its boundary
+  check fails closed when the persisted and in-memory policies differ.
+- Choice: restart, not hot swap. A hot swap would have to rebuild four
+  components and could leave one on the old copy. After each resident
+  sample, the monitor compares the persisted policy (stat-cached, re-read
+  only when mtime or size change) with the one it loaded. When they differ
+  and the file decodes, validates and is enabled, it writes
+  `resident_policy_changed` and ends the run with `ErrPolicyChanged`. The
+  helper treats that as a clean stop, and launchd KeepAlive starts a
+  replacement that loads the new policy whole. The run is longer than the
+  10 s ThrottleInterval, so the replacement starts at once.
+- No restart for: an unchanged file (touch or same-content rewrite), a
+  broken file (the resident stays on its last policy, so it never restarts
+  into a replacement that cannot load), a disabled policy, a foreground
+  monitor, or a sample without a measured memory size (memory-derived
+  defaults would differ from the start-up load and loop).
+- Test: `TestResidentRestartsOnlyForARunnablePolicyChange`. runner-3:
+  `go test` sessionpressure 29.3 s ok, sessionpressurecmd ok; `go vet` on
+  sessionpressure, sessionpressurecmd, the helper and the daemon clean. The
+  first attempt was refused by runner input retention ("retained input
+  budget exhausted"); `gaterunner prune --root /srv/build/scheduler` on gr3
+  removed 38 completed input trees, then the retry ran.
 
 ## 5. Open items
 

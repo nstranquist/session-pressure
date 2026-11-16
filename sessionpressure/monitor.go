@@ -179,7 +179,7 @@ type Monitor struct {
 	WorkCoordinator    *WorkCoordinator
 	QueueStallNotifier func(QueueStall) error
 	queueStalls        QueueStallDetector
-	stallPolicy        stallPolicyCache
+	policyCache        persistedPolicyCache
 }
 
 type monitorStats struct {
@@ -641,6 +641,10 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 				}
 			}
 			monitor.observeQueueStall(snapshot)
+			if monitor.policyChangedOnDisk(snapshot) {
+				_ = monitor.Store.AppendEvent(TelemetryEvent{Timestamp: snapshot.Timestamp, Event: ResidentPolicyChangedEvent})
+				return ErrPolicyChanged
+			}
 			pruneAt := monitor.Now()
 			if lastPrune.IsZero() || pruneAt.Sub(lastPrune) >= telemetryPruneInterval || pruneAt.Before(lastPrune) {
 				// Treat an attempted prune as scheduled even if it fails. Retrying an
@@ -663,6 +667,36 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+// ErrPolicyChanged ends a resident run when the persisted policy differs from
+// the one it loaded. The resident wires the policy into the sampler, work
+// coordinator, disk observer and cleaner at start, so a hot swap would leave
+// parts on the old copy. launchd KeepAlive starts a replacement that loads
+// the new policy whole; the run is longer than ThrottleInterval, so the
+// replacement starts at once.
+var ErrPolicyChanged = errors.New("persisted policy changed; resident restarts to load it")
+
+const ResidentPolicyChangedEvent = "resident_policy_changed"
+
+// policyChangedOnDisk is true only for a persisted policy a replacement could
+// run: it decodes, validates, is enabled and differs from the loaded one. An
+// invalid or disabled file keeps this resident running on its last policy;
+// relief already fails closed on any drift at its own boundary.
+func (monitor *Monitor) policyChangedOnDisk(snapshot Snapshot) bool {
+	// Memory-derived defaults fill fields the file leaves out. Without a
+	// measured size they would differ from the start-up load and restart the
+	// resident on an unchanged file.
+	if snapshot.GuardRole != "resident" || snapshot.PhysicalMemoryMB <= 0 {
+		return false
+	}
+	// Only the file as it is now: a broken file must not restart into a
+	// replacement that cannot load it.
+	persisted, _, current := monitor.persistedPolicy(snapshot.PhysicalMemoryMB)
+	if !current || persisted.Equal(monitor.Policy) || !persisted.Enabled {
+		return false
+	}
+	return persisted.Validate() == nil
 }
 
 func (monitor *Monitor) attachDiskWrite(snapshot *Snapshot) {

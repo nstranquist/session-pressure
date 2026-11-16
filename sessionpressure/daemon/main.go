@@ -344,7 +344,11 @@ func run(ctx context.Context) error {
 		dir: dir, controlBinary: os.Getenv(sessionpressure.ControlBinaryEnv),
 		controlDigest: os.Getenv(sessionpressure.ControlBinaryDigestEnv), pressurePolicy: policy,
 	}
-	return monitor.Run(ctx)
+	if err := monitor.Run(ctx); !errors.Is(err, sessionpressure.ErrPolicyChanged) {
+		return err
+	}
+	// A planned stop: launchd starts the replacement with the new policy.
+	return nil
 }
 
 func notifyRecoveryHint(hint sessionpressure.RecoveryHint) error {

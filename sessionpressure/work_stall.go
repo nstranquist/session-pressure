@@ -327,38 +327,47 @@ func ReplayQueueStalls(events []WorkEvent, levels []LevelObservation, limits Wor
 // observeQueueStall runs the live stall guard on one resident sample. It
 // reads the published queue snapshot without the mutation lock, so a sample
 // never waits on a worker. Failures are silent: the guard is observation.
-// stallPolicyCache holds the last persisted policy the stall guard read,
+// persistedPolicyCache holds the last persisted policy the resident read,
 // keyed by file modification time and size.
-type stallPolicyCache struct {
+type persistedPolicyCache struct {
 	modTime time.Time
 	size    int64
 	policy  Policy
 	loaded  bool
 }
 
-// stallGuardPolicy returns the persisted policy, re-read only when the file
-// changes. Any read or validation error keeps the last good copy, and with
-// none the resident's in-memory policy.
-func (monitor *Monitor) stallGuardPolicy(physicalMemoryMB float64) Policy {
-	fallback := monitor.Policy
-	if monitor.stallPolicy.loaded {
-		fallback = monitor.stallPolicy.policy
+// persistedPolicy returns the persisted policy, re-read only when the file
+// changes. A read or decode error keeps the last good copy. loaded is false
+// while no persisted copy has loaded; current is true only when the returned
+// copy is what the file holds now.
+func (monitor *Monitor) persistedPolicy(physicalMemoryMB float64) (policy Policy, loaded, current bool) {
+	cache := &monitor.policyCache
+	if monitor.Store == nil {
+		return cache.policy, cache.loaded, false
 	}
 	path := PolicyPath(monitor.Store.Dir)
 	info, err := os.Stat(path)
 	if err != nil {
-		return fallback
+		return cache.policy, cache.loaded, false
 	}
-	cache := &monitor.stallPolicy
 	if cache.loaded && info.ModTime().Equal(cache.modTime) && info.Size() == cache.size {
-		return cache.policy
+		return cache.policy, true, true
 	}
 	policy, persisted, err := LoadPolicy(path, physicalMemoryMB)
 	if err != nil || !persisted {
-		return fallback
+		return cache.policy, cache.loaded, false
 	}
-	*cache = stallPolicyCache{modTime: info.ModTime(), size: info.Size(), policy: policy, loaded: true}
-	return policy
+	*cache = persistedPolicyCache{modTime: info.ModTime(), size: info.Size(), policy: policy, loaded: true}
+	return policy, true, true
+}
+
+// stallGuardPolicy is the persisted policy, or the resident's in-memory copy
+// while none has loaded.
+func (monitor *Monitor) stallGuardPolicy(physicalMemoryMB float64) Policy {
+	if policy, loaded, _ := monitor.persistedPolicy(physicalMemoryMB); loaded {
+		return policy
+	}
+	return monitor.Policy
 }
 
 func (monitor *Monitor) observeQueueStall(snapshot Snapshot) {
