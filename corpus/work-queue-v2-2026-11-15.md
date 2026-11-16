@@ -610,6 +610,11 @@ to stop overload.
 - Cloud target for Mac and Hetzner: WORK-841. Retention guard: comment on
   WORK-817. Nicos System Backup (restic of ~/.nicos-dev to the X10 drive) has
   failed every full run since at least 2026-11-13: the drive is not mounted.
+- 2026-11-16, Nico: "let's skip these system backups. make sure they are
+  disabled". Verified that the three Nicos System Backup agents (full-state,
+  delivery-queue, turso) are unloaded and marked disabled in launchd, and
+  that no backup process runs. So the runner archives have one copy, on the
+  Mac, until WORK-841 provides a cloud target.
 
 ## 5. Open items
 
