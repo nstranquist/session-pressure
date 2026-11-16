@@ -490,8 +490,14 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
 - The 2 failing checks, `calibrated-classes` and
   `express-lookahead-under-benchmark`, fail the same way with the previous
   helper 8753188 (22 of 24). They come from class weights calibrated for
-  capacity 8 now running under capacity 16, not from this change. Whoever
-  owns the capacity-16 policy should recalibrate the weights.
+  capacity 8 now running under capacity 16, not from this change.
+- Decision (Nico, in chat, 2026-11-16): capacity 16 stays, and higher
+  capacity is preferred ("no 16 is good, and more might be better. higher
+  capacity is better"). Do not restore capacity 8 or the warning drop to 4.
+  Consequence for this workstream: memory, not the unit budget, has to be
+  the guard that stops overload, so promoting the memory-headroom admitter
+  matters more. The two failing checks assume capacity 8 and should become
+  capacity-relative.
 - Seen while testing: `TestRemoteGoInvocationLightFollowsTheAdmittedLane`
   (commit 8c1ea78, another session) fails inside a runner job. It reads
   `os.Environ()`, and the runner sets `NCD_RUNNER_LANE`, so its "older
