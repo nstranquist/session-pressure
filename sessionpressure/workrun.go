@@ -456,7 +456,11 @@ func AdmissionReason(admission Admission) string {
 }
 
 type workAdmissionGate struct {
-	limits                              WorkLimits
+	limits WorkLimits
+	// memoryHeadroom returns this operation's memory-headroom decision and
+	// the number of running unparked leases. Nil disables enforcement.
+	memoryHeadroom                      func(Admission) (ShadowMemoryDecision, int, bool)
+	memoryEnforceActive                 func() bool
 	refreshLimits                       func() WorkLimits
 	cpuRed                              int
 	cpuRecovered                        int
@@ -695,6 +699,27 @@ func (gate *workAdmissionGate) storageGraceError(admission Admission, dimension 
 	return nil
 }
 
+// memoryHeadroomDecision holds new work under enforced memory admission
+// (WorkLimits.MemoryAdmission = enforce). It never applies to a lease this
+// process already owns: holding it would idle capacity it already holds.
+func (gate *workAdmissionGate) memoryHeadroomDecision(admission Admission, ownsLease bool) (workAdmissionDecision, bool) {
+	if ownsLease || gate.memoryHeadroom == nil || gate.limits.MemoryAdmission != MemoryAdmissionEnforce {
+		return workAdmissionDecision{}, false
+	}
+	if gate.memoryEnforceActive != nil && !gate.memoryEnforceActive() {
+		return workAdmissionDecision{}, false
+	}
+	decision, running, ok := gate.memoryHeadroom(admission)
+	if !ok {
+		return workAdmissionDecision{}, false
+	}
+	hold, reason := memoryHeadroomHold(decision, running)
+	if !hold {
+		return workAdmissionDecision{}, false
+	}
+	return workAdmissionDecision{Allowed: false, Dimension: "memory", Reason: reason, RetryInterval: WorkAdmissionRetryInterval}, true
+}
+
 func (gate *workAdmissionGate) Observe(admission Admission, immediate bool) workAdmissionDecision {
 	return gate.observe(admission, immediate, false)
 }
@@ -708,6 +733,9 @@ func (gate *workAdmissionGate) observe(admission Admission, immediate, ownsLease
 		gate.limits = gate.refreshLimits()
 	}
 	if decision, ok := gate.swapThrashDecision(admission, ownsLease); ok {
+		return decision
+	}
+	if decision, ok := gate.memoryHeadroomDecision(admission, ownsLease); ok {
 		return decision
 	}
 	if decision, ok := gate.warningCapacityDecision(admission, ownsLease); ok {
@@ -1213,7 +1241,8 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 			BatchCompletedSteps:    completedSteps,
 			IdleParkedMilliseconds: parkedFor.Milliseconds(), IdleParkCount: parkCount,
 			CommandCPUAvailable: commandUsage.available, CommandCPUMilliseconds: commandUsage.cpuMS,
-			CommandPeakRSSMB:   commandUsage.peakRSSMB,
+			CommandPeakRSSMB:     commandUsage.peakRSSMB,
+			CommandTreePeakRSSMB: commandUsage.treePeakRSSMB, CommandTreePeakSamples: commandUsage.treePeakSamples,
 			LeaseReservedCores: commandUsage.reservedCores(weight, coordinator.Limits.Capacity, runtime.NumCPU()),
 		})
 		if err == nil {
@@ -1278,6 +1307,22 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		interactive:          options.Interactive,
 		classPeakRSSP90MB:    newCalibratedClassPeakRSSP90(coordinator.Dir, options.Class, coordinator.Now),
 		freeWeightedCapacity: func() (int, bool) { return coordinatorFreeCapacity(coordinator) },
+		memoryEnforceActive:  func() bool { return configuredWorkSwapThrashEnforced(coordinator.Dir) },
+		memoryHeadroom: func(admission Admission) (ShadowMemoryDecision, int, bool) {
+			statusCtx, statusCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer statusCancel()
+			status, statusErr := coordinator.StatusSnapshot(statusCtx)
+			if statusErr != nil {
+				return ShadowMemoryDecision{}, 0, false
+			}
+			running := 0
+			for _, lease := range status.Leases {
+				if !lease.Parked {
+					running++
+				}
+			}
+			return shadowMemory.decide(admission, status.Leases, time.Now()), running, true
+		},
 		warningCapacityStatus: func() (WorkStatus, bool) {
 			statusCtx, statusCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 			defer statusCancel()
@@ -1619,6 +1664,8 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	if closeErr := closeWorkCommandExtraFiles(command); closeErr != nil {
 		fmt.Fprintln(streams.Stderr, "ndev session pressure: close parent lease gate copy:", closeErr)
 	}
+	treePeak := startTreePeakSampler(command.Process.Pid, treeRSSSampleInterval, listProcessRows, processRSSKB)
+	defer treePeak.Stop()
 	if priorityErr := syscall.Setpriority(syscall.PRIO_PROCESS, command.Process.Pid, 5); priorityErr != nil && !errors.Is(priorityErr, syscall.ESRCH) {
 		fmt.Fprintln(streams.Stderr, "ndev session pressure: lower leased command priority:", priorityErr)
 	}
@@ -1725,6 +1772,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 			}
 		case waitErr := <-done:
 			commandUsage = commandResourceUsage(command.ProcessState)
+			commandUsage.treePeakRSSMB, commandUsage.treePeakSamples = treePeak.Stop()
 			if waitErr == nil && cancellationSignal == 0 && options.reuseFinalizer != nil {
 				if finalReason := options.reuseFinalizer(); finalReason != "" {
 					options.ReuseRefusalReason = finalReason

@@ -161,6 +161,11 @@ type WorkLimits struct {
 	// recoverable host signal into avoidable agent wait. Balanced and Throughput
 	// leave the normal weighted ceiling in place until true red pressure.
 	WarningCapacityEnabled bool `json:"warning_capacity_enabled"`
+	// MemoryAdmission selects memory-headroom admission (work_headroom.go):
+	// "" or "shadow" records decisions only; "enforce" also holds new work
+	// whose predicted peak does not fit headroom while other coordinated work
+	// runs. It acts only when admission is enforced.
+	MemoryAdmission string `json:"memory_admission,omitempty"`
 	// AllowOverrideBeyondCapacity lets an explicit operator override (work
 	// override) admit its waiter past the weighted Capacity ceiling. It
 	// widens only that logical cap: the host-pressure admission gate -
@@ -638,6 +643,11 @@ func (policy Policy) Validate() error {
 	}
 	if w.SwapThrashAgentSharePercent < 1 || w.SwapThrashAgentSharePercent > 100 {
 		return errors.New("work swap_thrash_agent_share_percent must be between 1 and 100")
+	}
+	switch w.MemoryAdmission {
+	case "", MemoryAdmissionShadow, MemoryAdmissionEnforce:
+	default:
+		return fmt.Errorf("work memory_admission %q must be shadow or enforce", w.MemoryAdmission)
 	}
 	if w.WarningCapacity < 1 || w.WarningCapacity > w.Capacity {
 		return errors.New("work warning_capacity must be positive and no greater than capacity")

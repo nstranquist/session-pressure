@@ -76,7 +76,11 @@ func EvaluateWorkSystem(policy Policy) WorkEvaluationReport {
 		weight, _ := limits.Weight(class)
 		report.ClassWeights = append(report.ClassWeights, WorkClassWeight{Class: class, Weight: weight})
 	}
-	add("calibrated-classes", limits.TestWeight < limits.BuildWeight && limits.BrowserWeight <= limits.TestWeight && limits.BuildWeight+limits.TestWeight <= limits.Capacity && 2*limits.BuildWeight > limits.Capacity &&
+	// Capacity-relative (Nico, 2026-11-16: higher capacity is preferred). The
+	// former "2 x build > capacity" term made two builds mutually exclusive,
+	// which only held at capacity 8. Concurrent builds are now bounded by
+	// capacity and memory-headroom admission, not by this check.
+	add("calibrated-classes", limits.TestWeight < limits.BuildWeight && limits.BrowserWeight <= limits.TestWeight && limits.BuildWeight+limits.TestWeight <= limits.Capacity &&
 		limits.ExpressTestWeight < limits.TestWeight && limits.ExpressBuildWeight < limits.BuildWeight &&
 		limits.BenchmarkWeight+limits.ExpressTestWeight <= limits.Capacity && limits.BenchmarkWeight < limits.Capacity,
 		fmt.Sprintf("capacity=%d express_test=%d test=%d express_build=%d build=%d browser=%d benchmark=%d exclusive=%d",
@@ -101,14 +105,18 @@ func EvaluateWorkSystem(policy Policy) WorkEvaluationReport {
 	add("express-residual-beside-benchmark", ExpressFitsBeside(benchmarkWeight, expressWeight, limits.Capacity) && exclusiveWeight == limits.Capacity && benchmarkWeight < limits.Capacity,
 		fmt.Sprintf("benchmark=%d express=%d capacity=%d exclusive=%d", benchmarkWeight, expressWeight, limits.Capacity, exclusiveWeight))
 
-	// When a non-exclusive benchmark holds residual-leaving capacity and a full
-	// build head cannot fit, bounded lookahead must still select express work.
+	// When running work leaves residual capacity too small for a full build
+	// head, bounded lookahead must still select express work. The occupied
+	// weight is derived from capacity (at least one benchmark), so the case
+	// holds at any capacity instead of only where a benchmark alone blocks a
+	// build.
+	lookaheadUsed := max(benchmarkWeight, limits.Capacity-limits.BuildWeight+1)
 	expressLookahead := selectWorkWaiter([]WorkWaiterRecord{
 		{OperationID: firstID, Class: WorkClassBuild, Weight: limits.BuildWeight, QueuedAt: queuedAt},
 		{OperationID: secondID, Class: WorkClassExpressTest, Weight: expressWeight, QueuedAt: queuedAt.Add(time.Second)},
-	}, benchmarkWeight, limits.Capacity, queuedAt.Add(2*time.Second), workGreenExpressWindow{}, 0)
+	}, lookaheadUsed, limits.Capacity, queuedAt.Add(2*time.Second), workGreenExpressWindow{}, 0)
 	add("express-lookahead-under-benchmark", expressLookahead.SelectedOperationID == secondID && len(expressLookahead.BypassedIndexes) == 1,
-		fmt.Sprintf("selected=%s reason=%s used=%d", expressLookahead.SelectedOperationID, expressLookahead.DecisionReason, benchmarkWeight))
+		fmt.Sprintf("selected=%s reason=%s used=%d", expressLookahead.SelectedOperationID, expressLookahead.DecisionReason, lookaheadUsed))
 
 	// A pressure reservation whose owner still waits on host pressure must not
 	// idle the queue (2026-11-15 stall: 7/8 free, ten waiters blocked).

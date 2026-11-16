@@ -47,6 +47,9 @@ type workCommandUsage struct {
 	available bool
 	cpuMS     int64
 	peakRSSMB float64
+	// treePeak* is the sampled process-tree peak (tree_rss.go).
+	treePeakRSSMB   float64
+	treePeakSamples int
 }
 
 func commandResourceUsage(state *os.ProcessState) workCommandUsage {

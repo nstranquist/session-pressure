@@ -196,6 +196,11 @@ type WorkEvent struct {
 	CommandCPUAvailable    bool    `json:"command_cpu_available,omitempty"`
 	CommandCPUMilliseconds int64   `json:"command_cpu_ms,omitempty"`
 	CommandPeakRSSMB       float64 `json:"command_peak_rss_mb,omitempty"`
+	// CommandTreePeakRSSMB is the largest sampled sum over the command's
+	// process tree (tree_rss.go); CommandTreePeakSamples is how many 1 s
+	// samples saw the tree. Zero samples means the command ended first.
+	CommandTreePeakRSSMB   float64 `json:"command_tree_peak_rss_mb,omitempty"`
+	CommandTreePeakSamples int     `json:"command_tree_peak_samples,omitempty"`
 	LeaseReservedCores     float64 `json:"lease_reserved_cores,omitempty"`
 
 	// Shadow* is what memory-headroom admission (work_headroom.go) would have
@@ -230,7 +235,7 @@ func (event WorkEvent) Validate() error {
 	if !validShadowMemoryDecision(event.ShadowMemoryDecision) {
 		return fmt.Errorf("work event shadow_memory_decision %q is not in the closed vocabulary", event.ShadowMemoryDecision)
 	}
-	if event.ShadowMemoryRule != "" && event.ShadowMemoryRule != HeadroomRuleVersion {
+	if event.ShadowMemoryRule != "" && event.ShadowMemoryRule != HeadroomRuleVersion && event.ShadowMemoryRule != headroomRuleVersionV1 {
 		return fmt.Errorf("work event shadow_memory_rule %q is not a known rule version", event.ShadowMemoryRule)
 	}
 	switch event.ShadowPredictionSource {
@@ -304,7 +309,10 @@ func (event WorkEvent) Validate() error {
 	if (event.QueueHostCPUPercent > 0 && !event.QueueHostCPUAvailable) || (event.QueueCoordinatedCPUPercent > 0 && !event.QueueCoordinatedCPUAvailable) {
 		return errors.New("work event queue CPU percent requires available evidence")
 	}
-	for _, value := range []float64{event.QueueCoordinatedInventoryAgeSeconds, event.CommandPeakRSSMB, event.LeaseReservedCores} {
+	if event.CommandTreePeakSamples < 0 {
+		return errors.New("work event command_tree_peak_samples must not be negative")
+	}
+	for _, value := range []float64{event.QueueCoordinatedInventoryAgeSeconds, event.CommandPeakRSSMB, event.CommandTreePeakRSSMB, event.LeaseReservedCores} {
 		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
 			return errors.New("work event resource evidence must be finite and non-negative")
 		}

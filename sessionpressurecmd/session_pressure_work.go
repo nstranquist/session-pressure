@@ -194,7 +194,11 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 		if err != nil {
 			return sessionPressureError(err.Error(), 1)
 		}
-		payload := map[string]any{"ok": true, "action": "work.headroom", "headroom": headroom}
+		mode := runtime.policy.WorkLimits.MemoryAdmission
+		if mode == "" {
+			mode = sessionpressure.MemoryAdmissionShadow
+		}
+		payload := map[string]any{"ok": true, "action": "work.headroom", "headroom": headroom, "memory_admission": mode}
 		return emitPressure(g, payload, pressureWorkHeadroomText(headroom), 0)
 	case "placement":
 		window, probeRunners := 6*time.Hour, true

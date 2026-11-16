@@ -504,6 +504,39 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
   runner" case cannot hold there. It was skipped for this run and left to
   its owner.
 
+### Path to higher capacity (2026-11-16, Nico: "Yes, build it")
+
+Goal: Nico prefers capacity 16 or higher. Memory, not the unit budget, has
+to stop overload.
+
+- Eval checks are capacity-relative. `calibrated-classes` no longer requires
+  `2 x build > capacity`, which made two builds mutually exclusive only at
+  capacity 8. `express-lookahead-under-benchmark` derives the occupied weight
+  from capacity (`max(benchmark, capacity - build + 1)`). Both pass with the
+  live weights at capacity 8, 16 and 32 (test
+  `TestEvaluationChecksHoldAtHigherCapacity`).
+- Process-tree peak memory (`tree_rss*.go`). The work-run process samples
+  its command's tree once a second. On macOS it uses one `kern.proc.all`
+  sysctl for pid and ppid, then `proc_pid_rusage` for tree members only; on
+  Linux it reads `/proc`. Work events carry `command_tree_peak_rss_mb` and
+  `command_tree_peak_samples`. A tree shorter than one sample can still be
+  missed; zero samples means the command ended first.
+- Headroom rule v2 (`mac-headroom-p90-v2`): the predictor uses
+  max(tree peak, wait4 peak). v1 rows stay valid on read and age out of the
+  72 h window. Until then, class and workload p90s still mix in v1
+  single-process samples that can be too low.
+- Enforce mode, off by default: `work_limits.memory_admission` = `shadow`
+  (default) or `enforce`. With admission enforced, enforce holds a new
+  operation before its lease only when its predicted peak does not fit
+  headroom (`no_headroom`) and at least one other coordinated lease runs.
+  So an empty queue never waits on memory it cannot free. A missing sample
+  fails open. Red, critical and swap thrash stay with the existing level
+  and swap gates. A lease this process already owns is never held. The hold
+  uses the existing `memory` dimension, with a reason starting "memory
+  headroom:". `work headroom` reports the mode.
+- Not switched on. Turning on enforce needs Nico's approval, after the
+  tree-peak history has filled (about 24 to 72 h of runs).
+
 ## 5. Open items
 
 - [ ] Memory-headroom admission (request from the commit-delivery session,

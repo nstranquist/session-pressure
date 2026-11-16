@@ -25,10 +25,11 @@ import (
 // Charging in-flight predictions stops a burst of admissions in one sample
 // window from all seeing the same free memory.
 //
-// Known limit: CommandPeakRSSMB is the largest single process of a command
-// (wait4), not the sum over its process tree. Parallel test binaries can
-// exceed it. The in-flight term uses measured tree RSS, so only the new
-// operation's own prediction carries that error.
+// Peaks: CommandPeakRSSMB is the largest single process (wait4). Since rule
+// v2 the predictor uses max(that, CommandTreePeakRSSMB), the 1 s sampled sum
+// over the process tree. A tree peak shorter than one sample interval can
+// still be missed. Rows from before v2 carry only the wait4 peak and age out
+// of the 72 h window.
 
 const (
 	headroomSchemaVersion   = 1
@@ -49,7 +50,10 @@ const (
 	// HeadroomRuleVersion names this estimator in events and the headroom
 	// view, so replay never mixes it with the runner's memadmit (p95 x 1.10,
 	// 5 samples, 2 GiB default). Change it with any estimator change.
-	HeadroomRuleVersion       = "mac-headroom-p90-v1"
+	// v2 (2026-11-16): samples are max(tree peak, wait4 peak). v1 rows
+	// stay valid on read.
+	HeadroomRuleVersion       = "mac-headroom-p90-v2"
+	headroomRuleVersionV1     = "mac-headroom-p90-v1"
 	headroomMinMeasuredPeakMB = 8
 	// headroomSwapOutRefuseMBPerSecond matches the default
 	// Thresholds.SwapOutThrashMBPerSecond.
@@ -82,18 +86,46 @@ func buildPeakRSSHistory(events []WorkEvent) peakRSSHistory {
 		// probes (`true`, `exit 0`) and wrappers whose real work ran in a
 		// process wait4 never saw (440 s express-build runs at about 1 MB on
 		// 2026-11-15). Counting them would predict about 1 MB for real work.
-		if event.Event != WorkEventCompleted || event.CommandPeakRSSMB < headroomMinMeasuredPeakMB {
+		// v2: the tree peak (tree_rss.go) when sampled; it covers the
+		// parallel processes and wrapped children wait4 misses.
+		peak := commandMemoryPeakMB(event)
+		if event.Event != WorkEventCompleted || peak < headroomMinMeasuredPeakMB {
 			continue
 		}
-		history.byClass[string(event.Class)] = append(history.byClass[string(event.Class)], event.CommandPeakRSSMB)
+		history.byClass[string(event.Class)] = append(history.byClass[string(event.Class)], peak)
 		if event.Workload != "" {
-			history.byWorkload[event.Workload] = append(history.byWorkload[event.Workload], event.CommandPeakRSSMB)
+			history.byWorkload[event.Workload] = append(history.byWorkload[event.Workload], peak)
 		}
 		if event.PlacementKey != "" {
-			history.byKey[event.PlacementKey] = append(history.byKey[event.PlacementKey], event.CommandPeakRSSMB)
+			history.byKey[event.PlacementKey] = append(history.byKey[event.PlacementKey], peak)
 		}
 	}
 	return history
+}
+
+// Memory admission modes (WorkLimits.MemoryAdmission).
+const (
+	MemoryAdmissionShadow  = "shadow"
+	MemoryAdmissionEnforce = "enforce"
+)
+
+// memoryHeadroomHold decides whether enforced memory admission holds a new
+// operation. It holds only when the predicted peak does not fit measured
+// headroom (no_headroom) and at least one other coordinated lease runs, so
+// the queue can always make progress: an empty queue never waits on memory
+// it cannot free. Missing samples fail open. Red, critical and swap thrash
+// stay with the level and swap gates.
+func memoryHeadroomHold(decision ShadowMemoryDecision, runningLeases int) (bool, string) {
+	if decision.Admit || decision.Reason != headroomNoRoom || runningLeases == 0 {
+		return false, ""
+	}
+	return true, fmt.Sprintf("memory headroom: predicted peak %d MB (%s) exceeds headroom %d MB with %d coordinated leases running",
+		decision.PredictedPeakMB, decision.PredictionSource, decision.HeadroomMB, runningLeases)
+}
+
+// commandMemoryPeakMB is the best measured peak of one command.
+func commandMemoryPeakMB(event WorkEvent) float64 {
+	return max(event.CommandPeakRSSMB, event.CommandTreePeakRSSMB)
 }
 
 func percentileMB(values []float64, percent int) int64 {
