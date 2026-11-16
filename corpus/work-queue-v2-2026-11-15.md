@@ -593,6 +593,24 @@ to stop overload.
   budget exhausted"); `gaterunner prune --root /srv/build/scheduler` on gr3
   removed 38 completed input trees, then the retry ran.
 
+### Runner telemetry backup before prune (2026-11-16, Nico: "let's run backups before we prune")
+
+- Context: the gr3 test run for the entry above was refused ("retained input
+  budget exhausted"), and I ran `gaterunner prune` by hand. That prune
+  removed only retained input trees (copies of committed source). Job logs
+  and results expire 7 days after a job finishes, and nothing backed them up.
+- Now: nicos-ops `tools/runner-backup` copies jobs.log, per-job logs and
+  results, and an online queue.db snapshot to
+  `~/.nicos-dev/gaterunner-fleet/backups/runner-3` daily (launchd
+  `com.nicos.runner-backup`). `runner-backup -prune` is the manual prune
+  path: it verifies the archive first. Baseline 1.0 GiB to 89 MiB; deltas
+  about 3 MiB. The restored queue.db passed the integrity check (4,662 jobs).
+- The placer's own history (remote_work_finished) is on the Mac and was
+  never at risk.
+- Cloud target for Mac and Hetzner: WORK-841. Retention guard: comment on
+  WORK-817. Nicos System Backup (restic of ~/.nicos-dev to the X10 drive) has
+  failed every full run since at least 2026-11-13: the drive is not mounted.
+
 ## 5. Open items
 
 - [ ] Memory-headroom admission (request from the commit-delivery session,
