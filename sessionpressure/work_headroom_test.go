@@ -220,3 +220,32 @@ func TestReplayHeadroomPredictorUsesOnlyEarlierRuns(t *testing.T) {
 		t.Fatalf("replay all %+v", all)
 	}
 }
+
+func TestRunningLeaseIsChargedItsOwnPrediction(t *testing.T) {
+	coordinator := testWorkCoordinator(t)
+	coordinator.PredictedPeakMB = 40
+	lease, status, err := coordinator.AcquireOperationWithCapacity(context.Background(), WorkClassHeavy, "0123456789abcdef0123456789abcdef", 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release(context.Background())
+	if lease.Record().PredictedPeakMB != 40 || len(status.Leases) != 1 || status.Leases[0].PredictedPeakMB != 40 {
+		t.Fatalf("prediction not carried: record %d status %+v", lease.Record().PredictedPeakMB, status.Leases)
+	}
+	var heavy []WorkEvent
+	for range 5 {
+		heavy = append(heavy, treePeak(WorkClassHeavy, "", 3300, time.Time{}))
+	}
+	history := buildPeakRSSHistory(heavy)
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	snapshot := headroomSnapshot(now, 50, LevelNormal)
+	snapshot.CoordinatedWork.RSSSumMB = 15
+	if got := computeHeadroom(snapshot, true, status.Leases, history, now); got.LeasePredictedMB != 40 || got.InflightMB != 25 {
+		t.Fatalf("own prediction: %+v", got)
+	}
+	// A lease from an older helper has no prediction: the class figure.
+	status.Leases[0].PredictedPeakMB = 0
+	if got := computeHeadroom(snapshot, true, status.Leases, history, now); got.LeasePredictedMB != 3300 {
+		t.Fatalf("class fallback: %+v", got)
+	}
+}

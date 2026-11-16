@@ -1171,6 +1171,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	shadowMemory := &shadowMemoryProbe{dir: coordinator.Dir, class: options.Class, workload: options.Workload,
 		key: placementKey, interactive: options.Interactive, weight: weight, fastLane: coordinator.limits().FastLaneMaxWeight}
 	shadowMemory.decide(initialAdmission, initialStatus.Leases, time.Now()).apply(&queuedEvent)
+	coordinator.PredictedPeakMB = shadowMemory.prediction(time.Now())
 	if err := appendEvent(queuedEvent); err != nil {
 		return 1, fmt.Errorf("persist queued work event: %w", err)
 	}

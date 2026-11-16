@@ -258,7 +258,10 @@ func computeHeadroom(snapshot Snapshot, haveSample bool, leases []WorkLeaseStatu
 		if lease.Parked {
 			continue
 		}
-		predicted, _ := history.predict(lease.Class, "", "")
+		predicted := lease.PredictedPeakMB
+		if predicted <= 0 {
+			predicted, _ = history.predict(lease.Class, "", "")
+		}
 		headroom.LeaseCount++
 		headroom.LeasePredictedMB += predicted
 	}
@@ -376,6 +379,20 @@ type shadowMemoryProbe struct {
 	weight      int
 	fastLane    int
 	history     *peakRSSHistory
+}
+
+// prediction returns this operation's predicted peak from its most specific
+// scope.
+func (probe *shadowMemoryProbe) prediction(now time.Time) int64 {
+	if probe == nil {
+		return 0
+	}
+	if probe.history == nil {
+		history := readPeakRSSHistory(probe.dir, now)
+		probe.history = &history
+	}
+	predicted, _ := probe.history.predict(probe.class, probe.workload, probe.key)
+	return predicted
 }
 
 func (probe *shadowMemoryProbe) decide(admission Admission, leases []WorkLeaseStatus, now time.Time) ShadowMemoryDecision {
