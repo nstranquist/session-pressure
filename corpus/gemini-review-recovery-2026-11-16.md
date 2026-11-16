@@ -1,6 +1,6 @@
 # Pressure review recovery, 2026-11-16
 
-Status: verified source changes, publication pending.
+Status: source fixes locally published. WORK-904 release bundle prepared and privately verified. Live promotion waits for native contract verification and a controlled resident transition.
 Owner: codex/01a1e4b2-9ce5-79d0-aeec-e700790a3e64, WORK-899.
 Original owner: Gemini Antigravity conversation 8ab4cd6c-4c00-427f-a585-ee279cf28544.
 
@@ -27,3 +27,17 @@ The isolated candidate contains the recovered Gemini paths only, without concurr
 Installed doctor was dogfooded during recovery. Its binaries disagree: CLI 7020ea2f3c26, front door cd9c32dc646f, resident helper 2084bf932eb2. It reports 348 minutes/day swap derate wait with all_wait_total_ms 0, and a resource budget failure. Source fixes do not constitute an installed release. No resident restart, policy tuning, cleanup or process termination occurred.
 
 Board decision d-06gu9dlo33kmglc780 records recovery and ownership. The original transcript is ~/.gemini/antigravity/brain/8ab4cd6c-4c00-427f-a585-ee279cf28544/.system_generated/logs/transcript_full.jsonl. No separate plan document was found for this chat.
+
+## WORK-904 release preparation
+
+Owner: codex/01a1e4b2-9ce5-79d0-aeec-e700790a3e64. Status: 2026-11-16, prepared, live promotion pending.
+
+Source fixes were locally published as e039c1eaea92e020207122534c0f46232179cf2c, guarded receipt 37e18062f03cf163ffd7b7a5b0b65956. A sealed bundle of that committed main ref passed local verification. Canonical runner-3 request 91e55bd9-78ca-4b31-b046-d3b6b4d93721 cloned the named ref, verified it in the clean repository, passed release and compiler-adapter tests, then built all six Darwin/arm64 binaries with CGO enabled through /srv/build/opt/pressure-darwin-clang. Exit 0, peak memory 439963648 bytes. The first request b7a1ea18-b410-47b2-9e41-82f944259322 failed before compilation because bundle verification ran outside a Git repository. Corrected verification remained on runner 3.
+
+The completed bundle is retained on runner-3 at /srv/build/exports/pressure-work904-e039c1e/bundle and on this Mac at /Users/user/Documents/Codex/2026-11-16/lets-l/work/pressure-release-bundle. Built at 2026-11-16T14:25:21.804144856Z. Its guarded installer verified and installed the complete bundle into the private prefix /Users/user/Documents/Codex/2026-11-16/lets-l/work/pressure-staged-bin, with expected-current none. Capabilities reports e039c1e. This does not change the live product authority.
+
+A real read-only doctor probe through the private CLI reads existing resident telemetry and now reports all_wait_total_ms 70426360, swap wait 20899518, share 0.296757. The old installed CLI reported all_wait_total_ms 0 for that same swap wait. This verifies the attribution fix against real data. The probe correctly retains a revision mismatch against resident helper 2084bf932eb2. Healthy runtime acceptance is not claimed.
+
+Live .local/bin authority remains 7020ea2f3c266d9732d9e012f91ec0a428361315, captured before the build and read back after the private install. Native InstalledContractTests remain paused. The factory promote-session-pressure target invokes monitor install, which restarts the resident. It was not run. A coherent live promotion also requires the ndev front-door source revision to agree. No live executable, policy, resident or GUI was changed.
+
+Next owner action: after Nico lifts the applicable test pause and authorizes the controlled resident transition, run the native installed-contract check using the staged CLI, verify current authority and dependency provenance, rebuild the front door against the same module revision, then use the guarded release promotion with the actual observed authority. Retain all active runs and review transition effects first. Collect installed doctor/artifact status and the defined observation evidence. WORK-904 remains open for that acceptance, not marked complete by artifact preparation.

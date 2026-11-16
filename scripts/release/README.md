@@ -31,7 +31,7 @@ use `none`. Copy the bundle to the Mac, then run its installer:
 session-pressure-release install --out /absolute/export --prefix /Users/user/.local/bin --expected-current OBSERVED_REVISION
 ```
 
-The installer verifies all five binaries against their SHA-256 values, platform,
+The installer verifies all six binaries against their SHA-256 values, platform,
 module and clean Git revision. Under its kernel lock, it requires the current
 revision to match `--expected-current`. A stale job cannot overwrite a later
 promotion. It also rejects an older build timestamp unless `--allow-rollback`
