@@ -2,6 +2,7 @@ package sessionpressure
 
 import (
 	"context"
+	"os"
 	"sort"
 	"time"
 )
@@ -326,6 +327,40 @@ func ReplayQueueStalls(events []WorkEvent, levels []LevelObservation, limits Wor
 // observeQueueStall runs the live stall guard on one resident sample. It
 // reads the published queue snapshot without the mutation lock, so a sample
 // never waits on a worker. Failures are silent: the guard is observation.
+// stallPolicyCache holds the last persisted policy the stall guard read,
+// keyed by file modification time and size.
+type stallPolicyCache struct {
+	modTime time.Time
+	size    int64
+	policy  Policy
+	loaded  bool
+}
+
+// stallGuardPolicy returns the persisted policy, re-read only when the file
+// changes. Any read or validation error keeps the last good copy, and with
+// none the resident's in-memory policy.
+func (monitor *Monitor) stallGuardPolicy(physicalMemoryMB float64) Policy {
+	fallback := monitor.Policy
+	if monitor.stallPolicy.loaded {
+		fallback = monitor.stallPolicy.policy
+	}
+	path := PolicyPath(monitor.Store.Dir)
+	info, err := os.Stat(path)
+	if err != nil {
+		return fallback
+	}
+	cache := &monitor.stallPolicy
+	if cache.loaded && info.ModTime().Equal(cache.modTime) && info.Size() == cache.size {
+		return cache.policy
+	}
+	policy, persisted, err := LoadPolicy(path, physicalMemoryMB)
+	if err != nil || !persisted {
+		return fallback
+	}
+	*cache = stallPolicyCache{modTime: info.ModTime(), size: info.Size(), policy: policy, loaded: true}
+	return policy
+}
+
 func (monitor *Monitor) observeQueueStall(snapshot Snapshot) {
 	if monitor == nil || monitor.WorkCoordinator == nil || monitor.Store == nil || snapshot.GuardRole != "resident" {
 		return
@@ -334,8 +369,12 @@ func (monitor *Monitor) observeQueueStall(snapshot Snapshot) {
 	if err != nil {
 		return
 	}
-	admission := AdmissionForWorkSnapshot(snapshot, monitor.Policy, "resident-stall-guard")
-	capacity := warningEffectiveCapacity(admission, monitor.WorkCoordinator.limits())
+	// Judge with the persisted policy, not the copy loaded at resident start:
+	// a capacity edit without a restart otherwise produces false stalls
+	// (2026-11-16 00:50Z: capacity 1000 in memory, 16 on disk, 16/16 used).
+	policy := monitor.stallGuardPolicy(snapshot.PhysicalMemoryMB)
+	admission := AdmissionForWorkSnapshot(snapshot, policy, "resident-stall-guard")
+	capacity := warningEffectiveCapacity(admission, normalizeWorkLimits(policy.WorkLimits))
 	started, ended := monitor.queueStalls.Observe(snapshot.Timestamp, status, admission, capacity)
 	if ended != nil {
 		RecordQueueStall(monitor.Store.Dir, "work_queue_stall_cleared", *ended)

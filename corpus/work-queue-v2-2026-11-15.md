@@ -546,6 +546,28 @@ to stop overload.
   passes 25 of 25 at capacity 16, against 23 of 25 before. `work headroom`
   reports rule v2 and mode shadow.
 
+### Stall guard reads the persisted policy (2026-11-16, Nico: "Yes, fix it")
+
+- False alert, 2026-11-16 00:50Z: `work_queue_stall` for a weight-2 test
+  with 16 units used and `effective_capacity` 1000. The resident had loaded
+  the observe-only policy (capacity 1000) and kept it in memory. Someone
+  changed the persisted policy to capacity 16 at 19:00Z without a resident
+  restart, so the guard judged the full queue as having free room.
+- Fix (`work_stall.go`): the guard reads the persisted policy for both the
+  admission profile and the capacity. It re-reads only when the file's
+  modification time or size changes (one stat per sample). A read or
+  validation error keeps the last good copy; with none, the resident's
+  in-memory policy. Recorded events now carry the persisted capacity as
+  `effective_capacity`.
+- Tests: the cache follows edits and survives a broken file; a coordinator
+  reproduction (resident policy 1000, persisted 16, 16 of 16 used, a live
+  waiter) records no stall, while the same queue under a persisted 1000
+  does.
+- Scope note: other resident paths still use the policy loaded at start.
+  Relief already re-reads the policy at its own boundary (monitor.go). The
+  release flow's `monitor install` restarts the resident when policy
+  enforcement fields change, but a hand edit of capacity does not.
+
 ## 5. Open items
 
 - [ ] Memory-headroom admission (request from the commit-delivery session,

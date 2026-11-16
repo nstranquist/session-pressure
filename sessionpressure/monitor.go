@@ -179,6 +179,7 @@ type Monitor struct {
 	WorkCoordinator    *WorkCoordinator
 	QueueStallNotifier func(QueueStall) error
 	queueStalls        QueueStallDetector
+	stallPolicy        stallPolicyCache
 }
 
 type monitorStats struct {
