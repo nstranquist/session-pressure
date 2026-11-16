@@ -616,6 +616,52 @@ to stop overload.
   that no backup process runs. So the runner archives have one copy, on the
   Mac, until WORK-841 provides a cloud target.
 
+### Memory admission enforced and capacity 24 (2026-11-16, Nico: "ok let's do it")
+
+Evidence before the switch, 558 shadow decisions over 9.5 h on rule v2:
+the shadow never returned `no_headroom`, so enforcing v2 would have changed
+nothing. And its predictions were low: 22.6% of runs went over their p90
+prediction, some by 3 to 4 GB (a test predicted 693 MB peaked at 4,252 MB).
+
+Three fixes, each tested on runner-3 and released:
+
+1. `19cdfb9` predictor v3 (`mac-headroom-tree-p90-scope-p95-v3`). Uses a
+   scope's tree-measured samples when there are enough, p90 for the check's
+   own key, p95 for workload and class. Added
+   `work headroom --replay [days]`, which predicts each tree-measured run
+   from the 72 h before it. Replay over 448 runs: v2 27.9% under-predicted
+   (9 by more than 1 GB), v3 13.2% (7). Mean prediction 439 to 995 MB. The
+   placement family key was tried and did not help (17.0% against 16.6%).
+2. `9e11fc1` leases carry the admission-time prediction
+   (`predicted_peak_mb`), so headroom charges a running lease its own
+   check's figure. Older helpers' leases fall back to the class figure.
+3. `2084bf9` rule v4 (`...-ramp-v4`): in-flight memory is charged only for
+   3 minutes after a lease starts (about the p90 runtime, 159 s over 1,563
+   runs). Found live: with enforcement on, a 30-minute restic backup was
+   charged 3.3 GB as heavy work for its whole life, and headroom read
+   -763 MB, which would have held every new operation. I reverted to
+   shadow within about 3 minutes (0 holds recorded), fixed it, and
+   re-enabled.
+
+Policy changes (backups `policy.json.bak-20261116T121607Z-before-memory-enforce`,
+`...T122322Z-before-cap24`): `memory_admission` enforce at 12:20Z, capacity
+24 at 12:23Z. Each change restarted the resident through
+`resident_policy_changed` within seconds. This is the first live proof of
+the restart on a policy change (15401 to 19175 at 12:16Z, then to 35357
+and 50043).
+
+After: 3 minutes under enforcement, 3 operations admitted and 0 memory
+holds. `work evaluate`: 25 of 25 scenarios pass at capacity 24, replay 0
+capacity violations. Its overall ok=false comes from the older review
+signal for the bounded-lookahead promotion gate. No queue stall since
+00:50Z. Swap was 7.7 to 8.8 GB during the switch, with the level normal or
+warning.
+
+Watch next: holds per hour (`memory headroom:` reasons in work events), the
+replay miss rate as legacy rows age out (`work headroom --replay`), swap
+thrash latches, and stall alerts at 24. Revert path: restore the backup
+policy files. The resident reloads on its own.
+
 ## 5. Open items
 
 - [ ] Memory-headroom admission (request from the commit-delivery session,
