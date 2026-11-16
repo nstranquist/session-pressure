@@ -34,7 +34,7 @@ func TestPeakRSSPredictionPrefersTheMostSpecificScope(t *testing.T) {
 	if mb, source := history.predict(WorkClassTest, WorkloadDeliveryDarwin, key); source != predictionByLoad || mb != 904 {
 		t.Fatalf("workload prediction: %d %s", mb, source)
 	}
-	history.byKey[key] = append(history.byKey[key], 3200)
+	addPeak(history.byKey, key, 3200, false)
 	if mb, source := history.predict(WorkClassTest, WorkloadDeliveryDarwin, key); source != predictionByKey || mb != 3200 {
 		t.Fatalf("key prediction: %d %s", mb, source)
 	}
@@ -45,7 +45,7 @@ func TestPeakRSSPredictionPrefersTheMostSpecificScope(t *testing.T) {
 		t.Fatalf("fallback: %d %s", mb, source)
 	}
 	// Non-completion rows never enter history.
-	for _, sample := range history.byClass[string(WorkClassTest)] {
+	for _, sample := range history.byClass[string(WorkClassTest)].all {
 		if sample == 9999 {
 			t.Fatal("started event counted")
 		}
@@ -162,5 +162,61 @@ func TestShadowMemoryProbeReadsTheResidentSample(t *testing.T) {
 	decision := probe.decide(Admission{Allowed: true, Level: LevelWarning, Source: "storage"}, nil, now)
 	if decision.Label() != "admit:fits" || decision.PredictionSource != predictionFallback || decision.HeadroomMB != 8192-2048 {
 		t.Fatalf("decision: %+v", decision)
+	}
+}
+
+func treePeak(class WorkClass, key string, mb float64, at time.Time) WorkEvent {
+	event := completedPeak(class, "", key, mb)
+	event.CommandTreePeakRSSMB, event.CommandTreePeakSamples, event.Timestamp = mb, 10, at
+	return event
+}
+
+func TestPeakRSSPredictionPrefersTreeSamplesAndWidensBroadScopes(t *testing.T) {
+	key := PlacementKey("/repo", []string{"swift", "test"})
+	var events []WorkEvent
+	// Legacy rows saw only the largest process (wait4) and understate.
+	for range 20 {
+		events = append(events, completedPeak(WorkClassTest, "", key, 250))
+	}
+	history := buildPeakRSSHistory(events)
+	if mb, source := history.predict(WorkClassTest, "", key); mb != 250 || source != predictionByKey {
+		t.Fatalf("legacy only: %d %s", mb, source)
+	}
+	// Three tree-measured runs replace the twenty legacy rows for this key.
+	for _, mb := range []float64{1500, 1600, 1550} {
+		events = append(events, treePeak(WorkClassTest, key, mb, time.Time{}))
+	}
+	if mb, source := buildPeakRSSHistory(events).predict(WorkClassTest, "", key); mb != 1600 || source != predictionByKey {
+		t.Fatalf("tree preferred: %d %s", mb, source)
+	}
+	// The class scope uses p95, not p90: rank 19 of 20 against rank 18.
+	var class []WorkEvent
+	for i := range 20 {
+		class = append(class, treePeak(WorkClassBuild, "", float64(100*(i+1)), time.Time{}))
+	}
+	if mb, source := buildPeakRSSHistory(class).predict(WorkClassBuild, "", ""); mb != 1900 || source != predictionByClass {
+		t.Fatalf("class p95: %d %s", mb, source)
+	}
+}
+
+func TestReplayHeadroomPredictorUsesOnlyEarlierRuns(t *testing.T) {
+	start := time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)
+	var events []WorkEvent
+	for i := range 5 {
+		events = append(events, treePeak(WorkClassTest, "", 500, start.Add(time.Duration(i)*time.Minute)))
+	}
+	// A later run far above the history is a big miss; it cannot predict itself.
+	events = append(events, treePeak(WorkClassTest, "", 2000, start.Add(10*time.Minute)))
+	// A run older than the window before it is not history.
+	stale := treePeak(WorkClassTest, "", 9000, start.Add(-4*24*time.Hour))
+	events = append(events, stale)
+	replay := ReplayHeadroomPredictor(events, start.Add(5*time.Minute))
+	if replay.Runs != 1 || replay.Misses != 1 || replay.BigMisses != 1 || replay.MeanPredictedMB != 500 || replay.BySource[predictionByClass] != 1 {
+		t.Fatalf("replay %+v", replay)
+	}
+	// From the start, the first five predict from the fallback and fewer runs.
+	all := ReplayHeadroomPredictor(events, start)
+	if all.Runs != 6 || all.BySource[predictionFallback] != 5 {
+		t.Fatalf("replay all %+v", all)
 	}
 }

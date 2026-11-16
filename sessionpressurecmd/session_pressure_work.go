@@ -32,6 +32,7 @@ and an oldest-feasible floor, then applies a separate selector overhead gate.
 Subcommands:
   status
   headroom                         Memory headroom and peak RSS history (shadow admission input)
+  headroom --replay [days]         Score the memory predictor against recent runs
   placement [--window D] [--no-runners]  Placer decisions, remote runs, stall, waiter ETAs, runner slots
   history [--since DURATION] [--limit N] [--class CLASS] [--event EVENT] [--operation-id ID] [--full]
   stats [--since DURATION] [--full]
@@ -185,8 +186,27 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 		text := pressureWorkStatusText(status)
 		return emitPressure(g, payload, text, 0)
 	case "headroom":
+		if len(args) >= 1 && args[0] == "--replay" {
+			days := 3
+			if len(args) == 2 {
+				parsed, err := strconv.Atoi(args[1])
+				if err != nil || parsed < 1 || parsed > 30 {
+					return sessionPressureError("work headroom --replay [days 1-30]", 2)
+				}
+				days = parsed
+			} else if len(args) > 2 {
+				return sessionPressureError("work headroom --replay [days 1-30]", 2)
+			}
+			replay, err := sessionpressure.ReadHeadroomReplay(runtime.dir, days, time.Now())
+			if err != nil {
+				return sessionPressureError(err.Error(), 1)
+			}
+			text := fmt.Sprintf("Headroom predictor %s over %d tree-measured runs (last %d days): %.1f%% under-predicted, %d by more than %d MB; mean predicted %d MB, mean actual %d MB.\n",
+				replay.Rule, replay.Runs, days, replay.MissPercent, replay.BigMisses, replay.BigMissMB, replay.MeanPredictedMB, replay.MeanActualMB)
+			return emitPressure(g, map[string]any{"ok": true, "action": "work.headroom.replay", "replay": replay}, text, 0)
+		}
 		if len(args) != 0 {
-			return sessionPressureError("work headroom accepts no arguments", 2)
+			return sessionPressureError("work headroom accepts no arguments or --replay [days]", 2)
 		}
 		headroomCtx, headroomCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		headroom, err := sessionpressure.ReadMemoryHeadroom(headroomCtx, runtime.dir, coordinator, time.Now())

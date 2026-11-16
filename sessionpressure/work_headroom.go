@@ -3,6 +3,7 @@ package sessionpressure
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"time"
@@ -30,6 +31,18 @@ import (
 // over the process tree. A tree peak shorter than one sample interval can
 // still be missed. Rows from before v2 carry only the wait4 peak and age out
 // of the 72 h window.
+//
+// v3 (2026-11-16): a replay of 442 tree-measured runs against the 72 h
+// history before each (`work headroom --replay`) found v2 under-predicting
+// 27.9% of runs, against about 10% for a true p90. Two causes. Legacy
+// wait4-only rows undercount trees (a Swift test: 241 MB wait4, 1,543 MB
+// tree) and diluted every scope. And the class fallback met first runs of
+// unusual commands at its median-ish tail. v3 uses a scope's tree-measured
+// samples when it has enough, else all its samples, and takes p90 for the
+// check's own key but p95 for the broader workload and class scopes. Replay:
+// 13.3% misses; mean prediction 439 MB to 990 MB; 18 of 399 admitted runs
+// would have read no_headroom. The placement family key did not help (17.0%
+// against 16.6% without it) and is not used.
 
 const (
 	headroomSchemaVersion   = 1
@@ -52,8 +65,11 @@ const (
 	// 5 samples, 2 GiB default). Change it with any estimator change.
 	// v2 (2026-11-16): samples are max(tree peak, wait4 peak). v1 rows
 	// stay valid on read.
-	HeadroomRuleVersion       = "mac-headroom-p90-v2"
+	HeadroomRuleVersion       = "mac-headroom-tree-p90-scope-p95-v3"
 	headroomRuleVersionV1     = "mac-headroom-p90-v1"
+	headroomRuleVersionV2     = "mac-headroom-p90-v2"
+	headroomKeyPercentile     = 90
+	headroomScopePercentile   = 95
 	headroomMinMeasuredPeakMB = 8
 	// headroomSwapOutRefuseMBPerSecond matches the default
 	// Thresholds.SwapOutThrashMBPerSecond.
@@ -73,14 +89,42 @@ type PeakRSSStats struct {
 	P90MB   int64  `json:"p90_mb"`
 }
 
+// peakSamples holds one scope's peaks; tree holds only those measured with
+// the tree sampler.
+type peakSamples struct {
+	all  []float64
+	tree []float64
+}
+
+// preferred returns the tree-measured samples when there are at least
+// minimum of them, else all samples when there are enough, else nil.
+func (samples peakSamples) preferred(minimum int) []float64 {
+	if len(samples.tree) >= minimum {
+		return samples.tree
+	}
+	if len(samples.all) >= minimum {
+		return samples.all
+	}
+	return nil
+}
+
 type peakRSSHistory struct {
-	byClass    map[string][]float64
-	byWorkload map[string][]float64
-	byKey      map[string][]float64
+	byClass    map[string]peakSamples
+	byWorkload map[string]peakSamples
+	byKey      map[string]peakSamples
+}
+
+func addPeak(groups map[string]peakSamples, name string, peak float64, tree bool) {
+	samples := groups[name]
+	samples.all = append(samples.all, peak)
+	if tree {
+		samples.tree = append(samples.tree, peak)
+	}
+	groups[name] = samples
 }
 
 func buildPeakRSSHistory(events []WorkEvent) peakRSSHistory {
-	history := peakRSSHistory{byClass: map[string][]float64{}, byWorkload: map[string][]float64{}, byKey: map[string][]float64{}}
+	history := peakRSSHistory{byClass: map[string]peakSamples{}, byWorkload: map[string]peakSamples{}, byKey: map[string]peakSamples{}}
 	for _, event := range events {
 		// A peak under headroomMinMeasuredPeakMB is not a measurement: argv
 		// probes (`true`, `exit 0`) and wrappers whose real work ran in a
@@ -92,12 +136,13 @@ func buildPeakRSSHistory(events []WorkEvent) peakRSSHistory {
 		if event.Event != WorkEventCompleted || peak < headroomMinMeasuredPeakMB {
 			continue
 		}
-		history.byClass[string(event.Class)] = append(history.byClass[string(event.Class)], peak)
+		tree := event.CommandTreePeakSamples > 0
+		addPeak(history.byClass, string(event.Class), peak, tree)
 		if event.Workload != "" {
-			history.byWorkload[event.Workload] = append(history.byWorkload[event.Workload], peak)
+			addPeak(history.byWorkload, event.Workload, peak, tree)
 		}
 		if event.PlacementKey != "" {
-			history.byKey[event.PlacementKey] = append(history.byKey[event.PlacementKey], peak)
+			addPeak(history.byKey, event.PlacementKey, peak, tree)
 		}
 	}
 	return history
@@ -138,27 +183,28 @@ func percentileMB(values []float64, percent int) int64 {
 	return int64(sorted[max(rank, 1)-1] + 0.5)
 }
 
-// predict returns the p90 peak of the most specific scope with enough
-// samples: the same check, then the workload, then the class.
+// predict returns the peak of the most specific scope with enough samples:
+// p90 of the same check, else p95 of the workload, else p95 of the class.
 func (history peakRSSHistory) predict(class WorkClass, workload, key string) (int64, string) {
-	if samples := history.byKey[key]; key != "" && len(samples) >= headroomKeyMinSamples {
-		return percentileMB(samples, 90), predictionByKey
+	if samples := history.byKey[key].preferred(headroomKeyMinSamples); key != "" && samples != nil {
+		return percentileMB(samples, headroomKeyPercentile), predictionByKey
 	}
-	if samples := history.byWorkload[workload]; workload != "" && len(samples) >= headroomScopeMinSamples {
-		return percentileMB(samples, 90), predictionByLoad
+	if samples := history.byWorkload[workload].preferred(headroomScopeMinSamples); workload != "" && samples != nil {
+		return percentileMB(samples, headroomScopePercentile), predictionByLoad
 	}
-	if samples := history.byClass[string(class)]; len(samples) >= headroomScopeMinSamples {
-		return percentileMB(samples, 90), predictionByClass
+	if samples := history.byClass[string(class)].preferred(headroomScopeMinSamples); samples != nil {
+		return percentileMB(samples, headroomScopePercentile), predictionByClass
 	}
 	return headroomFallbackPeakMB, predictionFallback
 }
 
 func (history peakRSSHistory) stats() []PeakRSSStats {
 	var rows []PeakRSSStats
-	add := func(scope string, groups map[string][]float64, minimum, limit int) {
+	add := func(scope string, groups map[string]peakSamples, minimum, limit int) {
 		var scoped []PeakRSSStats
-		for name, samples := range groups {
-			if len(samples) < minimum {
+		for name, group := range groups {
+			samples := group.preferred(minimum)
+			if samples == nil {
 				continue
 			}
 			scoped = append(scoped, PeakRSSStats{Scope: scope, Name: name, Samples: len(samples), P50MB: percentileMB(samples, 50), P90MB: percentileMB(samples, 90)})
@@ -363,4 +409,70 @@ func (decision ShadowMemoryDecision) apply(event *WorkEvent) {
 	event.ShadowPredictedPeakMB = decision.PredictedPeakMB
 	event.ShadowPredictionSource = decision.PredictionSource
 	event.ShadowHeadroomMB = decision.HeadroomMB
+}
+
+// HeadroomReplay scores the current predictor against completed runs: each
+// tree-measured run is predicted from the completed runs in the history
+// window before it, as live admission would have seen them.
+type HeadroomReplay struct {
+	Rule            string         `json:"rule"`
+	Runs            int            `json:"runs"`
+	Misses          int            `json:"misses"`
+	MissPercent     float64        `json:"miss_percent"`
+	BigMisses       int            `json:"big_misses"`
+	BigMissMB       int            `json:"big_miss_threshold_mb"`
+	MeanPredictedMB int64          `json:"mean_predicted_mb"`
+	MeanActualMB    int64          `json:"mean_actual_mb"`
+	BySource        map[string]int `json:"runs_by_source"`
+	MissesBySource  map[string]int `json:"misses_by_source"`
+}
+
+const headroomReplayBigMissMB = 1024
+
+// ReplayHeadroomPredictor evaluates runs completed at or after from. Events
+// must cover from minus the history window for a fair replay.
+func ReplayHeadroomPredictor(events []WorkEvent, from time.Time) HeadroomReplay {
+	sorted := slices.Clone(events)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Timestamp.Before(sorted[j].Timestamp) })
+	replay := HeadroomReplay{Rule: HeadroomRuleVersion, BigMissMB: headroomReplayBigMissMB, BySource: map[string]int{}, MissesBySource: map[string]int{}}
+	var predictedSum, actualSum float64
+	start := 0
+	for i, event := range sorted {
+		peak := commandMemoryPeakMB(event)
+		if event.Event != WorkEventCompleted || event.CommandTreePeakSamples == 0 || peak < headroomMinMeasuredPeakMB || event.Timestamp.Before(from) {
+			continue
+		}
+		for start < i && sorted[start].Timestamp.Before(event.Timestamp.Add(-headroomHistoryWindow)) {
+			start++
+		}
+		predicted, source := buildPeakRSSHistory(sorted[start:i]).predict(event.Class, event.Workload, event.PlacementKey)
+		replay.Runs++
+		replay.BySource[source]++
+		predictedSum += float64(predicted)
+		actualSum += peak
+		if peak > float64(predicted) {
+			replay.Misses++
+			replay.MissesBySource[source]++
+		}
+		if peak > float64(predicted+headroomReplayBigMissMB) {
+			replay.BigMisses++
+		}
+	}
+	if replay.Runs > 0 {
+		replay.MissPercent = math.Round(1000*float64(replay.Misses)/float64(replay.Runs)) / 10
+		replay.MeanPredictedMB = int64(predictedSum/float64(replay.Runs) + 0.5)
+		replay.MeanActualMB = int64(actualSum/float64(replay.Runs) + 0.5)
+	}
+	return replay
+}
+
+// ReadHeadroomReplay replays the predictor over runs completed in the last
+// days, with a full history window before the first of them.
+func ReadHeadroomReplay(dir string, days int, now time.Time) (HeadroomReplay, error) {
+	from := now.Add(-time.Duration(days) * 24 * time.Hour)
+	events, err := NewWorkEventStore(dir).completedRowsSince(from.Add(-headroomHistoryWindow))
+	if err != nil {
+		return HeadroomReplay{}, err
+	}
+	return ReplayHeadroomPredictor(events, from), nil
 }
