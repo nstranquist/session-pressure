@@ -154,8 +154,12 @@ func BuildPressureDoctor(in PressureDoctorInput) PressureDoctor {
 		doc.Fixes = append(doc.Fixes, "session-pressure policy init")
 	}
 	if !health.MonitorHealthy {
-		doc.Fixes = append(doc.Fixes, "session-pressure monitor install")
-		doc.Fixes = append(doc.Fixes, "make build")
+		if monitorNeedsInstallOrRestart(in.Launchd, in.Latest, in.HasLatest, health) {
+			doc.Fixes = append(doc.Fixes, "session-pressure monitor install")
+			doc.Fixes = append(doc.Fixes, "make build")
+		} else {
+			doc.Fixes = append(doc.Fixes, "session-pressure --json status --live")
+		}
 	}
 	if in.HasRecovery {
 		doc.Fixes = append(doc.Fixes, "session-pressure recovery clear  # after reviewing unclean shutdown")
@@ -367,6 +371,20 @@ func loadDoctorSwapDerate(dir string, latest Snapshot, hasLatest bool, now time.
 		return WorkSwapDerateCost{}, false
 	}
 	cost := summarizeSwapDerate(events, since, now)
+	relateSwapDerateToAllWait(&cost, summarizeWaitAttribution(events))
 	cost.AttachEpisodes(episodes)
 	return cost, true
+}
+
+func monitorNeedsInstallOrRestart(launchd LaunchdStatus, latest Snapshot, hasLatest bool, health GuardHealth) bool {
+	if !launchd.Installed || !launchd.Loaded || !launchd.OK || !launchd.ArtifactVerified || !health.LatestMonitorFresh || !hasLatest {
+		return true
+	}
+	if latest.GuardPID == 0 || latest.GuardPID != launchd.PID {
+		return true
+	}
+	if launchd.ArtifactSHA256 != "" && latest.GuardBinarySHA256 != launchd.ArtifactSHA256 {
+		return true
+	}
+	return false
 }

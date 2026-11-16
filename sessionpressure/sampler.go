@@ -336,9 +336,10 @@ func (sampler *Sampler) Sample(ctx context.Context, policy Policy) (Snapshot, er
 	phases["inventory"] = phase(&mark)
 	processes = enrichSampleProcesses(ctx, processes, sampler.sessionStateDir, inventoryFresh, sampler.role)
 	phases["identity"] = phase(&mark)
-	allTrees := buildAgentTrees(processes)
-	topHostConsumers := buildHostConsumers(processes, allTrees)
-	memoryFamilies, familyByPID := classifyMemoryFamilies(processes, allTrees)
+	catalog := ActiveAgentIdentityCatalog()
+	allTrees := buildAgentTreesWithCatalog(processes, catalog)
+	topHostConsumers := buildHostConsumersWithCatalog(processes, allTrees, catalog)
+	memoryFamilies, familyByPID := classifyMemoryFamiliesWithCatalog(processes, allTrees, catalog)
 	annotateTreeLSP(allTrees, processes, familyByPID)
 	sampler.recordInventoryPressure(allTrees)
 	topTrees := allTrees
@@ -1225,13 +1226,14 @@ func applySessionHints(processes []Process, sessionStateDir string, nonblocking 
 }
 
 func buildAgentTrees(processes []Process) []AgentTree {
+	return buildAgentTreesWithCatalog(processes, ActiveAgentIdentityCatalog())
+}
+
+func buildAgentTreesWithCatalog(processes []Process, catalog *AgentIdentityCatalog) []AgentTree {
 	byPID := make(map[int]Process, len(processes))
 	children := make(map[int][]int, len(processes))
 	candidates := make(map[int]string)
 	executables := make(map[int]string)
-	// One identity snapshot per inventory, rather than checking the overlay
-	// file again for every unrelated host process.
-	catalog := ActiveAgentIdentityCatalog()
 	for _, process := range processes {
 		byPID[process.PID] = process
 		children[process.PPID] = append(children[process.PPID], process.PID)

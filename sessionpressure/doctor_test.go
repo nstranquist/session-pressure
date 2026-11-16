@@ -124,3 +124,66 @@ func TestSummarizePressureDoctorCheck(t *testing.T) {
 		t.Fatalf("fixes=%v", fixes)
 	}
 }
+
+func TestBuildPressureDoctorBudgetFailureKeepsLiveStatusFixNotReinstall(t *testing.T) {
+	now := time.Now().UTC()
+	policy, launchd, latest := healthyDoctorFixtures(now)
+	latest.MonitorSamples = 30
+	latest.SampleDurationMS = 2500
+	latest.SampleDurationP95MS = 2500
+	doc := BuildPressureDoctor(PressureDoctorInput{
+		Now:       now,
+		Policy:    policy,
+		Persisted: true,
+		Launchd:   launchd,
+		Latest:    latest,
+		HasLatest: true,
+		Work:      WorkStatus{Capacity: 8, Used: 0},
+	})
+	if doc.OK || doc.Monitor.Healthy {
+		t.Fatalf("budget failure should fail monitor health: %+v", doc)
+	}
+	joined := strings.Join(doc.Fixes, "\n")
+	if strings.Contains(joined, "monitor install") || strings.Contains(joined, "make build") {
+		t.Fatalf("running verified resident should not suggest monitor install/make build: %v", doc.Fixes)
+	}
+	if !strings.Contains(joined, "status --live") {
+		t.Fatalf("expected live status diagnostic fix, got %v", doc.Fixes)
+	}
+}
+
+func TestLoadDoctorSwapDerateRelatesToAllWait(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	events := NewWorkEventStore(dir)
+	for _, ev := range []WorkEvent{
+		{
+			Timestamp: now.Add(-2 * time.Minute), Event: WorkEventCompleted,
+			OperationID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", LeaseID: "11111111111111111111111111111111", Class: WorkClassBuild, Weight: 5,
+			AdmissionDecision: SwapThrashDeferredDecision, PressureDimension: "swap",
+			AdmissionWaitMilliseconds: 60_000, WaitMilliseconds: 60_000, RuntimeMillis: 10_000,
+		},
+		{
+			Timestamp: now.Add(-1 * time.Minute), Event: WorkEventCompleted,
+			OperationID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", LeaseID: "22222222222222222222222222222222", Class: WorkClassBuild, Weight: 5,
+			QueueWaitMilliseconds: 180_000, WaitMilliseconds: 180_000, RuntimeMillis: 10_000,
+		},
+	} {
+		if err := events.AppendDurable(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cost, ok := loadDoctorSwapDerate(dir, Snapshot{SwapThrashLatched: true}, true, now)
+	if !ok {
+		t.Fatal("expected swap derate cost")
+	}
+	if cost.WaitTotalMS != 60_000 {
+		t.Fatalf("WaitTotalMS=%d want 60000", cost.WaitTotalMS)
+	}
+	if cost.AllWaitTotalMS != 240_000 {
+		t.Fatalf("AllWaitTotalMS=%d want 240000", cost.AllWaitTotalMS)
+	}
+	if cost.ShareOfAllWait < 0.24 || cost.ShareOfAllWait > 0.26 {
+		t.Fatalf("ShareOfAllWait=%v want ~0.25", cost.ShareOfAllWait)
+	}
+}

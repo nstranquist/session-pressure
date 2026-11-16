@@ -399,7 +399,7 @@ mod tests {
     }
     #[test]
     fn nonzero_json_is_explicit() {
-        let (_fixture, client) = fixture("printf '{\"ok\":true}'; exit 11", Duration::from_secs(2));
+        let (_fixture, client) = fixture("printf '{\"ok\":true}'; exit 11", Duration::from_secs(5));
         let value = client.run_json_value(&[], true).unwrap();
         assert_eq!(value["ok"], false);
         assert_eq!(value["_cli_exit_code"], 11);

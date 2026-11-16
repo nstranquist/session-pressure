@@ -1,11 +1,12 @@
-package main
+package helpermain
 
 import (
 	"fmt"
-	"github.com/nstranquist/session-pressure/internal/notifyinbox"
-	"github.com/nstranquist/session-pressure/sessionpressure"
 	"os"
 	"time"
+
+	"github.com/nstranquist/session-pressure/internal/notifyinbox"
+	"github.com/nstranquist/session-pressure/sessionpressure"
 )
 
 func notifyProcessIncident(incident sessionpressure.ProcessIncident) error {

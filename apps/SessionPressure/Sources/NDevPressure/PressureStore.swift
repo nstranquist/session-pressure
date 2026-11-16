@@ -1124,7 +1124,7 @@ final class PressureStore: ObservableObject {
     }
 
     func applyPolicyProfile(_ profile: String, withAutoShed: Bool = false) async {
-        await mutate("Applying (profile) mode…") { client in
+        await mutate("Applying \(profile) mode…") { client in
             _ = try await client.policyProfileApply(profile, withAutoShed: withAutoShed)
         }
     }

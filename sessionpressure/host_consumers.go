@@ -14,6 +14,10 @@ const maxProjectedHostConsumers = 16
 // prompt-free executable buckets. The caller may persist this projection: the
 // function deliberately discards command tails, paths, and process identity.
 func buildHostConsumers(processes []Process, trees []AgentTree) []HostConsumer {
+	return buildHostConsumersWithCatalog(processes, trees, ActiveAgentIdentityCatalog())
+}
+
+func buildHostConsumersWithCatalog(processes []Process, trees []AgentTree, catalog *AgentIdentityCatalog) []HostConsumer {
 	agentPIDs := make(map[int]struct{})
 	for _, tree := range trees {
 		for _, pid := range tree.PIDs {
@@ -21,7 +25,6 @@ func buildHostConsumers(processes []Process, trees []AgentTree) []HostConsumer {
 		}
 	}
 
-	catalog := ActiveAgentIdentityCatalog()
 	byExecutable := make(map[string]HostConsumer)
 	for _, process := range processes {
 		executable := privacySafeExecutable(process.Executable)

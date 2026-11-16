@@ -256,6 +256,10 @@ func annotateTreeLSP(trees []AgentTree, processes []Process, familyByPID map[int
 
 // classifyMemoryFamilies returns the projected families and each PID's family.
 func classifyMemoryFamilies(processes []Process, trees []AgentTree) ([]MemoryFamily, map[int]string) {
+	return classifyMemoryFamiliesWithCatalog(processes, trees, ActiveAgentIdentityCatalog())
+}
+
+func classifyMemoryFamiliesWithCatalog(processes []Process, trees []AgentTree, catalog *AgentIdentityCatalog) ([]MemoryFamily, map[int]string) {
 	if len(processes) == 0 {
 		return nil, nil
 	}
@@ -270,7 +274,6 @@ func classifyMemoryFamilies(processes []Process, trees []AgentTree) ([]MemoryFam
 	for _, process := range processes {
 		executableByPID[process.PID] = strings.ToLower(processExecutableName(process))
 	}
-	catalog := ActiveAgentIdentityCatalog()
 	type memberKey struct{ family, member string }
 	members := make(map[memberKey]*MemoryFamilyMember)
 	families := make(map[string]*MemoryFamily)
