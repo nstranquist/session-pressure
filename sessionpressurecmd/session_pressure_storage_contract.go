@@ -27,6 +27,8 @@ func StorageProviderContracts() []StorageProviderContract {
 		{ID: "ios-simulator-runtime", Classification: string(storageProviderReportOnly)},
 		{ID: "go-build-cache", Classification: string(storageProviderOperator), FullWipeRequired: true},
 		{ID: "delivery-go-build-cache", Classification: string(storageProviderReportOnly)},
+		{ID: "go-build-capped", Classification: string(storageProviderReportOnly)},
+		{ID: "go-build-orphans", Classification: string(storageProviderOperator)},
 		{ID: "yarn-cache", Classification: string(storageProviderOperator)},
 		{ID: "npm-cache", Classification: string(storageProviderOperator)},
 		{ID: "brew-cache", Classification: string(storageProviderOperator)},
@@ -49,5 +51,13 @@ func StorageProviderContracts() []StorageProviderContract {
 		{ID: "library-caches", Classification: string(storageProviderReportOnly)},
 		{ID: "downloads", Classification: string(storageProviderReportOnly)},
 		{ID: "mobile-sync", Classification: string(storageProviderReportOnly)},
+		{ID: "binary-revisions", Classification: string(storageProviderOperator)},
+		{ID: "turso-backups", Classification: string(storageProviderOperator)},
+		{ID: "nicos-dev-tmp", Classification: string(storageProviderReportOnly)},
+		{ID: "openbook-worktrees", Classification: string(storageProviderReportOnly)},
+		{ID: "docgraph-generations", Classification: string(storageProviderReportOnly)},
+		{ID: "session-workspaces", Classification: string(storageProviderReportOnly)},
+		{ID: "context-builds", Classification: string(storageProviderReportOnly)},
+		{ID: "perf-copies", Classification: string(storageProviderReportOnly)},
 	}
 }

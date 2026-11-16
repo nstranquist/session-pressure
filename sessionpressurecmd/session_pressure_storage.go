@@ -47,6 +47,7 @@ type storageProviderReport struct {
 	SimulatorEvidence *storageSimulatorEvidence        `json:"simulator_evidence,omitempty"`
 	DevRootEvidence   *storageDevRootEvidence          `json:"dev_root_evidence,omitempty"`
 	ArchiveEvidence   *storageArchiveEvidence          `json:"archive_evidence,omitempty"`
+	RetentionEvidence *storageRetentionEvidence        `json:"retention_evidence,omitempty"`
 }
 
 // storageProviderDecisionEvidence gives an operator enough bounded evidence to
@@ -123,6 +124,9 @@ Subcommands:
                                       --force skips reclaim cooldown on named --provider only
                                       --full-wipe is required for go-build-cache; it is a rebuild tax
   history [--since D] [--limit N]     Read bounded private reclaim receipts
+  watch [--dry-run] [--test-alert]    Disk, Time Machine, X10 Pro and NicosTM alerts
+                                      (toast + Scratchpad; once per episode, then daily)
+  tm-exclude plan [--limit N]         Time Machine exclusion plan with measured sizes
   policy enable|observe               Toggle disk-growth admission independently
   policy repository set PATH --critical-free SIZE [--reason TEXT]
                                       Hold disk-growing work for PATH's repository
@@ -145,6 +149,10 @@ Sizes accept GiB, GB, MiB, MB, KiB, KB, or raw bytes.
 		return cmdSessionPressureStorageHistory(g, args)
 	case "policy":
 		return cmdSessionPressureStoragePolicy(g, args)
+	case "watch":
+		return cmdSessionPressureStorageWatch(g, args)
+	case "tm-exclude":
+		return cmdSessionPressureStorageTMExclude(g, args)
 	default:
 		return sessionPressureError("unknown storage subcommand "+strconv.Quote(sub), 2)
 	}
@@ -355,7 +363,9 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 		reports = append(reports, dockerReport)
 	}
 	reports = append(reports, inspectIOSSimulatorRuntimeProvider(measure))
-	goBuildCachePath := filepath.Join(home, "Library", "Caches", "go-build")
+	// Resolve the real Go caches instead of assuming ~/Library/Caches/go-build
+	// (2026-11-09: builds wrote go-build-capped through GOCACHEPROG).
+	goBuildCachePath, goCappedDir, goCappedMax, goEnvErr := resolveGoCaches(home)
 	goBuildCacheBytes, goBuildCachePresent, goBuildCacheErr := int64(0), storagePathExists(goBuildCachePath), error(nil)
 	if measure {
 		goBuildCacheBytes, goBuildCachePresent, goBuildCacheErr = storageDirectoryBytes(goBuildCachePath)
@@ -398,7 +408,11 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 	if measure && goBuildCacheReport.HotnessEvidence != nil {
 		goBuildCacheReport.EstimateKind = "measured_age_buckets"
 	}
-	reports = append(reports, goBuildCacheReport, inspectDeliveryGoBuildCacheProvider(home, measure))
+	minAge := storageRetentionMinAge(policy.Storage.ProviderMinAgeSeconds)
+	orphans := planGoBuildOrphans(filepath.Join(home, "Library", "Caches"), []string{goBuildCachePath, goCappedDir}, storageRetentionNow(), minAge)
+	orphansReport := retentionProviderReport("go-build-orphans", "Per-process Go build caches (go-build-<name>-<pid>) whose process is gone", filepath.Join(home, "Library", "Caches"), orphans, goEnvErr)
+	orphansReport.Overlaps = []string{"library-caches"}
+	reports = append(reports, goBuildCacheReport, inspectDeliveryGoBuildCacheProvider(home, measure), inspectGoBuildCappedProvider(goCappedDir, goCappedMax, goEnvErr, measure), orphansReport)
 	// Rebuildable developer caches: operator-classified like
 	// go-build-cache (explicit `--provider` apply, excluded from --auto-safe)
 	// so `storage plan`/`providers` is no longer blind to where dev-cache
@@ -543,6 +557,7 @@ func inspectStorageProviders(policy sessionpressure.Policy, measure bool) ([]sto
 		}
 		reports = append(reports, report)
 	}
+	reports = append(reports, inspectRetentionProviders(home, policy.Storage.ProviderMinAgeSeconds, measure)...)
 	return reports, nil
 }
 
@@ -847,7 +862,7 @@ func executeStorageProvider(ctx context.Context, runtime pressureRuntime, provid
 	beforeStorage := sessionpressure.SampleStorageCapacity(sessionpressure.DefaultStorageVolumePath(), started)
 	beforeProvider := int64(0)
 	providerBytesMeasured := false
-	if provider.ID == "browser-dead-profiles" {
+	if provider.ID == "browser-dead-profiles" || storageIsRetentionProvider(provider.ID) {
 		beforeProvider = provider.EstimatedBytes
 		providerBytesMeasured = true
 	}
@@ -897,6 +912,12 @@ func executeStorageProvider(ctx context.Context, runtime pressureRuntime, provid
 		}
 	case "docker-reclaim":
 		runErr = storageRunDockerPrune(ctx)
+	case "binary-revisions", "turso-backups", "go-build-orphans":
+		if home, homeErr := os.UserHomeDir(); homeErr != nil {
+			runErr = homeErr
+		} else {
+			runErr = storageRunRetention(ctx, provider.ID, home, runtime.policy.Storage.ProviderMinAgeSeconds)
+		}
 	case "ios-simulator-runtime":
 		runErr = errors.New("simulator reclaim requires individual device and runtime selection; bulk deletion is disabled")
 	case "pnpm-store":
@@ -1348,8 +1369,11 @@ func inspectDeliveryGoBuildCacheProvider(home string, measure bool) storageProvi
 	}
 	path := filepath.Join(stateHome, "go-build-cache")
 	size, present, err := int64(0), storagePathExists(path), error(nil)
+	estimateKind := "inventory"
 	if measure {
 		size, present, err = storageDirectoryBytes(path)
+	} else if trimmed, ok := readDeliveryGoCacheTrimBytes(filepath.Join(stateHome, "go-build-cache-trim.json"), path); ok && present {
+		size, estimateKind = trimmed, "trim_receipt"
 	}
 	report := storageProviderReport{
 		ID:                "delivery-go-build-cache",
@@ -1358,7 +1382,7 @@ func inspectDeliveryGoBuildCacheProvider(home string, measure bool) storageProvi
 		Path:              path,
 		Present:           present,
 		EstimatedBytes:    size,
-		EstimateKind:      "inventory",
+		EstimateKind:      estimateKind,
 		MutationSupported: false,
 		BlockedReason:     "the commit-delivery worker owns and caps this cache (NDEV_COMMIT_DELIVERY_GOCACHE_MAX); read `ndev-commit-delivery --json delivery doctor`",
 	}
