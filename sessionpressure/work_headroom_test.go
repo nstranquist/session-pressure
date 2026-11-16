@@ -237,7 +237,7 @@ func TestRunningLeaseIsChargedItsOwnPrediction(t *testing.T) {
 		heavy = append(heavy, treePeak(WorkClassHeavy, "", 3300, time.Time{}))
 	}
 	history := buildPeakRSSHistory(heavy)
-	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	now := coordinator.Now().Add(30 * time.Second)
 	snapshot := headroomSnapshot(now, 50, LevelNormal)
 	snapshot.CoordinatedWork.RSSSumMB = 15
 	if got := computeHeadroom(snapshot, true, status.Leases, history, now); got.LeasePredictedMB != 40 || got.InflightMB != 25 {
@@ -247,5 +247,25 @@ func TestRunningLeaseIsChargedItsOwnPrediction(t *testing.T) {
 	status.Leases[0].PredictedPeakMB = 0
 	if got := computeHeadroom(snapshot, true, status.Leases, history, now); got.LeasePredictedMB != 3300 {
 		t.Fatalf("class fallback: %+v", got)
+	}
+}
+
+func TestInflightChargeStopsAfterTheRamp(t *testing.T) {
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	history := buildPeakRSSHistory(nil)
+	young := WorkLeaseStatus{ID: "young", Class: WorkClassTest, StartedAt: now.Add(-time.Minute), PredictedPeakMB: 800}
+	old := WorkLeaseStatus{ID: "old", Class: WorkClassHeavy, StartedAt: now.Add(-30 * time.Minute), PredictedPeakMB: 3300}
+	snapshot := headroomSnapshot(now, 50, LevelNormal) // 300 MB leased RSS, fresh
+	// The 30-minute lease's memory is already in available memory.
+	got := computeHeadroom(snapshot, true, []WorkLeaseStatus{young, old}, history, now)
+	if got.LeaseCount != 2 || got.RampingLeaseCount != 1 || got.LeasePredictedMB != 800 || got.InflightMB != 800 {
+		t.Fatalf("mixed ages: %+v", got)
+	}
+	// With only ramping leases, their measured RSS is subtracted.
+	if got := computeHeadroom(snapshot, true, []WorkLeaseStatus{young}, history, now); got.InflightMB != 500 {
+		t.Fatalf("ramping only: %+v", got)
+	}
+	if got := computeHeadroom(snapshot, true, []WorkLeaseStatus{old}, history, now); got.InflightMB != 0 || got.HeadroomMB != 8192-2048 {
+		t.Fatalf("old only: %+v", got)
 	}
 }

@@ -896,8 +896,8 @@ func pressureWorkHeadroomText(headroom sessionpressure.MemoryHeadroom) string {
 	}
 	fmt.Fprintf(&b, "Memory headroom: %d MB (available %d - reserve %d - in-flight %d), level %s\n",
 		headroom.HeadroomMB, headroom.AvailableMB, headroom.ReserveMB, headroom.InflightMB, headroom.Level)
-	fmt.Fprintf(&b, "Leases: %d, predicted %d MB, leased RSS %d MB (known %v). Swap %d MB, swap-out %.1f MB/s, thrash latched %v\n",
-		headroom.LeaseCount, headroom.LeasePredictedMB, headroom.LeasedRSSMB, headroom.LeasedRSSKnown,
+	fmt.Fprintf(&b, "Leases: %d (%d ramping, charged %d MB predicted), leased RSS %d MB (known %v). Swap %d MB, swap-out %.1f MB/s, thrash latched %v\n",
+		headroom.LeaseCount, headroom.RampingLeaseCount, headroom.LeasePredictedMB, headroom.LeasedRSSMB, headroom.LeasedRSSKnown,
 		headroom.SwapUsedMB, headroom.SwapOutMBPerSecond, headroom.SwapThrashLatched)
 	fmt.Fprintf(&b, "Peak RSS history (%dh, completed work, largest process per command):\n", headroom.PeakRSSWindowHours)
 	for _, row := range headroom.PeakRSS {

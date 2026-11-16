@@ -65,9 +65,19 @@ const (
 	// 5 samples, 2 GiB default). Change it with any estimator change.
 	// v2 (2026-11-16): samples are max(tree peak, wait4 peak). v1 rows
 	// stay valid on read.
-	HeadroomRuleVersion       = "mac-headroom-tree-p90-scope-p95-v3"
-	headroomRuleVersionV1     = "mac-headroom-p90-v1"
-	headroomRuleVersionV2     = "mac-headroom-p90-v2"
+	HeadroomRuleVersion   = "mac-headroom-tree-p90-scope-p95-ramp-v4"
+	headroomRuleVersionV1 = "mac-headroom-p90-v1"
+	headroomRuleVersionV2 = "mac-headroom-p90-v2"
+	headroomRuleVersionV3 = "mac-headroom-tree-p90-scope-p95-v3"
+	// headroomInflightRamp is how long a lease's predicted peak is charged
+	// as in-flight. The charge stops a burst of admissions in one sample
+	// window from all seeing the same free memory; after the ramp the
+	// lease's real use is in available memory. 3 minutes is about the p90
+	// runtime of completed work (159 s over 1,563 runs, 2026-11-14 to 16)
+	// and six 30 s pressure samples. v4 (2026-11-16): without the ramp, one
+	// 30-minute restic backup charged 3.3 GB for its whole life and held
+	// enforced admission shut (headroom -763 MB).
+	headroomInflightRamp      = 3 * time.Minute
 	headroomKeyPercentile     = 90
 	headroomScopePercentile   = 95
 	headroomMinMeasuredPeakMB = 8
@@ -239,6 +249,7 @@ type MemoryHeadroom struct {
 	ReserveMB          int64          `json:"reserve_mb"`
 	LeaseCount         int            `json:"lease_count"`
 	LeasePredictedMB   int64          `json:"lease_predicted_mb"`
+	RampingLeaseCount  int            `json:"ramping_lease_count"`
 	LeasedRSSMB        int64          `json:"leased_rss_mb"`
 	LeasedRSSKnown     bool           `json:"leased_rss_known"`
 	InflightMB         int64          `json:"inflight_mb"`
@@ -263,7 +274,10 @@ func computeHeadroom(snapshot Snapshot, haveSample bool, leases []WorkLeaseStatu
 			predicted, _ = history.predict(lease.Class, "", "")
 		}
 		headroom.LeaseCount++
-		headroom.LeasePredictedMB += predicted
+		if lease.StartedAt.IsZero() || now.Sub(lease.StartedAt) < headroomInflightRamp {
+			headroom.RampingLeaseCount++
+			headroom.LeasePredictedMB += predicted
+		}
 	}
 	if !haveSample || snapshot.PhysicalMemoryMB <= 0 {
 		return headroom
@@ -281,7 +295,10 @@ func computeHeadroom(snapshot Snapshot, haveSample bool, leases []WorkLeaseStatu
 		headroom.LeasedRSSMB, headroom.LeasedRSSKnown = int64(work.RSSSumMB), true
 	}
 	headroom.InflightMB = headroom.LeasePredictedMB
-	if headroom.LeasedRSSKnown {
+	// Leased RSS is one sum over all leases. Subtract it only when every
+	// lease is still ramping; otherwise an old lease's memory would cancel a
+	// new lease's charge.
+	if headroom.LeasedRSSKnown && headroom.RampingLeaseCount == headroom.LeaseCount {
 		headroom.InflightMB = max(0, headroom.LeasePredictedMB-headroom.LeasedRSSMB)
 	}
 	headroom.HeadroomMB = headroom.AvailableMB - headroom.ReserveMB - headroom.InflightMB

@@ -235,7 +235,7 @@ func (event WorkEvent) Validate() error {
 	if !validShadowMemoryDecision(event.ShadowMemoryDecision) {
 		return fmt.Errorf("work event shadow_memory_decision %q is not in the closed vocabulary", event.ShadowMemoryDecision)
 	}
-	if event.ShadowMemoryRule != "" && event.ShadowMemoryRule != HeadroomRuleVersion && event.ShadowMemoryRule != headroomRuleVersionV2 && event.ShadowMemoryRule != headroomRuleVersionV1 {
+	if event.ShadowMemoryRule != "" && event.ShadowMemoryRule != HeadroomRuleVersion && event.ShadowMemoryRule != headroomRuleVersionV2 && event.ShadowMemoryRule != headroomRuleVersionV3 && event.ShadowMemoryRule != headroomRuleVersionV1 {
 		return fmt.Errorf("work event shadow_memory_rule %q is not a known rule version", event.ShadowMemoryRule)
 	}
 	switch event.ShadowPredictionSource {
