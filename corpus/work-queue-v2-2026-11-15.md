@@ -536,6 +536,15 @@ to stop overload.
   headroom:". `work headroom` reports the mode.
 - Not switched on. Turning on enforce needs Nico's approval, after the
   tree-peak history has filled (about 24 to 72 h of runs).
+- Shipped: commit dcea11f. Tests and vet passed on runner-3 (Linux
+  `/proc` sampler); the new tests also passed on macOS, including a live
+  tree sample. Helper installed and promoted (drift false). Policy
+  unchanged: interactive, enforced, capacity 16, memory admission shadow.
+- Live proof right after release: three real `browser` jobs recorded wait4
+  peaks of 179 to 181 MB and tree peaks of 455 to 724 MB (2 to 3 samples
+  each). The old figure undercounted them by up to 4x. `work evaluate`
+  passes 25 of 25 at capacity 16, against 23 of 25 before. `work headroom`
+  reports rule v2 and mode shadow.
 
 ## 5. Open items
 
