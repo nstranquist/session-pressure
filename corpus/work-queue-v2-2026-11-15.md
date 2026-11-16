@@ -477,6 +477,21 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
   starts with a fresh view.
 - Compatibility: older helpers drop `selected_at` on rewrite. That only
   restarts the bound.
+- Shipped: commit 6085e2a. Tests passed on runner-3; the `go vet` run
+  before the eval-check addition passed. Helper installed and promoted
+  (drift false). On the live policy `work evaluate` passes
+  `stuck-selected-head-does-not-idle`, with 23 of 25 checks passing.
+- Policy state at release (2026-11-16 02:16Z): profile `interactive`,
+  `enforce_admission` true, work capacity 16. Another actor set this after
+  the guards-disabled period (backup `policy.json.bak-20261115T190053Z-
+  before-cap16`). `monitor install` without `--enforce` rewrites the policy
+  file unchanged (it only sets `enabled`, already true), so this release
+  did not change it.
+- The 2 failing checks, `calibrated-classes` and
+  `express-lookahead-under-benchmark`, fail the same way with the previous
+  helper 8753188 (22 of 24). They come from class weights calibrated for
+  capacity 8 now running under capacity 16, not from this change. Whoever
+  owns the capacity-16 policy should recalibrate the weights.
 - Seen while testing: `TestRemoteGoInvocationLightFollowsTheAdmittedLane`
   (commit 8c1ea78, another session) fails inside a runner job. It reads
   `os.Environ()`, and the runner sets `NCD_RUNNER_LANE`, so its "older
