@@ -131,6 +131,16 @@ func EvaluateWorkSystem(policy Policy) WorkEvaluationReport {
 	add("derated-head-does-not-idle", deratedHead.SelectedOperationID == secondID && len(deratedHead.BypassedIndexes) == 0,
 		fmt.Sprintf("selected=%s reason=%s ceiling=%d", deratedHead.SelectedOperationID, deratedHead.DecisionReason, max(1, limits.BuildWeight-1)))
 
+	// A head that other processes have seen selected past the bound without
+	// starting (its owner runs an older policy) must not idle the queue.
+	stuckSelected := queuedAt.Add(time.Second)
+	stuckHead := selectWorkWaiter([]WorkWaiterRecord{
+		{OperationID: firstID, Class: WorkClassBuild, Weight: limits.BuildWeight, QueuedAt: queuedAt, ProtectedAt: &stuckSelected, BypassCount: workMaximumBypasses, SelectedAt: &stuckSelected},
+		{OperationID: secondID, Class: WorkClassExpressTest, Weight: expressWeight, QueuedAt: queuedAt.Add(2 * time.Second)},
+	}, 0, limits.Capacity, stuckSelected.Add(workSelectedStartBound), workGreenExpressWindow{}, 0)
+	add("stuck-selected-head-does-not-idle", stuckHead.SelectedOperationID == secondID && len(stuckHead.BypassedIndexes) == 0,
+		fmt.Sprintf("selected=%s reason=%s", stuckHead.SelectedOperationID, stuckHead.DecisionReason))
+
 	state := workState{SchemaVersion: workStateSchemaVersion, Waiters: []WorkWaiterRecord{
 		{OperationID: secondID, Class: WorkClassBrowser, Weight: limits.BrowserWeight, PID: 2, OwnerIdentity: "owner", QueuedAt: queuedAt, HeartbeatAt: queuedAt},
 		{OperationID: firstID, Class: WorkClassBuild, Weight: limits.BuildWeight, PID: 1, OwnerIdentity: "owner", QueuedAt: queuedAt, HeartbeatAt: queuedAt},

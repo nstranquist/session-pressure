@@ -350,9 +350,8 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
 - Known v1.1 gap, seen in `guards-disabled-2026-11-15.md`: a resumed pressure
   reservation whose owner process kept an older policy (derated capacity 4,
   weight 5) never acquired, while other processes honoured its protection.
-  The guard detects this shape. An automatic remedy (expire a protected
-  selection that has not acquired within a bound while capacity is free) is
-  still open.
+  The guard detects this shape. The automatic remedy landed the same day,
+  see "Selected-start bound".
 
 ### Observe-mode level fix (2026-11-15, with slice 6)
 
@@ -446,6 +445,43 @@ class, stall intervals, Mac swap-out during agent load, runner-3 load.
   key` and the family digest, and its `remote_work_finished` and work events
   carry `placement_family_key`. The Mac was at warning, so the decision was
   `mac_busy: host level warning`, which is the observe-mode level fix working.
+
+### Selected-start bound (2026-11-15, Nico: "Yes, build it")
+
+- Problem: each process selects with its own policy. A head whose owner
+  kept an older, derated policy never saw itself fit, while every other
+  process saw it selected and waited (or honoured its drain). Free capacity
+  sat idle with no end.
+- Rule (`worklease.go`, `workSelectedStartBound` = 20 s): when a process
+  other than the owner sees the queue head selected to start, it stamps
+  `selected_at` on the waiter record under the state lock. After 20 s
+  without a start (ten 2 s retries by the owner), selection, in both the
+  lookahead and FIFO selectors, moves the waiter behind every waiter that
+  is trying to start. It keeps its record, accrues no bypass, holds no
+  drain, and can still start when nothing ahead of it fits. 20 s is below
+  the 30 s stall-guard threshold, so the guard reports only stalls this
+  rule cannot clear.
+- Stamp rules: only the head is stamped, never a successor that a view
+  selected by passing over the head. The first implementation stamped any
+  selected waiter. A stale owner's view selects the successor, so both
+  would have expired and the stall would have come back; the design was
+  fixed before any test ran. Non-owners clear the stamp when the head is no
+  longer selected (for example, capacity was taken), unless it has already
+  expired. The owner never starts or clears its own stamp, because its view
+  is the one in question.
+- Visible in status as `start_expired` and `selected_at` on the waiter.
+  Built-in `work evaluate` check: `stuck-selected-head-does-not-idle`.
+- Tests: selector demotion in both policies; stamp rules; and a coordinator
+  reproduction (owner acquiring at capacity 4, successor at 8). The
+  successor is blocked for 20 s and then starts, and the demoted head still
+  starts with a fresh view.
+- Compatibility: older helpers drop `selected_at` on rewrite. That only
+  restarts the bound.
+- Seen while testing: `TestRemoteGoInvocationLightFollowsTheAdmittedLane`
+  (commit 8c1ea78, another session) fails inside a runner job. It reads
+  `os.Environ()`, and the runner sets `NCD_RUNNER_LANE`, so its "older
+  runner" case cannot hold there. It was skipped for this run and left to
+  its owner.
 
 ## 5. Open items
 

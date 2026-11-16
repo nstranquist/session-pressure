@@ -218,6 +218,10 @@ type WorkWaiterRecord struct {
 	// Until then the owner waits on host pressure, not capacity, so the
 	// reservation keeps its queue place but does not hold the drain.
 	ResumedAt *time.Time `json:"resumed_at,omitempty"`
+	// SelectedAt is when another process first saw this waiter selected to
+	// start (see workSelectedStartBound). Older binaries drop it on rewrite,
+	// which only restarts the bound.
+	SelectedAt *time.Time `json:"selected_at,omitempty"`
 	// Interactive marks a waiter from an attended agent chat. The selector
 	// prefers it over background work that has not earned protection; it
 	// never changes capacity or host admission. Older binaries drop the
@@ -231,6 +235,57 @@ type WorkWaiterRecord struct {
 // eight units idle behind a parked build, ten waiters blocked).
 func (waiter WorkWaiterRecord) pressureParked() bool {
 	return waiter.ReservationKind == WorkReservationPressure && waiter.ReservedAt != nil && waiter.ResumedAt == nil
+}
+
+// workSelectedStartBound is how long a waiter may stay selected without
+// starting. Its owner retries every workCapacityRetryInterval (2 s), so 20 s
+// is ten missed chances. It is below QueueStallThreshold (30 s), so the stall
+// guard reports only stalls this rule cannot clear.
+//
+// Origin, 2026-11-15: a resumed pressure reservation whose owner kept an
+// older, derated policy (capacity 4, weight 5) never acquired. In its own
+// view it did not fit; every other process saw it selected and honoured its
+// drain, so free capacity sat idle behind it.
+const workSelectedStartBound = 20 * time.Second
+
+// startExpired reports a waiter that other processes have seen selected for
+// longer than the bound without it starting. Selection demotes it behind
+// every waiter that is trying to start; it keeps its record and can still
+// start when nothing ahead of it fits.
+func (waiter WorkWaiterRecord) startExpired(now time.Time) bool {
+	return waiter.SelectedAt != nil && now.Sub(*waiter.SelectedAt) >= workSelectedStartBound
+}
+
+// noteSelectionStart maintains SelectedAt under the state lock. Only a
+// process other than the waiter's owner starts or clears the bound: the
+// owner's own view (possibly from an older policy) is the one in question.
+// Only the queue head is stamped. A stale owner's view can select a
+// successor by passing over itself; stamping that successor would later
+// demote it too and bring the stall back. An expired waiter keeps its
+// timestamp until it starts or leaves.
+func noteSelectionStart(waiters []WorkWaiterRecord, selection workSelection, caller string, now time.Time) {
+	head := ""
+	for _, waiter := range waiters {
+		if !waiter.pressureParked() && !waiter.startExpired(now) {
+			head = waiter.OperationID
+			break
+		}
+	}
+	for index := range waiters {
+		waiter := &waiters[index]
+		if waiter.OperationID == caller {
+			continue
+		}
+		switch {
+		case waiter.OperationID == selection.SelectedOperationID && waiter.OperationID == head:
+			if waiter.SelectedAt == nil {
+				selectedAt := now
+				waiter.SelectedAt = &selectedAt
+			}
+		case waiter.SelectedAt != nil && !waiter.startExpired(now):
+			waiter.SelectedAt = nil
+		}
+	}
 }
 
 type WorkWaiterStatus struct {
@@ -250,6 +305,10 @@ type WorkWaiterStatus struct {
 	// PressureParked means the reservation's owner still waits on host
 	// pressure; the queue runs past it until the owner resumes.
 	PressureParked bool `json:"pressure_parked,omitempty"`
+	// StartExpired: selected for workSelectedStartBound without starting, so
+	// selection now passes over it.
+	StartExpired bool       `json:"start_expired,omitempty"`
+	SelectedAt   *time.Time `json:"selected_at,omitempty"`
 	// OverridePosition is this waiter's 1-based place in the operator override
 	// sequence; 1 is the active head. Zero means the waiter is not pinned.
 	OverridePosition int `json:"override_position,omitempty"`
@@ -1126,12 +1185,20 @@ func selectWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.T
 	// Parked pressure reservations keep their queue place but are invisible to
 	// selection: they neither hold the drain nor accrue bypasses. Indexes below
 	// stay in the caller's waiter slice so bypass accounting lands correctly.
+	// Waiters selected too long without starting go behind every waiter that
+	// is trying to start, so they neither hold the drain nor block the head.
 	eligible := make([]int, 0, min(len(waiters), workSelectorScanLimit))
-	for index := 0; index < len(waiters) && len(eligible) < workSelectorScanLimit; index++ {
-		if !waiters[index].pressureParked() {
+	var expired []int
+	for index := 0; index < len(waiters) && len(eligible)+len(expired) < workSelectorScanLimit; index++ {
+		switch {
+		case waiters[index].pressureParked():
+		case waiters[index].startExpired(now):
+			expired = append(expired, index)
+		default:
 			eligible = append(eligible, index)
 		}
 	}
+	eligible = append(eligible, expired...)
 	if len(eligible) == 0 {
 		return workSelection{DecisionReason: "only_pressure_parked_waiters"}
 	}
@@ -1232,12 +1299,22 @@ func selectFIFOWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now ti
 	}
 	// FIFO order applies to work that is trying to start. A parked pressure
 	// reservation keeps its place but is not the head until its owner resumes.
-	headIndex := -1
+	headIndex, expiredIndex := -1, -1
 	for index := range waiters {
-		if !waiters[index].pressureParked() {
-			headIndex = index
-			break
+		if waiters[index].pressureParked() {
+			continue
 		}
+		if waiters[index].startExpired(now) {
+			if expiredIndex < 0 {
+				expiredIndex = index
+			}
+			continue
+		}
+		headIndex = index
+		break
+	}
+	if headIndex < 0 {
+		headIndex = expiredIndex
 	}
 	if headIndex < 0 {
 		return workSelection{DecisionReason: "only_pressure_parked_waiters"}
@@ -1349,6 +1426,8 @@ func (coordinator *WorkCoordinator) status(state workState, prunedLeases, pruned
 			Protected: protected, ProtectionReason: protectionReason,
 			ReservationKind: record.ReservationKind, ReservedAt: record.ReservedAt,
 			PressureParked:   record.pressureParked(),
+			StartExpired:     record.startExpired(now),
+			SelectedAt:       record.SelectedAt,
 			OverridePosition: overridePosition,
 		})
 		if record.ReservationKind == WorkReservationPressure {
@@ -1914,6 +1993,7 @@ func (waiter *WorkWaiter) TryAcquireWithCapacity(ctx context.Context, effectiveC
 		}
 		materializeWorkProtections(state.Waiters, limits.Capacity, now)
 		selection := waiter.coordinator.selectStateWaiter(*state, used, effectiveCapacity, now, green)
+		noteSelectionStart(state.Waiters, selection, waiter.operationID, now)
 		shadowSelection := workSelection{}
 		if waiter.coordinator.schedulingPolicy() == WorkSchedulingPolicyFIFO {
 			shadowSelection = selectWorkWaiter(state.Waiters, used, effectiveCapacity, now, workGreenExpressWindow{}, 0)
