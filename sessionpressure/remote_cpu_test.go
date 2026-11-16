@@ -76,10 +76,20 @@ func TestRemoteGoInvocationLightFollowsTheAdmittedLane(t *testing.T) {
 		t.Fatal(err)
 	}
 	lane, procs, memlimit, parallel := remoteLane(WorkRunOptions{Class: WorkClassExpressTest, Command: []string{"go", "test", "./cmd/ndev-go/"}})
+	// Inside a runner job the runner's own NCD_RUNNER_LANE and NCD_CPU_MODE
+	// are in os.Environ(); drop them so each case sets exactly what it names.
+	// Log the job's real limits: under go test -v this is admission evidence.
+	t.Logf("job env: NCD_RUNNER_LANE=%q NCD_CPU_MODE=%q GOMAXPROCS=%q GOMEMLIMIT=%q GOFLAGS=%q", os.Getenv("NCD_RUNNER_LANE"), os.Getenv("NCD_CPU_MODE"), os.Getenv("GOMAXPROCS"), os.Getenv("GOMEMLIMIT"), os.Getenv("GOFLAGS"))
+	base := []string{}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "NCD_RUNNER_LANE=") && !strings.HasPrefix(kv, "NCD_CPU_MODE=") && !strings.HasPrefix(kv, "GOMAXPROCS=") {
+			base = append(base, kv)
+		}
+	}
 	run := func(code string, env ...string) (string, error) {
 		script := remoteGoInvocation(lane, procs, memlimit, parallel, "", "", []string{probe, code}) + " && printf ' sealed'"
 		cmd := exec.Command("sh", "-c", script)
-		cmd.Env = append(append(os.Environ(), "GOMAXPROCS=9"), env...)
+		cmd.Env = append(append(base, "GOMAXPROCS=9"), env...)
 		out, err := cmd.Output()
 		return string(out), err
 	}
