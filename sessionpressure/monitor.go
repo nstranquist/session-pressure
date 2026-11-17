@@ -178,8 +178,13 @@ type Monitor struct {
 	// (work_stall.go). Nil coordinator disables it.
 	WorkCoordinator    *WorkCoordinator
 	QueueStallNotifier func(QueueStall) error
-	queueStalls        QueueStallDetector
-	policyCache        persistedPolicyCache
+	// EnforceBrowsers lets this loop stop host automation browsers under the
+	// host browser-control opt-in. Only the resident authority and the
+	// explicit `monitor run` set it; any other embedder of Monitor.Run (a
+	// profiler, a test harness) must never signal live browsers.
+	EnforceBrowsers bool
+	queueStalls     QueueStallDetector
+	policyCache     persistedPolicyCache
 }
 
 type monitorStats struct {
@@ -556,7 +561,9 @@ func (monitor *Monitor) Run(ctx context.Context) error {
 			lastStorageLevel = snapshot.Storage.Level
 			monitor.attachDiskWrite(&snapshot)
 			monitor.observeProcessIncidents(ctx, snapshot)
-			_ = EnforceBrowserControl(ctx, monitor.Store.Dir)
+			if monitor.EnforceBrowsers {
+				_ = enforceBrowserControl(ctx, monitor.Store.Dir, &browserControlEvidence{snapshot: snapshot, policy: monitor.Policy})
+			}
 			recovered := lastSampleError != ""
 			lastSampleError = ""
 			annotateQuiescence(snapshot.TopAgentTrees, monitor.Policy, quiescentStreak)

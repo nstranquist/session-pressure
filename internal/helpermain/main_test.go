@@ -51,4 +51,7 @@ func TestConfigureMonitorWiresAllResidentCallbacks(t *testing.T) {
 	if monitor.ProcessGuard == nil || monitor.ProcessGuard.Notify == nil {
 		t.Fatal("ProcessGuard.Notify not wired")
 	}
+	if !monitor.EnforceBrowsers {
+		t.Fatal("resident must enforce host browser control")
+	}
 }

@@ -1098,6 +1098,7 @@ func cmdSessionPressureMonitor(g *Flags, args []string) int {
 		loopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		monitor := sessionpressure.NewMonitor(runtime.sampler, runtime.store, runtime.policy)
+		monitor.EnforceBrowsers = true
 		if err := monitor.Run(loopCtx); err != nil {
 			return sessionPressureError(err.Error(), 1)
 		}

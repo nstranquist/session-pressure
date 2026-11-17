@@ -284,6 +284,7 @@ func configureMonitor(dir string, sampler *sessionpressure.Sampler, store *sessi
 		monitor.ProcessGuard.Notify = notifyProcessIncident
 	}
 	monitor.ResidentStarts24h = starts24h
+	monitor.EnforceBrowsers = true
 	monitor.Cleaner = commandResourceCleaner{
 		dir: dir, controlBinary: os.Getenv(sessionpressure.ControlBinaryEnv),
 		controlDigest: os.Getenv(sessionpressure.ControlBinaryDigestEnv), pressurePolicy: policy,

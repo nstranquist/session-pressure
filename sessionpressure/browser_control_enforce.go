@@ -57,7 +57,13 @@ func browserOperatorPaused(dir string) bool {
 // roots owned by this UID are eligible. A kernel start identity is checked
 // again before signaling; personal browser sessions have no automation flag.
 func EnforceBrowserControl(ctx context.Context, dir string) error {
-	state, err := BrowserControlStatus(ctx, dir, "")
+	return enforceBrowserControl(ctx, dir, nil)
+}
+
+// enforceBrowserControl is the resident path: it evaluates control from the
+// sample and policy already in memory instead of re-reading them from disk.
+func enforceBrowserControl(ctx context.Context, dir string, evidence *browserControlEvidence) error {
+	state, err := browserControlStatus(ctx, dir, "", evidence)
 	if err != nil || state.Mode == "" {
 		return err
 	}
