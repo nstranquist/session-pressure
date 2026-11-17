@@ -120,8 +120,11 @@ func TestRemoteToolchainPreflightRefusesWithTheContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	tools := filepath.Join(dir, "job", "tools")
+	// A sentinel no path can contain: "ran" matched a home directory name in
+	// the refusal text, which quotes the compiler path.
+	const preflightPassed = "preflight-passed-7c1e"
 	run := func(preflight string) (int, string) {
-		out, err := exec.Command("bash", "-c", preflight+"echo ran").CombinedOutput()
+		out, err := exec.Command("bash", "-c", preflight+"echo "+preflightPassed).CombinedOutput()
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
 			return exit.ExitCode(), string(out)
@@ -131,7 +134,7 @@ func TestRemoteToolchainPreflightRefusesWithTheContract(t *testing.T) {
 		}
 		return 0, string(out)
 	}
-	if code, out := run(remoteToolchainPreflight(compiler, digest, sdk, strip, tools)); code != 0 || strings.TrimSpace(out) != "ran" {
+	if code, out := run(remoteToolchainPreflight(compiler, digest, sdk, strip, tools)); code != 0 || strings.TrimSpace(out) != preflightPassed {
 		t.Fatalf("pinned toolchain: exit %d, output %q", code, out)
 	}
 	// clang -B finds the job's strip, which must be the Mach-O strip.
@@ -144,7 +147,7 @@ func TestRemoteToolchainPreflightRefusesWithTheContract(t *testing.T) {
 		"missing strip":   remoteToolchainPreflight(compiler, digest, sdk, filepath.Join(dir, "absent-strip"), tools),
 	} {
 		code, out := run(preflight)
-		if code != workExitPolicyDenied || strings.Contains(out, "ran") || !strings.Contains(out, WorkRefusalMarker+" kind=remote_profile: ") {
+		if code != workExitPolicyDenied || strings.Contains(out, preflightPassed) || !strings.Contains(out, WorkRefusalMarker+" kind=remote_profile: ") {
 			t.Errorf("%s: exit %d, output %q; want refusal exit %d with the contract", name, code, out, workExitPolicyDenied)
 		}
 	}

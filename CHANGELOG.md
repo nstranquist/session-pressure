@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Commit-delivery lane (WORK-1121).** The repository is enrolled in
+  commit-delivery. Linux `go vet` and `go test` run on the gate runner. The
+  Darwin-only Go packages and the Swift app run on the Mac, scoped by path.
+  A repo-owned capture hook (`.ndev/hooks/pre-commit`) refuses private host
+  names, private paths and secrets in added lines, because the repository is
+  public. See `corpus/commit-lane-enrolment-2026-11-17.md`.
 - **Per-process `phys_footprint`.** The native inventory keeps the kernel's
   physical footprint from the `proc_pid_rusage` call it already makes (no
   extra syscall). Agent trees, the agent total, latest.json and heartbeats

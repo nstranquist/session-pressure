@@ -1,0 +1,72 @@
+schema_version: nicos.commit-delivery.policy.v1
+repository_id: session-pressure
+target_ref: refs/heads/main
+agent_auto_delivery: true
+legacy_queue_retired: true
+maximum_paths: 2000
+maximum_commits: 200
+# Capture runs the repo-owned hook (.ndev/hooks/pre-commit, installed as
+# .git/hooks/pre-commit). Its capture profile refuses private host names,
+# private paths, the private workers.dev handle and secrets in added lines,
+# because this repository is public. See corpus/commit-lane-enrolment-2026-11-17.md.
+# No tier: capture also runs go vet on the Mac for the captured packages, so
+# the Darwin-only files (cgo NVMe reader, *_darwin.go and their tests) are
+# type-checked before acceptance.
+capture_checks:
+  hook_profile: capture
+  timeout_ms: 30000
+  go_vet:
+    - module: .
+append_merge:
+  - CHANGELOG.md
+  - "corpus/**/*.md"
+  - "docs/**/*.md"
+remote:
+  require_visibility: PUBLIC
+gate_delegation:
+  remote_pass:
+    - argv: [go, test, -count=1, -timeout, 10m, ./...]
+      directory: .
+      platforms: [linux/amd64]
+      reason: Portable Go tests run on the active Linux gate runner; the Darwin-only checks below stay on the Mac.
+    - argv: [go, vet, ./...]
+      directory: .
+      platforms: [linux/amd64]
+      reason: Portable static analysis runs on the active Linux gate runner; it does not cover Darwin-only files.
+verification:
+  schema_version: nicos.commit-delivery.repository-verification.v1
+  required:
+    # Bootstrap: the Linux go-tests and go-vet checks join in the next
+    # delivery. A delivery that adds the policy reads it from the worktree,
+    # and a worktree policy cannot delegate to the gate runner (remote_pass is
+    # honoured only from the committed policy), so a Linux check here would
+    # run on the Mac and fail VERIFY_CAPABILITY_UNAVAILABLE.
+    # Darwin runtime tests of ./sessionpressure are not a lane gate. They
+    # measure the live host (RSS budget, CPU soak, kernel inventory) or use
+    # real-time deadlines, and under the worker's own load they failed three
+    # runs in a row with three different timing errors, at about 5 min a run.
+    # Capture go vet type-checks them; make publish-ready runs them before a
+    # release. See corpus/commit-lane-enrolment-2026-11-17.md.
+    - id: darwin-helpermain-tests
+      adapter: go
+      command:
+        argv: [go, test, -count=1, .]
+        directory: internal/helpermain
+        timeout_ms: 300000
+      platforms: [darwin/arm64]
+      paths: [internal/helpermain]
+    - id: macos-app-tests
+      adapter: swift
+      command:
+        argv: [swift, test]
+        directory: apps/SessionPressure
+        timeout_ms: 1200000
+      platforms: [darwin/arm64]
+      paths: [apps/SessionPressure]
+  exemptions:
+    - adapter: node
+      reason: The repository has no package.json or JavaScript sources.
+    - adapter: python
+      reason: The two Python files are a release-time SVG-to-PNG helper and verify-installed-lifecycle.py, a live check against an installed app; neither is a candidate check.
+    - adapter: docs
+      reason: The corpus is Markdown with no repository-owned checker yet; the capture hook checks it for private names and secrets.
