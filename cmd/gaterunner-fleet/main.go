@@ -29,7 +29,9 @@ func run(args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected positional arguments")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Callers (the commit-delivery worker) give this command 30s. Finish first,
+	// so a slow probe yields a result or a clear refusal, not a killed process.
+	ctx, cancel := context.WithTimeout(context.Background(), 27*time.Second)
 	defer cancel()
 	switch args[0] {
 	case "select":

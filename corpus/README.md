@@ -24,6 +24,7 @@ product decisions have all been reconstructed.
 - [Per-repository storage floor](storage-repository-override-2026-11-11.md): Garrid-only 5 GiB admission floor, repository resolution through the Git object store, fail-closed policy reads.
 
 - [Runner capacity and usage view](runner-capacity-2026-11-15.md): Hetzner tab capacity card, `remote capacity` contract, traffic terms and first live findings.
+- [Fleet health probe under runner load](fleet-probe-under-load-2026-11-17.md): why a loaded runner-3 looked unhealthy, the caller-budget probe fix and its A/B proof.
 
 - [Work queue v1 rating and v2 plan](work-queue-v2-2026-11-15.md): 2026-11-15 parked-reservation stall, v1 score from telemetry, v1.1 selector schema 8 hotfix, v2 placement-first plan with runner-3 offload.
 

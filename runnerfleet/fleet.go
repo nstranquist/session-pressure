@@ -158,25 +158,96 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
-func Probe(ctx context.Context, h Host) (o Observation) {
-	o.Host, o.ObservedAt = h, time.Now().UTC()
-	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+// Probe timing. A loaded runner can take well over ten seconds to finish an
+// SSH login while its CPUs are saturated by admitted gate jobs, although its
+// scheduler stays healthy. A fixed short probe deadline then reports the host
+// unhealthy and refuses all new gate work. The probe instead uses the caller's
+// remaining time, keeps a margin for the caller to act on the result, and
+// retries once when SSH itself fails fast. Tests shorten the durations.
+var (
+	probeDefaultBudget = 24 * time.Second // when the caller sets no deadline
+	probeCallerMargin  = 2 * time.Second  // left for selection and binding
+	probeMinAttempt    = 4 * time.Second  // a retry needs at least this much time
+	probeRetryPause    = time.Second
+)
+
+const probeMaxAttempts = 2
+
+// sshTransportFailure is ssh's own exit status (connection, banner or
+// authentication failure). A remote command failure has another status and
+// is a definitive answer from the host, so it is not retried.
+const sshTransportFailure = 255
+
+// probeCommand runs the remote health query. Tests replace it.
+var probeCommand = func(ctx context.Context, h Host) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", h.User+"@"+h.Name,
+		"/srv/build/gaterunner health && /srv/build/gaterunner status && uname -sm")
+	var out cappedBuffer
+	cmd.Stdout = &out
+	cmd.Stderr = io.Discard
+	err := cmd.Run()
+	return out.Bytes(), err
+}
+
+// probeBudgetEnd is the time by which the probe must have an answer.
+func probeBudgetEnd(ctx context.Context, now time.Time) time.Time {
+	if d, ok := ctx.Deadline(); ok {
+		return d.Add(-probeCallerMargin)
+	}
+	return now.Add(probeDefaultBudget)
+}
+
+func retryableProbeError(err error) bool {
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ExitCode() == sshTransportFailure
+}
+
+// queryHost runs probeCommand until it answers, fails definitively, or the
+// budget cannot hold another attempt.
+func queryHost(ctx context.Context, h Host) ([]byte, error) {
+	start := time.Now()
+	end := probeBudgetEnd(ctx, start)
+	pctx, cancel := context.WithDeadline(ctx, end)
 	defer cancel()
+	var err error
+	attempts := 0
+	for attempts < probeMaxAttempts {
+		attempts++
+		var out []byte
+		if out, err = probeCommand(pctx, h); err == nil {
+			return out, nil
+		}
+		if pctx.Err() != nil || !retryableProbeError(err) || time.Until(end) < probeRetryPause+probeMinAttempt {
+			break
+		}
+		select {
+		case <-pctx.Done():
+		case <-time.After(probeRetryPause):
+		}
+	}
+	if pctx.Err() == context.DeadlineExceeded {
+		err = fmt.Errorf("no answer within %.1fs: %w", time.Since(start).Seconds(), err)
+	}
+	return nil, fmt.Errorf("SSH health probe: %w (%d attempt(s), %.1fs)", err, attempts, time.Since(start).Seconds())
+}
+
+func Probe(ctx context.Context, h Host) (o Observation) {
+	o.Host = h
+	// ObservedAt is when the host's answer (or the failure) is known, so a slow
+	// but successful probe is not reported as already stale to its consumers.
+	defer func() { o.ObservedAt = time.Now().UTC() }()
 	// Only validated endpoints enter argv. Strict host-key checking is inherited.
 	if !namePattern.MatchString(h.Name) || !userPattern.MatchString(h.User) {
 		o.Error = "invalid endpoint"
 		return
 	}
-	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", h.User+"@"+h.Name,
-		"/srv/build/gaterunner health && /srv/build/gaterunner status && uname -sm")
-	var out cappedBuffer
-	cmd.Stdout = &out
-	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err != nil {
-		o.Error = "SSH health probe: " + err.Error()
+	raw, err := queryHost(ctx, h)
+	if err != nil {
+		o.Error = err.Error()
 		return
 	}
-	d := json.NewDecoder(&out)
+	out := bytes.NewBuffer(raw)
+	d := json.NewDecoder(out)
 	var health struct {
 		Healthy      bool   `json:"healthy"`
 		Protocol     int    `json:"protocol"`
@@ -200,7 +271,7 @@ func Probe(ctx context.Context, h Host) (o Observation) {
 		o.Error = "invalid status response"
 		return
 	}
-	rest, _ := io.ReadAll(io.MultiReader(d.Buffered(), &out))
+	rest, _ := io.ReadAll(io.MultiReader(d.Buffered(), out))
 	switch strings.TrimSpace(string(rest)) {
 	case "Linux x86_64":
 		o.Platform = "linux/amd64"

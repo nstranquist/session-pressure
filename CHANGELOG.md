@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Fleet health probe survives a loaded runner.** `gaterunner-fleet` no
+  longer caps the SSH health probe at 12 seconds. It uses the caller's
+  remaining time minus a 2-second margin (about 25 seconds under the
+  selector's new 27-second limit, inside the delivery worker's 30 seconds).
+  It retries once after a fast ssh transport failure (exit 255) and never
+  after a remote command failure. `ObservedAt` now marks the answer. Errors
+  name the attempts and elapsed time instead of a bare `signal: killed`.
+
 ## 0.7.2 — 2026-11-15
 
 ### Memory attribution, swap lag release, tree rung without LSPs

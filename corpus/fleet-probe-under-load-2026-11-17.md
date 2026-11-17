@@ -1,0 +1,64 @@
+# Fleet health probe under runner load (2026-11-17)
+
+Owner: claude/garrid-desktop-parity
+Status: 2026-11-17. Fixed in source and tested. Release and install are
+recorded below as they happen.
+
+## Symptom
+
+Deliveries stopped with `fleet assignment: no eligible healthy fleet runner
+… (runner-3: SSH health probe: signal: killed drained=false)`. The worker
+retries, and pauses the delivery after four failures.
+
+## Cause (measured 2026-11-17 about 05:50Z)
+
+- runner-3 (12 cores) ran about 13 gate jobs at once. Load average was 20
+  to 26, CPU pressure `some avg300` was 31 percent. Memory (58 GiB free) and
+  disk I/O were not limiting. Every top process was under 90 seconds old, so
+  nothing was stuck. The host admits by memory (`heavy_slots: 1024`, nicos-ops
+  `c999a1c`), and max shards went from 4 to 6 on 2026-11-16 (`194ab52`).
+- Under that load a fresh SSH login took about 8 seconds (`true`), and
+  `sshd` has the same CPU weight (100) as the build jobs. Idle, the same login
+  takes 1.7 seconds and `gaterunner health` answers in under 10 ms.
+- `runnerfleet.Probe` gave the whole SSH call a fixed 12-second deadline. When
+  login plus the three remote commands passed 12 seconds, the context killed
+  ssh and the host was reported unhealthy. The scheduler was healthy the
+  whole time and jobs kept passing.
+
+## Fix
+
+- The probe deadline is the caller's deadline minus `probeCallerMargin`
+  (2 s), or `probeDefaultBudget` (24 s) without a caller deadline.
+- `gaterunner-fleet` uses a 27-second context, so it answers before the
+  commit-delivery worker's 30-second limit (`GateFleetCommand`) kills it.
+- One retry after ssh's own failure (exit 255) when at least
+  `probeRetryPause + probeMinAttempt` (5 s) remain. A remote command failure
+  is the host's answer and is not retried.
+- `ConnectTimeout` 5 → 10 seconds, so a slow banner exchange under load is not
+  cut before the overall budget.
+- `ObservedAt` is stamped when the answer arrives. commit-delivery's parallel
+  fleet check rejects observations older than 30 seconds, so a probe-start
+  timestamp would age a slow answer.
+- Errors say `no answer within N s` and `(k attempt(s), N s)`.
+
+Rejected: an SSH ControlMaster for the probe. nicos-ops `gate-runner.md` says
+not to add ControlMaster for `gaterunner-N` lane tools.
+
+## Proof
+
+- `go test -race -run TestProbe ./runnerfleet`: 9 new tests pass (budget from
+  caller, default budget, transport retry, no retry on remote failure, attempt
+  cap, no retry without budget, timeout message, ObservedAt, invalid endpoint).
+  The full `./runnerfleet` package passes.
+- Live A/B with a fake `ssh` on PATH that sleeps 14 s and then runs the real
+  ssh: the installed `cd39a44` selector reported both runners
+  `SSH health probe: signal: killed` (the production error). The patched
+  selector reported both healthy in 15.9 s. Without the delay it answers in
+  2.1 s.
+
+## Open
+
+- runner-3 still oversubscribes CPU in bursts. A per-job CPU cap or a
+  higher `sshd` CPU weight is a separate runner-policy decision.
+- commit-delivery `parallelFleetDepth` ignores hosts with more than 128 heavy
+  slots, so runner-3 (1024) never adds parallel fleet capacity there.
