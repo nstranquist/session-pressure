@@ -183,7 +183,11 @@ type WorkLimits struct {
 	// MemoryAdmission selects memory-headroom admission (work_headroom.go):
 	// "" or "shadow" records decisions only; "enforce" also holds new work
 	// whose predicted peak does not fit headroom while other coordinated work
-	// runs. It acts only when admission is enforced.
+	// runs, and arms swap-thrash serialization (SwapThrashCapacity). It is its
+	// own switch: it acts when the policy is enabled, also when
+	// EnforceAdmission is false, so red-level host blocking can stay off while
+	// the queue still respects memory. An empty queue never waits on memory
+	// and a missing sample fails open.
 	MemoryAdmission string `json:"memory_admission,omitempty"`
 	// AllowOverrideBeyondCapacity lets an explicit operator override (work
 	// override) admit its waiter past the weighted Capacity ceiling. It
@@ -196,7 +200,8 @@ type WorkLimits struct {
 	// pair it with weight-classification review.
 	AllowOverrideBeyondCapacity bool `json:"allow_override_beyond_capacity"`
 	// SwapThrashCapacity is the weighted ceiling for new heavy work while the
-	// resident's swap-thrash latch is set under an enforcing profile. Thrash
+	// resident's swap-thrash latch is set under an enforcing profile or with
+	// MemoryAdmission = enforce (WorkSwapThrashEnforced). Thrash
 	// slows every process super-linearly, so serializing memory-heavy work
 	// finishes the same queue sooner. A lone operation is always admitted.
 	SwapThrashCapacity int `json:"swap_thrash_capacity"`
@@ -1045,4 +1050,17 @@ func atomicWrite(path string, body []byte, mode os.FileMode) error {
 		return err
 	}
 	return nil
+}
+
+// WorkMemoryAdmissionEnforced reports whether memory-headroom admission holds
+// new work. It does not depend on EnforceAdmission.
+func WorkMemoryAdmissionEnforced(policy Policy) bool {
+	return policy.Enabled && policy.WorkLimits.MemoryAdmission == MemoryAdmissionEnforce
+}
+
+// WorkSwapThrashEnforced reports whether swap-thrash serialization holds new
+// heavy work: under an enforcing profile, or when memory admission is
+// enforced on its own.
+func WorkSwapThrashEnforced(policy Policy) bool {
+	return policy.Enabled && (policy.EnforceAdmission || policy.WorkLimits.MemoryAdmission == MemoryAdmissionEnforce)
 }

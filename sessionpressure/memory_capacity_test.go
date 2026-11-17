@@ -110,7 +110,7 @@ func TestGateEnforcesMemoryHeadroomOnlyWhenConfigured(t *testing.T) {
 		t.Fatal("shadow mode held work")
 	}
 	limits.MemoryAdmission = MemoryAdmissionEnforce
-	enforced := &workAdmissionGate{limits: limits, memoryHeadroom: noRoom, memoryEnforceActive: func() bool { return true }}
+	enforced := &workAdmissionGate{limits: limits, memoryHeadroom: noRoom, memoryGuardsActive: func() bool { return true }}
 	decision, held := enforced.memoryHeadroomDecision(allowed, false)
 	if !held || decision.Allowed || decision.Dimension != "memory" || decision.RetryInterval <= 0 {
 		t.Fatalf("enforce mode: %+v %v", decision, held)
@@ -118,7 +118,7 @@ func TestGateEnforcesMemoryHeadroomOnlyWhenConfigured(t *testing.T) {
 	if _, held := enforced.memoryHeadroomDecision(allowed, true); held {
 		t.Fatal("held a lease this process already owns")
 	}
-	enforced.memoryEnforceActive = func() bool { return false }
+	enforced.memoryGuardsActive = func() bool { return false }
 	if _, held := enforced.memoryHeadroomDecision(allowed, false); held {
 		t.Fatal("held while admission is not enforced")
 	}

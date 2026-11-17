@@ -460,8 +460,12 @@ type workAdmissionGate struct {
 	limits WorkLimits
 	// memoryHeadroom returns this operation's memory-headroom decision and
 	// the number of running unparked leases. Nil disables enforcement.
-	memoryHeadroom                      func(Admission) (ShadowMemoryDecision, int, bool)
-	memoryEnforceActive                 func() bool
+	memoryHeadroom func(Admission) (ShadowMemoryDecision, int, bool)
+	// memoryGuardsActive reports whether the persisted policy is enabled.
+	// With WorkLimits.MemoryAdmission = enforce it arms the memory-headroom
+	// and swap-thrash guards independently of EnforceAdmission. Nil means
+	// active (tests and callers without a policy file).
+	memoryGuardsActive                  func() bool
 	refreshLimits                       func() WorkLimits
 	cpuRed                              int
 	cpuRecovered                        int
@@ -499,8 +503,9 @@ type workAdmissionGate struct {
 	classRuntimeP95MS     func() (int64, bool)
 	freeWeightedCapacity  func() (int, bool)
 	warningCapacityStatus func() (WorkStatus, bool)
-	// swapThrashEnforced is true only under an enforcing profile; observe
-	// profiles report thrash without changing admission.
+	// swapThrashEnforced is true under an enforcing profile. Observe
+	// profiles report thrash without changing admission unless
+	// WorkLimits.MemoryAdmission = enforce arms the memory guards.
 	swapThrashEnforced bool
 	swapThrashAdmitted bool
 	swapThrashDeferred bool
@@ -700,14 +705,24 @@ func (gate *workAdmissionGate) storageGraceError(admission Admission, dimension 
 	return nil
 }
 
+// memoryGuardsEnforced reports whether WorkLimits.MemoryAdmission = enforce
+// arms the memory guards. It does not depend on EnforceAdmission: the
+// memory-headroom and swap-thrash guards have their own switch, so red-level
+// host blocking can stay off while the queue still respects memory.
+func (gate *workAdmissionGate) memoryGuardsEnforced() bool {
+	if gate.limits.MemoryAdmission != MemoryAdmissionEnforce {
+		return false
+	}
+	return gate.memoryGuardsActive == nil || gate.memoryGuardsActive()
+}
+
 // memoryHeadroomDecision holds new work under enforced memory admission
 // (WorkLimits.MemoryAdmission = enforce). It never applies to a lease this
 // process already owns: holding it would idle capacity it already holds.
+// An empty queue never waits and a missing sample fails open
+// (memoryHeadroomHold, shadowMemory.decide).
 func (gate *workAdmissionGate) memoryHeadroomDecision(admission Admission, ownsLease bool) (workAdmissionDecision, bool) {
-	if ownsLease || gate.memoryHeadroom == nil || gate.limits.MemoryAdmission != MemoryAdmissionEnforce {
-		return workAdmissionDecision{}, false
-	}
-	if gate.memoryEnforceActive != nil && !gate.memoryEnforceActive() {
+	if ownsLease || gate.memoryHeadroom == nil || !gate.memoryGuardsEnforced() {
 		return workAdmissionDecision{}, false
 	}
 	decision, running, ok := gate.memoryHeadroom(admission)
@@ -1300,7 +1315,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		},
 		storageGrace:       configuredWorkStorageGrace(coordinator.Dir),
 		cpuRedPercent:      configuredWorkCPURedPercent(coordinator.Dir),
-		swapThrashEnforced: configuredWorkSwapThrashEnforced(coordinator.Dir),
+		swapThrashEnforced: configuredWorkHostAdmissionEnforced(coordinator.Dir),
 		storageReclaimActive: func() bool {
 			statusCtx, statusCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 			defer statusCancel()
@@ -1338,7 +1353,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		interactive:          options.Interactive,
 		classPeakRSSP90MB:    newCalibratedClassPeakRSSP90(coordinator.Dir, options.Class, coordinator.Now),
 		freeWeightedCapacity: func() (int, bool) { return coordinatorFreeCapacity(coordinator) },
-		memoryEnforceActive:  func() bool { return configuredWorkSwapThrashEnforced(coordinator.Dir) },
+		memoryGuardsActive:   func() bool { return configuredWorkPolicyEnabled(coordinator.Dir) },
 		memoryHeadroom: func(admission Admission) (ShadowMemoryDecision, int, bool) {
 			statusCtx, statusCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 			defer statusCancel()
@@ -2100,11 +2115,19 @@ func configuredWorkStorageGrace(dir string) time.Duration {
 	return grace
 }
 
-// configuredWorkSwapThrashEnforced follows EnforceAdmission: observe-style
-// profiles promise no admission changes, so thrash stays report-only there.
-func configuredWorkSwapThrashEnforced(dir string) bool {
+// configuredWorkHostAdmissionEnforced follows EnforceAdmission. Observe-style
+// profiles arm swap-thrash serialization only through
+// WorkLimits.MemoryAdmission = enforce (workAdmissionGate.memoryGuardsEnforced).
+func configuredWorkHostAdmissionEnforced(dir string) bool {
 	policy, persisted, err := LoadPolicy(PolicyPath(dir), 0)
 	return err == nil && persisted && policy.Enabled && policy.EnforceAdmission
+}
+
+// configuredWorkPolicyEnabled gates the memory guards: a missing, unreadable
+// or disabled policy leaves them off.
+func configuredWorkPolicyEnabled(dir string) bool {
+	policy, persisted, err := LoadPolicy(PolicyPath(dir), 0)
+	return err == nil && persisted && policy.Enabled
 }
 
 func configuredWorkCPURedPercent(dir string) float64 {

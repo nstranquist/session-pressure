@@ -375,7 +375,9 @@ func TestDoctorExplainsSwapStormAndOverBudgetDerate(t *testing.T) {
 		t.Fatalf("budget warning=%q", warnings[1])
 	}
 	latest.SwapThrashCause = SwapThrashCauseAgents
-	warnings = swapThrashDoctorWarnings(PressureDoctorInput{Now: now, Policy: DefaultPolicy(16 * 1024), Latest: latest, HasLatest: true})
+	enforcing := DefaultPolicy(16 * 1024)
+	enforcing.Enabled, enforcing.EnforceAdmission = true, true
+	warnings = swapThrashDoctorWarnings(PressureDoctorInput{Now: now, Policy: enforcing, Latest: latest, HasLatest: true})
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "cause=agents") || !strings.Contains(warnings[0], "swap_thrash_capacity=") {
 		t.Fatalf("agent warning=%q", warnings)
 	}

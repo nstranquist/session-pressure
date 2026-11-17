@@ -49,6 +49,11 @@ type DoctorWork struct {
 	Used         int  `json:"used"`
 	QueueDepth   int  `json:"queue_depth"`
 	ExpressGreen bool `json:"express_green"`
+	// MemoryAdmissionEnforced and SwapThrashEnforced show the memory guards,
+	// which have their own switch (work_limits.memory_admission) and can be
+	// on while enforce_admission is off.
+	MemoryAdmissionEnforced bool `json:"memory_admission_enforced"`
+	SwapThrashEnforced      bool `json:"swap_thrash_enforced"`
 }
 
 type DoctorLaunch struct {
@@ -111,6 +116,9 @@ func BuildPressureDoctor(in PressureDoctorInput) PressureDoctor {
 			Used:         in.Work.Used,
 			QueueDepth:   in.Work.QueueDepth,
 			ExpressGreen: in.ExpressGreen,
+
+			MemoryAdmissionEnforced: WorkMemoryAdmissionEnforced(in.Policy),
+			SwapThrashEnforced:      WorkSwapThrashEnforced(in.Policy),
 		},
 		CoverageStatus: in.Coverage.Status,
 	}
@@ -314,8 +322,12 @@ func swapThrashDoctorWarnings(in PressureDoctorInput) []string {
 			if cause == "" {
 				cause = "unknown"
 			}
-			warnings = append(warnings, fmt.Sprintf("swap thrash%s (%.0f MB/s swap-out, cause=%s): new heavy work is serialized to swap_thrash_capacity=%d",
-				since, in.Latest.SwapOutMBPerSecond, cause, normalizeWorkLimits(in.Policy.WorkLimits).SwapThrashCapacity))
+			effect := fmt.Sprintf("new heavy work is serialized to swap_thrash_capacity=%d", normalizeWorkLimits(in.Policy.WorkLimits).SwapThrashCapacity)
+			if !WorkSwapThrashEnforced(in.Policy) {
+				effect = "report-only (enforce_admission and memory_admission=enforce are both off)"
+			}
+			warnings = append(warnings, fmt.Sprintf("swap thrash%s (%.0f MB/s swap-out, cause=%s): %s",
+				since, in.Latest.SwapOutMBPerSecond, cause, effect))
 		}
 	}
 	if in.SwapDerate != nil && in.SwapDerate.Verdict == SwapDerateOverBudget {

@@ -15,7 +15,8 @@ const (
 )
 
 // swapThrashDecision serializes new heavy work while the resident's swap
-// thrash latch is set under an enforcing profile. It can only defer: work that
+// thrash latch is set under an enforcing profile or with
+// WorkLimits.MemoryAdmission = enforce. It can only defer: work that
 // fits falls through to the CPU, memory, and storage gates unchanged, so the
 // derate never weakens another safety floor. A lone operation is always
 // admitted, so a thrash caused outside the queue (browser, editor) can slow
@@ -23,9 +24,12 @@ const (
 // non-agent demand (cause "external"), the derate stops deferring: holding
 // agents cannot end a storm they do not drive, so the wait would be pure cost.
 func (gate *workAdmissionGate) swapThrashDecision(admission Admission, ownsLease bool) (workAdmissionDecision, bool) {
-	if gate == nil || !gate.swapThrashEnforced || gate.class == "" || !admission.Allowed ||
+	if gate == nil || gate.class == "" || !admission.Allowed ||
 		admission.Snapshot == nil || !admission.Snapshot.SwapIOAvailable || !admission.Snapshot.SwapThrashLatched ||
 		gate.warningCapacityStatus == nil {
+		return workAdmissionDecision{}, false
+	}
+	if !gate.swapThrashEnforced && !gate.memoryGuardsEnforced() {
 		return workAdmissionDecision{}, false
 	}
 	if admission.Snapshot.SwapThrashCause == SwapThrashCauseExternal {
