@@ -83,3 +83,13 @@ not to add ControlMaster for `gaterunner-N` lane tools.
   higher `sshd` CPU weight is a separate runner-policy decision.
 - commit-delivery `parallelFleetDepth` ignores hosts with more than 128 heavy
   slots, so runner-3 (1024) never adds parallel fleet capacity there.
+
+## Follow-up: probe history (2026-11-17)
+
+The 8 s login was one sample and did not reproduce under two saturated
+bursts (logins about 1.6 s). Its most likely cause was a short storage stall,
+not CPU. The full diagnosis is in nicos-commit-delivery
+`corpus/cpu-reserve-runner-3-2026-11-17.md`. To explain the next slow
+login with data, every probe's SSH time now goes to `probe_samples` in
+`runner-capacity.sqlite` (host, time, outcome, attempts, `probe_ms`). The
+runner records PSI stall shares in `host_samples` at the same time.

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Probe history explains slow runner logins.** Each fleet health probe now
+  reports `probe_ms` (SSH wall time, retries included) and `probe_attempts`.
+  `gaterunner-fleet status` and `select` store every probe in a new
+  `probe_samples` table in `runner-capacity.sqlite` (35-day retention, as
+  for `net_samples`). Join it with the runner's `host_samples` pressure
+  columns to see whether a slow login was CPU, IO, memory or network. A
+  failed history write only warns and never changes a selection.
+
 - **Fleet health probe survives a loaded runner.** `gaterunner-fleet` no
   longer caps the SSH health probe at 12 seconds. It uses the caller's
   remaining time minus a 2-second margin (about 25 seconds under the

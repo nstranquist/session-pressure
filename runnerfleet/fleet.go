@@ -144,6 +144,12 @@ type Observation struct {
 	HeavyJobs    int       `json:"heavy_jobs"`
 	LightJobs    int       `json:"light_jobs"`
 	Error        string    `json:"error,omitempty"`
+	// ProbeMS is the wall time of the SSH health query, retries included.
+	// The remote commands answer in milliseconds, so it is in effect the SSH
+	// login time. ProbeAttempts counts the ssh runs (1 or 2). Both are zero
+	// when no ssh ran (invalid endpoint, cancelled before the probe).
+	ProbeMS       int64 `json:"probe_ms,omitempty"`
+	ProbeAttempts int   `json:"probe_attempts,omitempty"`
 }
 
 // ProbeFunc permits deterministic selection tests without a live SSH daemon.
@@ -204,7 +210,7 @@ func retryableProbeError(err error) bool {
 
 // queryHost runs probeCommand until it answers, fails definitively, or the
 // budget cannot hold another attempt.
-func queryHost(ctx context.Context, h Host) ([]byte, error) {
+func queryHost(ctx context.Context, h Host) ([]byte, int, error) {
 	start := time.Now()
 	end := probeBudgetEnd(ctx, start)
 	pctx, cancel := context.WithDeadline(ctx, end)
@@ -215,7 +221,7 @@ func queryHost(ctx context.Context, h Host) ([]byte, error) {
 		attempts++
 		var out []byte
 		if out, err = probeCommand(pctx, h); err == nil {
-			return out, nil
+			return out, attempts, nil
 		}
 		if pctx.Err() != nil || !retryableProbeError(err) || time.Until(end) < probeRetryPause+probeMinAttempt {
 			break
@@ -228,7 +234,7 @@ func queryHost(ctx context.Context, h Host) ([]byte, error) {
 	if pctx.Err() == context.DeadlineExceeded {
 		err = fmt.Errorf("no answer within %.1fs: %w", time.Since(start).Seconds(), err)
 	}
-	return nil, fmt.Errorf("SSH health probe: %w (%d attempt(s), %.1fs)", err, attempts, time.Since(start).Seconds())
+	return nil, attempts, fmt.Errorf("SSH health probe: %w (%d attempt(s), %.1fs)", err, attempts, time.Since(start).Seconds())
 }
 
 func Probe(ctx context.Context, h Host) (o Observation) {
@@ -241,7 +247,9 @@ func Probe(ctx context.Context, h Host) (o Observation) {
 		o.Error = "invalid endpoint"
 		return
 	}
-	raw, err := queryHost(ctx, h)
+	start := time.Now()
+	raw, attempts, err := queryHost(ctx, h)
+	o.ProbeMS, o.ProbeAttempts = max(time.Since(start).Milliseconds(), 1), attempts
 	if err != nil {
 		o.Error = err.Error()
 		return

@@ -188,3 +188,34 @@ func TestProbeRejectsInvalidEndpointWithoutSSH(t *testing.T) {
 		t.Fatalf("calls=%d observation=%+v", f.calls, o)
 	}
 }
+
+func TestProbeRecordsSSHTimeAndAttempts(t *testing.T) {
+	slow := func(context.Context) ([]byte, error) { time.Sleep(30 * time.Millisecond); return healthyAnswer(), nil }
+	withProbe(t, &fakeProbe{results: []func(context.Context) ([]byte, error){slow}})
+	o := Probe(context.Background(), probeHost())
+	if !o.Healthy || o.ProbeAttempts != 1 || o.ProbeMS < 30 || o.ProbeMS > 5000 {
+		t.Fatalf("healthy probe: attempts=%d ms=%d err=%q", o.ProbeAttempts, o.ProbeMS, o.Error)
+	}
+
+	transport := exitError(t, sshTransportFailure)
+	withProbe(t, &fakeProbe{results: []func(context.Context) ([]byte, error){
+		func(context.Context) ([]byte, error) { return nil, transport }, ok,
+	}})
+	if o := Probe(context.Background(), probeHost()); !o.Healthy || o.ProbeAttempts != 2 || o.ProbeMS < 1 {
+		t.Fatalf("retried probe: attempts=%d ms=%d err=%q", o.ProbeAttempts, o.ProbeMS, o.Error)
+	}
+
+	remote := exitError(t, 1)
+	withProbe(t, &fakeProbe{results: []func(context.Context) ([]byte, error){
+		func(context.Context) ([]byte, error) { return nil, remote },
+	}})
+	if o := Probe(context.Background(), probeHost()); o.Healthy || o.ProbeAttempts != 1 || o.ProbeMS < 1 {
+		t.Fatalf("failed probe keeps its timing: attempts=%d ms=%d", o.ProbeAttempts, o.ProbeMS)
+	}
+
+	bad := probeHost()
+	bad.Name = "bad host;"
+	if o := Probe(context.Background(), bad); o.ProbeAttempts != 0 || o.ProbeMS != 0 {
+		t.Fatalf("no ssh ran, so no timing: attempts=%d ms=%d", o.ProbeAttempts, o.ProbeMS)
+	}
+}

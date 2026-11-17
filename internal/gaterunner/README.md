@@ -75,6 +75,12 @@ consecutive samples on the same boot and interface no more than 15 minutes
 apart; reboots, counter resets and gaps break the series. Coverage seconds
 are reported so a partial history is never read as a quiet one.
 
+The same store keeps `probe_samples`: one row per fleet health probe made by
+`gaterunner-fleet status` or `select` (host, time in ms, outcome
+`healthy|timeout|ssh_failed|unhealthy`, ssh attempts, `probe_ms`). It is kept
+35 days and stores no error text. Join it with the runner's `host_samples`
+PSI columns to tell a CPU, IO or memory stall from a slow network path.
+
 Alerts are diagnostics, not gates: unreachable host (critical when active),
 current load and memory, disk at 80/90%, CPU episodes at or above 85%,
 heavy-slot saturation episodes, memory below 10%, I/O wait at or above 10%,

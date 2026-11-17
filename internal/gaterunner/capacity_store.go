@@ -7,7 +7,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/nstranquist/session-pressure/runnerfleet"
 
 	_ "modernc.org/sqlite"
 )
@@ -34,6 +37,14 @@ const capacityStoreDDL = `CREATE TABLE IF NOT EXISTS net_samples(
   rx INTEGER NOT NULL,
   tx INTEGER NOT NULL,
   PRIMARY KEY(host, at)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS probe_samples(
+  host TEXT NOT NULL,
+  at_ms INTEGER NOT NULL,
+  outcome TEXT NOT NULL,
+  attempts INTEGER NOT NULL,
+  probe_ms INTEGER NOT NULL,
+  PRIMARY KEY(host, at_ms)
 ) WITHOUT ROWID;`
 
 type capacityStore struct{ db *sql.DB }
@@ -149,6 +160,86 @@ func downsample(points []NetPoint, limit int) []NetPoint {
 }
 
 func (s *capacityStore) prune(now time.Time) error {
-	_, err := s.db.Exec(`DELETE FROM net_samples WHERE at < ?`, now.Add(-capacityStoreRetention).Unix())
+	cutoff := now.Add(-capacityStoreRetention)
+	if _, err := s.db.Exec(`DELETE FROM net_samples WHERE at < ?`, cutoff.Unix()); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM probe_samples WHERE at_ms < ?`, cutoff.UnixMilli())
 	return err
+}
+
+// ProbeSample is one fleet health probe as seen from this Mac. The runner's
+// host_samples (CPU, iowait and PSI per 15 s) explain a slow probe: join on
+// host and time.
+type ProbeSample struct {
+	Host     string    `json:"host"`
+	At       time.Time `json:"at"`
+	Outcome  string    `json:"outcome"`
+	Attempts int       `json:"attempts"`
+	ProbeMS  int64     `json:"probe_ms"`
+}
+
+// probeOutcome classifies an observation without storing its error text.
+func probeOutcome(o runnerfleet.Observation) string {
+	switch {
+	case o.Healthy:
+		return "healthy"
+	case strings.Contains(o.Error, "no answer within"):
+		return "timeout"
+	case strings.Contains(o.Error, "SSH health probe"):
+		return "ssh_failed"
+	default:
+		return "unhealthy"
+	}
+}
+
+// RecordProbes appends every observation for which ssh ran to the probe
+// history in dataDir. Callers treat an error as a warning: a probe history
+// write never changes a selection.
+func RecordProbes(dataDir string, observations []runnerfleet.Observation) error {
+	var rows []ProbeSample
+	for _, o := range observations {
+		if o.ProbeAttempts == 0 || o.ObservedAt.IsZero() {
+			continue
+		}
+		rows = append(rows, ProbeSample{Host: o.Host.Name, At: o.ObservedAt, Outcome: probeOutcome(o), Attempts: o.ProbeAttempts, ProbeMS: o.ProbeMS})
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	store, err := openCapacityStore(dataDir)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.prune(time.Now()); err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if _, err := store.db.Exec(`INSERT OR REPLACE INTO probe_samples(host, at_ms, outcome, attempts, probe_ms) VALUES(?,?,?,?,?)`,
+			r.Host, r.At.UnixMilli(), r.Outcome, r.Attempts, r.ProbeMS); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// probeSamples returns the probe history for host since since, oldest first.
+func (s *capacityStore) probeSamples(host string, since time.Time) ([]ProbeSample, error) {
+	rows, err := s.db.Query(`SELECT at_ms, outcome, attempts, probe_ms FROM probe_samples WHERE host = ? AND at_ms >= ? ORDER BY at_ms`, host, since.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProbeSample
+	for rows.Next() {
+		p := ProbeSample{Host: host}
+		var at int64
+		if err := rows.Scan(&at, &p.Outcome, &p.Attempts, &p.ProbeMS); err != nil {
+			return nil, err
+		}
+		p.At = time.UnixMilli(at).UTC()
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
