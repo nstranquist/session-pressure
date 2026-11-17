@@ -65,7 +65,10 @@ const (
 	// 5 samples, 2 GiB default). Change it with any estimator change.
 	// v2 (2026-11-16): samples are max(tree peak, wait4 peak). v1 rows
 	// stay valid on read.
-	HeadroomRuleVersion   = "mac-headroom-tree-p90-scope-p95-ramp-v4"
+	// v5 (2026-11-17): ramping leases are charged together (pooledChargeMB,
+	// headroomPoolRho) instead of as a sum of their peaks.
+	HeadroomRuleVersion   = "mac-headroom-tree-p90-scope-p95-ramp-pooled-v5"
+	headroomRuleVersionV4 = "mac-headroom-tree-p90-scope-p95-ramp-v4"
 	headroomRuleVersionV1 = "mac-headroom-p90-v1"
 	headroomRuleVersionV2 = "mac-headroom-p90-v2"
 	headroomRuleVersionV3 = "mac-headroom-tree-p90-scope-p95-v3"
@@ -77,7 +80,16 @@ const (
 	// and six 30 s pressure samples. v4 (2026-11-16): without the ramp, one
 	// 30-minute restic backup charged 3.3 GB for its whole life and held
 	// enforced admission shut (headroom -763 MB).
-	headroomInflightRamp      = 3 * time.Minute
+	headroomInflightRamp = 3 * time.Minute
+	// headroomPoolRho is the correlation assumed between ramping leases when
+	// their charges are pooled. Replay of 761 starts with two or more
+	// ramping leases (2026-11-17, `work evaluate`, memory_charge) against the
+	// sum of their measured peaks: rho 0 undercharged 13.8% (worst 5.6 GB),
+	// 0.25 undercharged 8.1% (worst 3.2 GB, inside the reserve) with a
+	// median excess of 2.6 GB, and the old sum of peaks undercharged 5.5%
+	// with a median excess of 4.3 GB. 0.25 keeps undercharge under the 10%
+	// a single p90 prediction allows.
+	headroomPoolRho           = 0.25
 	headroomKeyPercentile     = 90
 	headroomScopePercentile   = 95
 	headroomMinMeasuredPeakMB = 8
@@ -199,16 +211,39 @@ func percentileMB(values []float64, percent int) int64 {
 // predict returns the peak of the most specific scope with enough samples:
 // p90 of the same check, else p95 of the workload, else p95 of the class.
 func (history peakRSSHistory) predict(class WorkClass, workload, key string) (int64, string) {
+	peak, _, source := history.predictBand(class, workload, key)
+	return peak, source
+}
+
+// predictBand returns predict's peak with the median of the same scope. The
+// fallback has no spread: its median is its peak.
+func (history peakRSSHistory) predictBand(class WorkClass, workload, key string) (peak, median int64, source string) {
 	if samples := history.byKey[key].preferred(headroomKeyMinSamples); key != "" && samples != nil {
-		return percentileMB(samples, headroomKeyPercentile), predictionByKey
+		return percentileMB(samples, headroomKeyPercentile), percentileMB(samples, 50), predictionByKey
 	}
 	if samples := history.byWorkload[workload].preferred(headroomScopeMinSamples); workload != "" && samples != nil {
-		return percentileMB(samples, headroomScopePercentile), predictionByLoad
+		return percentileMB(samples, headroomScopePercentile), percentileMB(samples, 50), predictionByLoad
 	}
 	if samples := history.byClass[string(class)].preferred(headroomScopeMinSamples); samples != nil {
-		return percentileMB(samples, headroomScopePercentile), predictionByClass
+		return percentileMB(samples, headroomScopePercentile), percentileMB(samples, 50), predictionByClass
 	}
-	return headroomFallbackPeakMB, predictionFallback
+	return headroomFallbackPeakMB, headroomFallbackPeakMB, predictionFallback
+}
+
+// pooledChargeMB is the in-flight charge of several leases taken together:
+// the sum of their medians plus their combined spread (peak minus median).
+// rho is the assumed correlation between leases: 0 adds spreads as a
+// root-sum-square, 1 adds them plainly (the sum of peaks). One lease is
+// charged its peak at any rho.
+func pooledChargeMB(bands [][2]int64, rho float64) int64 {
+	var medians, spread, spread2 float64
+	for _, band := range bands {
+		peak, median := float64(band[0]), float64(min(band[1], band[0]))
+		medians += median
+		spread += peak - median
+		spread2 += (peak - median) * (peak - median)
+	}
+	return int64(medians + math.Sqrt(rho*spread*spread+(1-rho)*spread2) + 0.5)
 }
 
 func (history peakRSSHistory) stats() []PeakRSSStats {
@@ -242,24 +277,27 @@ func (history peakRSSHistory) stats() []PeakRSSStats {
 // MemoryHeadroom is the one source both Mac admission layers read
 // (`session-pressure --json work headroom`).
 type MemoryHeadroom struct {
-	Rule               string    `json:"rule"`
-	SchemaVersion      int       `json:"schema_version"`
-	SampledAt          time.Time `json:"sampled_at,omitzero"`
-	SampleFresh        bool      `json:"sample_fresh"`
-	Level              Level     `json:"level,omitempty"`
-	PhysicalMB         int64     `json:"physical_mb"`
-	AvailableMB        int64     `json:"available_mb"`
-	ReserveMB          int64     `json:"reserve_mb"`
-	LeaseCount         int       `json:"lease_count"`
-	LeasePredictedMB   int64     `json:"lease_predicted_mb"`
-	RampingLeaseCount  int       `json:"ramping_lease_count"`
-	LeasedRSSMB        int64     `json:"leased_rss_mb"`
-	LeasedRSSKnown     bool      `json:"leased_rss_known"`
-	InflightMB         int64     `json:"inflight_mb"`
-	HeadroomMB         int64     `json:"headroom_mb"`
-	SwapUsedMB         int64     `json:"swap_used_mb"`
-	SwapOutMBPerSecond float64   `json:"swap_out_mb_per_s"`
-	SwapThrashLatched  bool      `json:"swap_thrash_latched"`
+	Rule          string    `json:"rule"`
+	SchemaVersion int       `json:"schema_version"`
+	SampledAt     time.Time `json:"sampled_at,omitzero"`
+	SampleFresh   bool      `json:"sample_fresh"`
+	Level         Level     `json:"level,omitempty"`
+	PhysicalMB    int64     `json:"physical_mb"`
+	AvailableMB   int64     `json:"available_mb"`
+	ReserveMB     int64     `json:"reserve_mb"`
+	LeaseCount    int       `json:"lease_count"`
+	// LeasePredictedMB is the pooled charge of the ramping leases;
+	// LeasePeakSumMB is the plain sum of their predicted peaks (v4's charge).
+	LeasePredictedMB   int64   `json:"lease_predicted_mb"`
+	LeasePeakSumMB     int64   `json:"lease_peak_sum_mb"`
+	RampingLeaseCount  int     `json:"ramping_lease_count"`
+	LeasedRSSMB        int64   `json:"leased_rss_mb"`
+	LeasedRSSKnown     bool    `json:"leased_rss_known"`
+	InflightMB         int64   `json:"inflight_mb"`
+	HeadroomMB         int64   `json:"headroom_mb"`
+	SwapUsedMB         int64   `json:"swap_used_mb"`
+	SwapOutMBPerSecond float64 `json:"swap_out_mb_per_s"`
+	SwapThrashLatched  bool    `json:"swap_thrash_latched"`
 	// SwapThrashCause is the resident's attribution of a latched episode
 	// ("agent" or "external").
 	SwapThrashCause    string         `json:"swap_thrash_cause,omitempty"`
@@ -271,20 +309,27 @@ type MemoryHeadroom struct {
 // and the shadow decision refuses with no_sample.
 func computeHeadroom(snapshot Snapshot, haveSample bool, leases []WorkLeaseStatus, history peakRSSHistory, now time.Time) MemoryHeadroom {
 	headroom := MemoryHeadroom{Rule: HeadroomRuleVersion, SchemaVersion: headroomSchemaVersion, PeakRSSWindowHours: int(headroomHistoryWindow.Hours())}
+	var bands [][2]int64
 	for _, lease := range leases {
 		if lease.Parked {
 			continue
 		}
-		predicted := lease.PredictedPeakMB
+		predicted, median := lease.PredictedPeakMB, lease.PredictedMedianMB
 		if predicted <= 0 {
-			predicted, _ = history.predict(lease.Class, "", "")
+			predicted, median, _ = history.predictBand(lease.Class, "", "")
+		}
+		if median <= 0 || median > predicted {
+			// A lease recorded before v5 has no median: charge its peak.
+			median = predicted
 		}
 		headroom.LeaseCount++
 		if lease.StartedAt.IsZero() || now.Sub(lease.StartedAt) < headroomInflightRamp {
 			headroom.RampingLeaseCount++
-			headroom.LeasePredictedMB += predicted
+			headroom.LeasePeakSumMB += predicted
+			bands = append(bands, [2]int64{predicted, median})
 		}
 	}
+	headroom.LeasePredictedMB = pooledChargeMB(bands, headroomPoolRho)
 	if !haveSample || snapshot.PhysicalMemoryMB <= 0 {
 		return headroom
 	}
@@ -407,16 +452,18 @@ type shadowMemoryProbe struct {
 
 // prediction returns this operation's predicted peak from its most specific
 // scope.
-func (probe *shadowMemoryProbe) prediction(now time.Time) int64 {
+// prediction returns this operation's predicted peak and the median of the
+// same scope, for the lease record.
+func (probe *shadowMemoryProbe) prediction(now time.Time) (peak, median int64) {
 	if probe == nil {
-		return 0
+		return 0, 0
 	}
 	if probe.history == nil {
 		history := readPeakRSSHistory(probe.dir, now)
 		probe.history = &history
 	}
-	predicted, _ := probe.history.predict(probe.class, probe.workload, probe.key)
-	return predicted
+	peak, median, _ = probe.history.predictBand(probe.class, probe.workload, probe.key)
+	return peak, median
 }
 
 func (probe *shadowMemoryProbe) decide(admission Admission, leases []WorkLeaseStatus, now time.Time) ShadowMemoryDecision {

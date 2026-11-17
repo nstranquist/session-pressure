@@ -569,7 +569,7 @@ func resourceFit(leases []WorkLeaseRecord, record WorkLeaseRecord, sample workRe
 		if lease.ParkedAt != nil {
 			continue
 		}
-		statuses = append(statuses, WorkLeaseStatus{Class: lease.Class, StartedAt: lease.StartedAt, PredictedPeakMB: lease.PredictedPeakMB})
+		statuses = append(statuses, WorkLeaseStatus{Class: lease.Class, StartedAt: lease.StartedAt, PredictedPeakMB: lease.PredictedPeakMB, PredictedMedianMB: lease.PredictedMedianMB})
 	}
 	if len(statuses) == 0 {
 		return nil

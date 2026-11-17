@@ -399,7 +399,7 @@ func (monitor *Monitor) observeQueueStall(snapshot Snapshot) {
 		sample := workResourceFitSample{armed: true, snapshot: snapshot, ok: true}
 		leases := make([]WorkLeaseRecord, 0, len(status.Leases))
 		for _, lease := range status.Leases {
-			record := WorkLeaseRecord{Class: lease.Class, StartedAt: lease.StartedAt, PredictedPeakMB: lease.PredictedPeakMB}
+			record := WorkLeaseRecord{Class: lease.Class, StartedAt: lease.StartedAt, PredictedPeakMB: lease.PredictedPeakMB, PredictedMedianMB: lease.PredictedMedianMB}
 			if lease.Parked {
 				parkedAt := lease.StartedAt
 				record.ParkedAt = &parkedAt

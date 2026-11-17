@@ -100,7 +100,10 @@ type ResourceReplay struct {
 	// CPUThrottle scores the parallelism limit of throttle decisions against
 	// the busy cores that the same runs measured, by dimension.
 	CPUThrottle map[string]*ResourceReplayCPUThrottle `json:"cpu_throttle"`
-	Limitations []string                              `json:"limitations"`
+	// MemoryCharge scores the in-flight memory charge of ramping leases
+	// against the peaks those leases measured, by charge model.
+	MemoryCharge map[string]*ResourceReplayMemoryCharge `json:"memory_charge"`
+	Limitations  []string                               `json:"limitations"`
 }
 
 // ResourceReplayCPUThrottle asks whether a throttle step's parallelism limit
@@ -109,6 +112,32 @@ type ResourceReplay struct {
 // is what the work used. A run that averaged more busy cores than the limit
 // is counted slowed, and runtime x (busy cores / limit - 1) is a lower bound
 // on the time the limit adds: the average hides bursts above it.
+// ResourceReplayMemoryCharge asks how well a charge model covered the leases
+// that were still ramping when a start was evaluated. Realized is the sum of
+// those leases' measured peaks. That is at least what they used at once
+// (their peaks need not coincide), so undercharged counts are upper bounds.
+// Only starts with at least two ramping leases are scored, all with a
+// measured peak: with one lease every model charges its peak.
+type ResourceReplayMemoryCharge struct {
+	Scored              int     `json:"scored"`
+	Undercharged        int     `json:"undercharged"`
+	UnderchargedPercent float64 `json:"undercharged_percent"`
+	// ChargeOverRealized is charge / realized: above 1 holds memory that the
+	// leases did not use.
+	ChargeOverRealizedP50 float64 `json:"charge_over_realized_p50"`
+	ChargeOverRealizedP95 float64 `json:"charge_over_realized_p95"`
+	// ExcessMBP50 is the median of charge minus realized.
+	ExcessMBP50      int64 `json:"excess_mb_p50"`
+	MaxUnderchargeMB int64 `json:"max_undercharge_mb"`
+	ratios, excess   []float64
+}
+
+// Memory charge models scored by the replay.
+const (
+	MemoryChargeSumOfPeaks = "sum_of_peaks"
+	MemoryChargePooled     = "pooled"
+)
+
 type ResourceReplayCPUThrottle struct {
 	Decisions int `json:"decisions"`
 	// Measured counts decisions whose run completed with command CPU and ran
@@ -189,7 +218,8 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 			"a hold with no releasing sample inside one hour is counted as one hour and as unresolved",
 			"an elapsed shadow window, not this replay, is the evidence for promotion",
 			"cpu_throttle compares a limit with the run's average busy cores; bursts above the average are not seen, so slowed and added_seconds are lower bounds",
-		}, CPUThrottle: map[string]*ResourceReplayCPUThrottle{}}
+			"memory_charge sums measured peaks of ramping leases as realized use; peaks that did not coincide make it an upper bound on use at once",
+		}, CPUThrottle: map[string]*ResourceReplayCPUThrottle{}, MemoryCharge: map[string]*ResourceReplayMemoryCharge{}}
 	sorted := slices.Clone(events)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Timestamp.Before(sorted[j].Timestamp) })
 	observations := resourceObservations(telemetry, host)
@@ -197,9 +227,10 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 	// Lease intervals, from acquired to terminal. A lease with no terminal
 	// event stays open to the end of the trace.
 	type leaseInterval struct {
-		status  WorkLeaseStatus
-		session string
-		end     time.Time
+		status        WorkLeaseStatus
+		session       string
+		end           time.Time
+		workload, key string
 	}
 	var intervals []leaseInterval
 	intervalIndex := map[string]int{}
@@ -211,7 +242,7 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 		switch {
 		case event.Event == WorkEventAcquired:
 			intervalIndex[event.OperationID] = len(intervals)
-			intervals = append(intervals, leaseInterval{session: event.SessionDigest, status: WorkLeaseStatus{OperationID: event.OperationID,
+			intervals = append(intervals, leaseInterval{session: event.SessionDigest, workload: event.Workload, key: event.PlacementKey, status: WorkLeaseStatus{OperationID: event.OperationID,
 				Class: event.Class, Weight: event.Weight, StartedAt: event.Timestamp, PredictedPeakMB: event.ShadowPredictedPeakMB}})
 		case isWorkTerminalEvent(event.Event):
 			if index, ok := intervalIndex[event.OperationID]; ok && intervals[index].end.IsZero() {
@@ -221,6 +252,9 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 	}
 	// leasesAt returns the leases running at the instant, without operation.
 	// intervals is in start order, so the scan stops at the first later start.
+	// history is the cost history as of the start being evaluated. A lease
+	// rebuilt from events gets the median of its scope from it (headroom v5).
+	var history peakRSSHistory
 	leasesAt := func(at time.Time, operation string) ([]WorkLeaseStatus, map[string]string) {
 		var leases []WorkLeaseStatus
 		owners := map[string]string{}
@@ -231,8 +265,10 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 			if interval.status.OperationID == operation || (!interval.end.IsZero() && !interval.end.After(at)) {
 				continue
 			}
-			leases = append(leases, interval.status)
-			owners[interval.status.OperationID] = interval.session
+			lease := interval.status
+			_, lease.PredictedMedianMB, _ = history.predictBand(lease.Class, interval.workload, interval.key)
+			leases = append(leases, lease)
+			owners[lease.OperationID] = interval.session
 		}
 		return leases, owners
 	}
@@ -243,7 +279,6 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 	}
 	classes := map[WorkClass]*classTally{}
 	var holds []int64
-	var history peakRSSHistory
 	var historyAt time.Time
 	historyStart, observationIndex := 0, 0
 	for i, event := range sorted {
@@ -282,6 +317,34 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 			return decideResourceAdmission(computeResourceHeadroom(snapshot, true, leases, history, at), asked)
 		}
 		decision := decideAt(observations[observationIndex], event.Timestamp)
+		// Memory charge of the leases still ramping at this start.
+		var bands [][2]int64
+		var sumOfPeaks, realized int64
+		allMeasured := true
+		for _, interval := range intervals {
+			lease := interval.status
+			if lease.StartedAt.After(event.Timestamp) {
+				break
+			}
+			if lease.OperationID == event.OperationID || (!interval.end.IsZero() && !interval.end.After(event.Timestamp)) ||
+				event.Timestamp.Sub(lease.StartedAt) >= headroomInflightRamp {
+				continue
+			}
+			run, ok := completed[lease.OperationID]
+			peak := commandMemoryPeakMB(run)
+			if !ok || peak < headroomMinMeasuredPeakMB {
+				allMeasured = false
+				break
+			}
+			predicted, median, _ := history.predictBand(lease.Class, interval.workload, interval.key)
+			bands = append(bands, [2]int64{predicted, median})
+			sumOfPeaks += predicted
+			realized += int64(peak + 0.5)
+		}
+		if allMeasured && len(bands) >= 2 && realized > 0 {
+			replay.scoreMemoryCharge(MemoryChargeSumOfPeaks, sumOfPeaks, realized)
+			replay.scoreMemoryCharge(MemoryChargePooled, pooledChargeMB(bands, headroomPoolRho), realized)
+		}
 
 		replay.Evaluated++
 		replay.Steps[decision.Step]++
@@ -346,6 +409,9 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 	for _, score := range replay.CPUThrottle {
 		score.finish()
 	}
+	for _, score := range replay.MemoryCharge {
+		score.finish()
+	}
 	return replay
 }
 
@@ -374,6 +440,31 @@ func (replay *ResourceReplay) scoreCPUThrottle(decision ShadowResourceDecision, 
 	score.RuntimeSecondsTotal += runtime
 	score.AddedSecondsTotal += added
 	score.ratios, score.added = append(score.ratios, ratio), append(score.added, added)
+}
+
+func (replay *ResourceReplay) scoreMemoryCharge(model string, charge, realized int64) {
+	score := replay.MemoryCharge[model]
+	if score == nil {
+		score = &ResourceReplayMemoryCharge{}
+		replay.MemoryCharge[model] = score
+	}
+	score.Scored++
+	if realized > charge {
+		score.Undercharged++
+		score.MaxUnderchargeMB = max(score.MaxUnderchargeMB, realized-charge)
+	}
+	score.ratios = append(score.ratios, float64(charge)/float64(realized))
+	score.excess = append(score.excess, float64(charge-realized))
+}
+
+func (score *ResourceReplayMemoryCharge) finish() {
+	if score.Scored == 0 {
+		return
+	}
+	score.UnderchargedPercent = roundTenth(100 * float64(score.Undercharged) / float64(score.Scored))
+	score.ChargeOverRealizedP50 = roundHundredth(percentileFloat(score.ratios, 50))
+	score.ChargeOverRealizedP95 = roundHundredth(percentileFloat(score.ratios, 95))
+	score.ExcessMBP50 = int64(math.Round(percentileFloat(score.excess, 50)))
 }
 
 func (score *ResourceReplayCPUThrottle) finish() {

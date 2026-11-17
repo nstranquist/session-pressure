@@ -141,3 +141,43 @@ func TestReplayResourceHeadroomScoresTheCPUThrottle(t *testing.T) {
 		t.Fatalf("added = %v s of %v s (%v%%)", score.AddedSecondsTotal, score.RuntimeSecondsTotal, score.AddedPercent)
 	}
 }
+
+// The memory-charge score compares the old sum of peaks and the pooled
+// charge with the peaks the ramping leases measured.
+func TestReplayResourceHeadroomScoresTheMemoryCharge(t *testing.T) {
+	start := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+	host := ResourceReplayHost{PhysicalMemoryMB: 65536, LogicalCPUs: 10}
+	var events []WorkEvent
+	// History: test runs peak at 500 MB, one in ten at 5,000 MB.
+	for i := range 20 {
+		at := start.Add(-time.Duration(90-i) * time.Minute)
+		id := string(rune('a' + i))
+		run := replayCompleted(at.Add(time.Minute), "h"+id, WorkClassTest)
+		run.CommandTreePeakRSSMB = 500
+		if i%10 == 0 {
+			run.CommandTreePeakRSSMB = 5000
+		}
+		events = append(events, replayAcquired(at, "h"+id, WorkClassTest, 0), run)
+	}
+	// Two leases ramp at 600 MB each when the third starts.
+	for _, op := range []string{"r1", "r2"} {
+		run := replayCompleted(start.Add(5*time.Minute), op, WorkClassTest)
+		run.CommandTreePeakRSSMB = 600
+		events = append(events, replayAcquired(start.Add(time.Minute), op, WorkClassTest, 0), run)
+	}
+	events = append(events, replayAcquired(start.Add(2*time.Minute), "c", WorkClassTest, 0))
+	telemetry := []TelemetryEvent{replayHeartbeat(start, LevelNormal, 80, 10, false)}
+	replay := ReplayResourceHeadroom(events, telemetry, host, 2, start)
+
+	sum, pooled := replay.MemoryCharge[MemoryChargeSumOfPeaks], replay.MemoryCharge[MemoryChargePooled]
+	if sum == nil || pooled == nil {
+		t.Fatalf("memory charge scores = %v", replay.MemoryCharge)
+	}
+	// Only the third start has two leases ramping beside it.
+	if sum.Scored != 1 || pooled.Scored != 1 || sum.Undercharged != 0 || pooled.Undercharged != 0 {
+		t.Fatalf("sum = %+v pooled = %+v", sum, pooled)
+	}
+	if pooled.ChargeOverRealizedP50 >= sum.ChargeOverRealizedP50 || pooled.ChargeOverRealizedP50 < 1 {
+		t.Fatalf("pooled %.2f should sit between realized and the sum of peaks %.2f", pooled.ChargeOverRealizedP50, sum.ChargeOverRealizedP50)
+	}
+}

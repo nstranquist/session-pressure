@@ -163,6 +163,8 @@ type WorkLeaseRecord struct {
 	ScheduleRunID      string    `json:"schedule_run_id,omitempty"`
 	AgentKind          string    `json:"agent_kind,omitempty"`
 	PredictedPeakMB    int64     `json:"predicted_peak_mb,omitempty"`
+	// PredictedMedianMB is the median peak of the same scope (headroom v5).
+	PredictedMedianMB int64 `json:"predicted_median_mb,omitempty"`
 	// ParkedAt is set while the leased process group has been idle long enough
 	// that holding its weight only starves the queue. A parked lease is charged
 	// zero weight; it is re-charged the moment the group burns CPU again. An
@@ -195,8 +197,10 @@ type WorkLeaseStatus struct {
 	Parked   bool       `json:"parked,omitempty"`
 	ParkedAt *time.Time `json:"parked_at,omitempty"`
 	// PredictedPeakMB is the operation's memory prediction at admission; 0
-	// for leases from older helpers.
-	PredictedPeakMB int64 `json:"predicted_peak_mb,omitempty"`
+	// for leases from older helpers. PredictedMedianMB is the median of the
+	// same scope; 0 for leases from helpers before headroom v5.
+	PredictedPeakMB   int64 `json:"predicted_peak_mb,omitempty"`
+	PredictedMedianMB int64 `json:"predicted_median_mb,omitempty"`
 }
 
 // WorkWaiterRecord is private durable queue state. Like leases, it stores a
@@ -417,6 +421,9 @@ type WorkCoordinator struct {
 	// broad class figure (a 15 MB restic backup charged 3.3 GB as "heavy",
 	// 2026-11-16).
 	PredictedPeakMB int64
+	// PredictedMedianMB is the median of the same scope. Memory headroom
+	// pools the charges of ramping leases with it (work_headroom.go).
+	PredictedMedianMB int64
 	// ResourceFit arms the memory fit check under the state lock (resource
 	// admission on an enabled policy). The admission gate decides before the
 	// lease; this check closes the window in which concurrent starts all see
@@ -1429,7 +1436,7 @@ func (coordinator *WorkCoordinator) status(state workState, prunedLeases, pruned
 		leases = append(leases, WorkLeaseStatus{
 			ID: record.ID, OperationID: record.OperationID, Class: record.Class, Weight: record.Weight,
 			PID: record.PID, StartedAt: record.StartedAt, AgeMS: age.Milliseconds(), Review: review, ReviewReason: reason,
-			Parked: record.ParkedAt != nil, ParkedAt: record.ParkedAt, PredictedPeakMB: record.PredictedPeakMB,
+			Parked: record.ParkedAt != nil, ParkedAt: record.ParkedAt, PredictedPeakMB: record.PredictedPeakMB, PredictedMedianMB: record.PredictedMedianMB,
 		})
 	}
 	waiters := make([]WorkWaiterStatus, 0, len(state.Waiters))
@@ -1865,7 +1872,7 @@ func (coordinator *WorkCoordinator) newLeaseRecord(class WorkClass, operationID 
 		PID: coordinator.PID, OwnerIdentity: ownerIdentity,
 		SupervisorPID: coordinator.PID, SupervisorIdentity: ownerIdentity, QueuedAt: now, StartedAt: now,
 		OriginKind: stamp.Kind, ScheduleID: stamp.ScheduleID, ScheduleRunID: stamp.ScheduleRunID, AgentKind: stamp.AgentKind,
-		PredictedPeakMB: max(coordinator.PredictedPeakMB, 0),
+		PredictedPeakMB: max(coordinator.PredictedPeakMB, 0), PredictedMedianMB: max(coordinator.PredictedMedianMB, 0),
 	}, nil
 }
 

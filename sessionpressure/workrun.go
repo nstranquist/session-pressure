@@ -1293,7 +1293,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	// local start because the shadow would have sent the work away.
 	liveResource := &shadowResourceProbe{memory: shadowMemory, session: sessionDigest, owners: shadowResource.owners}
 	coordinator.ResourceFit = coordinator.Limits.ResourceAdmission() && configuredWorkPolicyEnabled(coordinator.Dir)
-	coordinator.PredictedPeakMB = shadowMemory.prediction(time.Now())
+	coordinator.PredictedPeakMB, coordinator.PredictedMedianMB = shadowMemory.prediction(time.Now())
 	if err := appendEvent(queuedEvent); err != nil {
 		return 1, fmt.Errorf("persist queued work event: %w", err)
 	}
