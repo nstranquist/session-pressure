@@ -289,6 +289,18 @@ type DiskWriteObserver struct {
 	now           func() time.Time
 	allowShort    bool
 
+	// processPassInterval spaces the per-process attribution pass. The
+	// device and swap counters stay on every tick; the per-process pass (one
+	// rusage call per pid, about 1,600 pids) was 26% of the resident's idle
+	// CPU at a 15s tick (WORK-1141). Zero attributes on every tick.
+	processPassInterval   time.Duration
+	lastProcessPassAt     time.Time
+	lastProcessErr        error
+	lastProcessTotal      int
+	lastProcessAccessible int
+	processWindowValid    bool
+	pendingSwapBytes      uint64
+
 	previousDevice     diskDeviceCounter
 	previousSwap       swapIOCounter
 	previousProcesses  map[diskProcessKey]diskProcessCounter
@@ -615,7 +627,12 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 		return report, nil, nil
 	}
 	device, deviceErr := observer.deviceSource(ctx)
-	processes, processErr := observer.processSource(ctx)
+	// A device failure still reports whether process attribution works.
+	processPass := deviceErr != nil || observer.processPassDue(device, at)
+	processes, processErr := diskProcessSnapshot{}, error(nil)
+	if processPass {
+		processes, processErr = observer.processSource(ctx)
+	}
 	swap, swapErr := swapIOCounter{}, errors.New("swap I/O source unavailable")
 	if observer.swapSource != nil {
 		swap, swapErr = observer.swapSource(ctx)
@@ -629,6 +646,7 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 		if processErr != nil {
 			summary.Reasons = append(summary.Reasons, "process_attribution_unavailable")
 		}
+		observer.lastProcessPassAt = time.Time{}
 		report := DiskWriteReport{Summary: summary, Writers: []DiskWriter{}}
 		transition := observer.transitionLocked(report.Summary)
 		observer.lastReport = report
@@ -662,38 +680,20 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	if hasPrevious {
 		observer.volumePoints = append(observer.volumePoints, diskVolumePoint{At: at, Duration: elapsed, Bytes: deviceDelta, SwapBytes: swapDelta, Scored: validWindow, Gap: !validWindow})
 	}
-
-	processDeltas := make([]diskProcessDelta, 0, len(processes.Counters))
-	currentProcesses := make(map[diskProcessKey]diskProcessCounter, len(processes.Counters))
-	for _, process := range processes.Counters {
-		key := diskProcessKey{PID: process.PID, StartID: process.StartID}
-		if owner, ok := observer.ownership[key]; ok {
-			if owner.Executable != "" && owner.Executable != "unknown" {
-				process.Executable = owner.Executable
-			}
-			process.AgentOwned = process.AgentOwned || owner.AgentOwned
-		}
-		process.Executable = privacySafeExecutable(process.Executable)
-		currentProcesses[key] = process
-		previous, ok := observer.previousProcesses[key]
-		if !ok || process.BytesWritten < previous.BytesWritten || !validWindow {
-			continue
-		}
-		delta := process.BytesWritten - previous.BytesWritten
-		if delta == 0 {
-			continue
-		}
-		processDeltas = append(processDeltas, diskProcessDelta{Key: key, Executable: process.Executable, Bytes: delta, AgentOwned: process.AgentOwned})
-	}
-	if swapDelta > 0 {
-		processDeltas = append(processDeltas, diskProcessDelta{Key: diskProcessKey{}, Executable: diskWriteSwapExecutable, Bytes: swapDelta})
-	}
+	// Process counters are compared only across an unbroken run of valid
+	// device ticks; one gap since the last pass rebases them.
+	observer.processWindowValid = observer.processWindowValid && validWindow
 	if hasPrevious {
-		observer.writerPoints = append(observer.writerPoints, diskWriterPoint{At: at, Duration: elapsed, Deltas: processDeltas})
+		observer.pendingSwapBytes = saturatingAddUint64(observer.pendingSwapBytes, swapDelta)
+	} else {
+		observer.pendingSwapBytes = 0
+	}
+	var passDeltas []diskProcessDelta
+	if processPass {
+		passDeltas = observer.processPassLocked(at, elapsed, hasPrevious, processes, processErr)
 	}
 	observer.previousAt = at
 	observer.previousDevice = device
-	observer.previousProcesses = currentProcesses
 	observer.prunePointsLocked(at)
 
 	window15 := observer.windowBytesLocked(at.Add(-diskWriteWindow), true)
@@ -704,7 +704,11 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	}
 	swapDominant := swapShare >= diskWriteSwapDominantShare
 	bytes24h := observer.windowBytesLocked(at.Add(-diskWriteHistoryWindow), false)
-	writers, writerTotal, writerAvailable := observer.aggregateWritersLocked(elapsed)
+	latestWriterDuration := time.Duration(0)
+	if count := len(observer.writerPoints); count > 0 {
+		latestWriterDuration = observer.writerPoints[count-1].Duration
+	}
+	writers, writerTotal, writerAvailable := observer.aggregateWritersLocked(latestWriterDuration)
 	contextName := observer.context
 	if contextName == "" {
 		contextName = "uncoordinated"
@@ -749,8 +753,8 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 		accepted = false
 	}
 	observer.recordHourLocked(at, state, p99, deviceDelta, swapDelta, device, hasPrevious, validWindow)
-	if hasPrevious && validWindow {
-		observer.recordHourWritersLocked(processDeltas)
+	if len(passDeltas) > 0 {
+		observer.recordHourWritersLocked(passDeltas)
 	}
 	if accepted {
 		histogram.add(window15, at)
@@ -765,8 +769,8 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 		UnscoredGapBytes: observer.windowGapBytesLocked(at.Add(-diskWriteHistoryWindow)), BaselineP99Bytes15m: p99, BaselineRatio: roundRatio(ratio),
 		BaselineSamples: histogram.Count, DeviceCount: device.DeviceCount,
 		SwapOutBytes15m: swap15, SwapShare15m: roundRatio(swapShare),
-		TotalPIDCount: processes.TotalPIDCount, AccessiblePIDCount: processes.AccessibleCount,
-		AttributionAvailable: processErr == nil, WriterAvailableCount: writerAvailable,
+		TotalPIDCount: observer.lastProcessTotal, AccessiblePIDCount: observer.lastProcessAccessible,
+		AttributionAvailable: observer.lastProcessErr == nil, WriterAvailableCount: writerAvailable,
 	}
 	if hasPrevious && elapsed > 0 {
 		summary.MeasurementWindowSeconds = elapsed.Seconds()
@@ -793,7 +797,7 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	if p99 == 0 {
 		summary.Reasons = append(summary.Reasons, "nonzero_baseline_insufficient")
 	}
-	if processErr != nil {
+	if observer.lastProcessErr != nil {
 		summary.Reasons = append(summary.Reasons, "process_attribution_unavailable")
 	}
 	if swapErr != nil {
@@ -805,7 +809,7 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	if burst {
 		summary.Reasons = append(summary.Reasons, "absolute_write_burst")
 	}
-	if processes.AccessibleCount < processes.TotalPIDCount {
+	if observer.lastProcessAccessible < observer.lastProcessTotal {
 		summary.Reasons = append(summary.Reasons, "process_attribution_partial")
 	}
 	summary.MaintenanceErrors = observer.maintenanceCodesLocked()
@@ -814,6 +818,83 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	alert := observer.alertLocked(summary)
 	observer.lastReport = report
 	return cloneDiskWriteReport(report), transition, alert
+}
+
+// diskWriteProcessPassInterval is the resident's attribution cadence when
+// writes are quiet. Writers are still named on every tick while the state is
+// unusual or high, or when one tick writes diskWriteProcessPassBytes.
+const (
+	diskWriteProcessPassInterval = time.Minute
+	diskWriteProcessPassBytes    = diskWriteBurstBytes / 8
+)
+
+func (observer *DiskWriteObserver) processPassDue(device diskDeviceCounter, at time.Time) bool {
+	observer.mu.RLock()
+	defer observer.mu.RUnlock()
+	last := observer.lastProcessPassAt
+	if observer.processPassInterval <= 0 || last.IsZero() || !at.After(last) {
+		return true
+	}
+	// Half a tick of slack keeps ticker jitter from pushing a due pass one
+	// whole tick late.
+	slack := time.Duration(max(1, observer.policy.SampleIntervalSeconds)) * time.Second / 2
+	if at.Add(slack).Sub(last) >= observer.processPassInterval {
+		return true
+	}
+	switch observer.lastReport.Summary.State {
+	case DiskWriteStateUnusual, DiskWriteStateHigh:
+		return true
+	}
+	previous := observer.previousDevice
+	return !observer.previousAt.IsZero() && device.Identity == previous.Identity && device.BytesWritten >= previous.BytesWritten &&
+		device.BytesWritten-previous.BytesWritten >= diskWriteProcessPassBytes
+}
+
+// processPassLocked compares the per-process counters with the previous pass
+// and appends one writer point that covers the whole span since that pass,
+// swap included. It returns the attributed deltas.
+func (observer *DiskWriteObserver) processPassLocked(at time.Time, elapsed time.Duration, hasPrevious bool, processes diskProcessSnapshot, processErr error) []diskProcessDelta {
+	usable := observer.processWindowValid
+	duration := elapsed
+	if usable && !observer.lastProcessPassAt.IsZero() {
+		duration = at.Sub(observer.lastProcessPassAt)
+	}
+	deltas := make([]diskProcessDelta, 0, len(processes.Counters))
+	current := make(map[diskProcessKey]diskProcessCounter, len(processes.Counters))
+	for _, process := range processes.Counters {
+		key := diskProcessKey{PID: process.PID, StartID: process.StartID}
+		if owner, ok := observer.ownership[key]; ok {
+			if owner.Executable != "" && owner.Executable != "unknown" {
+				process.Executable = owner.Executable
+			}
+			process.AgentOwned = process.AgentOwned || owner.AgentOwned
+		}
+		process.Executable = privacySafeExecutable(process.Executable)
+		current[key] = process
+		previous, ok := observer.previousProcesses[key]
+		if !ok || process.BytesWritten < previous.BytesWritten || !usable {
+			continue
+		}
+		delta := process.BytesWritten - previous.BytesWritten
+		if delta == 0 {
+			continue
+		}
+		deltas = append(deltas, diskProcessDelta{Key: key, Executable: process.Executable, Bytes: delta, AgentOwned: process.AgentOwned})
+	}
+	if observer.pendingSwapBytes > 0 {
+		deltas = append(deltas, diskProcessDelta{Key: diskProcessKey{}, Executable: diskWriteSwapExecutable, Bytes: observer.pendingSwapBytes})
+	}
+	observer.previousProcesses = current
+	observer.pendingSwapBytes = 0
+	observer.processWindowValid = true
+	observer.lastProcessPassAt = at
+	observer.lastProcessErr = processErr
+	observer.lastProcessTotal, observer.lastProcessAccessible = processes.TotalPIDCount, processes.AccessibleCount
+	if !hasPrevious {
+		return nil
+	}
+	observer.writerPoints = append(observer.writerPoints, diskWriterPoint{At: at, Duration: duration, Deltas: deltas})
+	return deltas
 }
 
 func (observer *DiskWriteObserver) prunePointsLocked(at time.Time) {
@@ -1307,6 +1388,11 @@ func (observer *DiskWriteObserver) Run(ctx context.Context, onTransition func(Di
 		return nil
 	}
 	interval := time.Duration(observer.policy.SampleIntervalSeconds) * time.Second
+	observer.mu.Lock()
+	if interval < diskWriteProcessPassInterval {
+		observer.processPassInterval = diskWriteProcessPassInterval
+	}
+	observer.mu.Unlock()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	defer func() {

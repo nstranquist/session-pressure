@@ -117,10 +117,38 @@ the signal, and a second signal during a profile is ignored. Signal only a
 resident whose `source_revisions.installed_helper` includes this change: an
 older helper has no handler, and the default action of `SIGUSR2` ends it.
 
+## Live profile and the disk-write fix (2026-11-17 18:40Z)
+
+A 600s `SIGUSR2` profile of the installed resident (e5be021) read 1910ms of
+CPU, 0.32%. The largest costs:
+
+| Cost | Share | Cadence |
+| --- | --- | --- |
+| Disk-write observer, per-process pass (`pid_rusage` on about 1,640 pids) | 26% | every 15s disk tick |
+| Pressure sample | 13.6% | sampler cadence |
+| Wrapper-interrupt recount (`attachWrapperInterruptToSummary`) | 9.4% | each heartbeat, grows through the day |
+| Browser enforcement | 7.3% | 15s in browser auto mode |
+| GC and scheduler | most of the rest | |
+
+The disk-write observer runs on its own 15s ticker, apart from the browser
+cadence, and was the largest single cost. Fix: the device and swap counters
+stay on every tick, and the per-process attribution pass runs once a minute
+(`diskWriteProcessPassInterval`). The pass also runs on every tick while the
+state is unusual or high, when one tick writes 128 MiB or more, after a
+device error, and on the first tick. The pass writer point covers the whole
+span since the previous pass, so no bytes are lost, and swap bytes from the
+skipped ticks go into it. A gap on any tick since the previous pass rebases the
+process counters. Callers other than the resident `Run` loop (the live report,
+tests) keep a pass on every tick. Tests:
+`sessionpressure/disk_write_process_pass_test.go`.
+
+Cost: writer rates and names can be up to a minute old while writes are quiet.
+The 15-minute window and the burst check use the device counter and do not
+change.
+
 ## Open
 
-- Live duty is 0.30% against 0.25%. Next: profile the installed resident in
-  place (`kill -USR2`), then fix the largest live-only cost it shows.
+- Measure live duty after the disk-write fix is installed, against 0.25%.
 - `automatedBrowserProcesses` still scans every process with arguments on each
   sample. Reusing the sampler's process list would remove that scan.
 - `attachWrapperInterruptToSummary` re-parses the day's work-event shards on
