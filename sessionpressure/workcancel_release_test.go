@@ -35,7 +35,7 @@ func TestCancelWorkCooperativeRelease(t *testing.T) {
 			if err := lease.Release(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-		case <-time.After(15 * time.Second):
+		case <-time.After(testWatchdog):
 			t.Fatal("cancel signal did not arrive")
 		}
 		return
@@ -51,7 +51,7 @@ func TestCancelWorkCooperativeRelease(t *testing.T) {
 	go func() { done <- child.Wait() }()
 	defer func() { _ = child.Process.Kill() }()
 	var operationID []byte
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(testWatchdog)
 	for time.Now().Before(deadline) {
 		raw, err := os.ReadFile(filepath.Join(dir, "ready"))
 		if err == nil {
@@ -76,7 +76,7 @@ func TestCancelWorkCooperativeRelease(t *testing.T) {
 		if err != nil {
 			t.Fatalf("helper failed to release cooperatively: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(testWatchdog):
 		t.Fatal("helper did not exit")
 	}
 	// Missing operations must still fail initial inspection.

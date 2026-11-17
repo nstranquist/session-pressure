@@ -101,7 +101,7 @@ func TestRunWorkCommandRunsNestedInlineUnderParentLease(t *testing.T) {
 	t.Cleanup(func() { workNestedExec = previousExec })
 	var stderr bytes.Buffer
 	code, err := RunWorkCommandWithExpressReuse(coordinator,
-		WorkRunOptions{Class: WorkClassBuild, Wait: 50 * time.Millisecond, Command: []string{"true"}},
+		WorkRunOptions{Class: WorkClassBuild, Wait: testWaitNotUnderTest, Command: []string{"true"}},
 		func() Admission { return Admission{Allowed: true, Level: LevelNormal} },
 		time.Millisecond, WorkRunStreams{Stdout: io.Discard, Stderr: &stderr})
 	if code != 0 || err != nil {
@@ -125,7 +125,7 @@ func TestRunWorkCommandExportsOperationToChild(t *testing.T) {
 	t.Setenv(WorkOperationEnv, "stale-outer-operation")
 	var stdout, stderr bytes.Buffer
 	code, err := RunWorkCommand(coordinator,
-		WorkRunOptions{Class: WorkClassExpressTest, Wait: time.Second, Command: []string{"/bin/sh", "-c", `printf %s "$` + WorkOperationEnv + `"`}},
+		WorkRunOptions{Class: WorkClassExpressTest, Wait: testWaitNotUnderTest, Command: []string{"/bin/sh", "-c", `printf %s "$` + WorkOperationEnv + `"`}},
 		func() Admission { return Admission{Allowed: true, Level: LevelNormal} },
 		time.Millisecond,
 		WorkRunStreams{Stdout: &stdout, Stderr: &stderr, CommandFactory: func(target string, args []string) (*exec.Cmd, io.WriteCloser, error) {

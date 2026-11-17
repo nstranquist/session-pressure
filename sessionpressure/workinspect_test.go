@@ -84,7 +84,7 @@ func TestCancelWorkStopsSetpgidChildAndPrunesLease(t *testing.T) {
 	go func() { done <- child.Wait() }()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(testWatchdog):
 		_ = child.Process.Kill()
 		t.Fatalf("pid %d still running after cancel signaled=%v", pid, result.SignaledPIDs)
 	}

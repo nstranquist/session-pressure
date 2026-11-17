@@ -44,12 +44,14 @@ func TestB(t *testing.T) {
 			finished := make(chan result, 1)
 			output := &profileExitOutput{ready: make(chan struct{}, 1)}
 			go func() {
-				timeout := "10s"
+				// Only the timeout mode asserts the go test deadline. Elsewhere
+				// it must outlast a slow host, or it races the signal.
+				timeout := "10m"
 				if mode == "timeout" {
 					timeout = "200ms"
 				}
 				code, err := RunWorkCommand(NewWorkCoordinator(state, testWorkLimits()),
-					WorkRunOptions{Class: WorkClassTest, Wait: 20 * time.Second, ProfileGoTest: true, Command: []string{"go", "test", "-json", "-count=1", "-timeout=" + timeout, "."}},
+					WorkRunOptions{Class: WorkClassTest, Wait: testWaitNotUnderTest, ProfileGoTest: true, Command: []string{"go", "test", "-json", "-count=1", "-timeout=" + timeout, "."}},
 					func() Admission { return Admission{Allowed: true, Level: LevelNormal} }, time.Millisecond,
 					WorkRunStreams{Stdout: output, Stderr: io.Discard, Signals: signals, CommandFactory: func(target string, args []string) (*exec.Cmd, io.WriteCloser, error) {
 						cmd := exec.Command(target, args...)
@@ -59,12 +61,12 @@ func TestB(t *testing.T) {
 				finished <- result{code, err}
 			}()
 			if mode == "signal" {
-				waitForTestFile(t, marker, 15*time.Second)
+				waitForTestFile(t, marker)
 				// The child marker precedes the go command forwarding JSON.
 				// Wait for a completed timing event before testing persistence.
 				select {
 				case <-output.ready:
-				case <-time.After(15 * time.Second):
+				case <-time.After(testWatchdog):
 					t.Fatal("go test did not forward the completed timing event")
 				}
 				signals <- syscall.SIGTERM
@@ -78,7 +80,7 @@ func TestB(t *testing.T) {
 				if got.err != nil || got.code != want {
 					t.Fatalf("exit=%d want=%d err=%v", got.code, want, got.err)
 				}
-			case <-time.After(20 * time.Second):
+			case <-time.After(testWatchdog):
 				t.Fatal("profiled command did not finish")
 			}
 			paths, err := filepath.Glob(filepath.Join(state, "work-profiles", "*.json"))

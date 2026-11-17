@@ -131,7 +131,7 @@ func TestRunWorkCommandRecordsCommandCPUOnTerminalEvent(t *testing.T) {
 	coordinator := NewWorkCoordinator(dir, limits)
 	admission := func() Admission { return Admission{Allowed: true, Level: LevelNormal, Snapshot: &Snapshot{}} }
 	code, err := RunWorkCommand(coordinator,
-		WorkRunOptions{Class: WorkClassBuild, Wait: 5 * time.Second, Progress: WorkProgressQuiet,
+		WorkRunOptions{Class: WorkClassBuild, Wait: testWaitNotUnderTest, Progress: WorkProgressQuiet,
 			Command: []string{"/bin/sh", "-c", "i=0; while [ $i -lt 100000 ]; do i=$((i+1)); done"}},
 		admission, time.Millisecond, WorkRunStreams{Stdout: io.Discard, Stderr: io.Discard,
 			CommandFactory: func(target string, args []string) (*exec.Cmd, io.WriteCloser, error) {

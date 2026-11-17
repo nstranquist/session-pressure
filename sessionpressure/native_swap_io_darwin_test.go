@@ -5,6 +5,7 @@ package sessionpressure
 import (
 	"context"
 	"encoding/binary"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -92,14 +93,14 @@ func TestNativeRusageCPUTimeIsNanoseconds(t *testing.T) {
 	if err := loadDarwinLibproc(); err != nil {
 		t.Fatal(err)
 	}
-	spinner := exec.Command("/usr/bin/yes")
-	if err := spinner.Start(); err != nil {
-		t.Skipf("spinner unavailable: %v", err)
-	}
-	defer func() { _ = spinner.Process.Kill(); _ = spinner.Wait() }()
-	read := func() uint64 {
+	// Compare libproc's converted CPU time of this process with getrusage,
+	// which reports the same quantity in microseconds. Both read this
+	// process's own CPU, so host load changes how long the spin takes, not
+	// the ratio. The unconverted Apple Silicon tick count reads about 0.024.
+	pid := int32(os.Getpid())
+	libproc := func() uint64 {
 		var usage darwinRusageInfoV0
-		if darwinLibproc.pidRusage(int32(spinner.Process.Pid), darwinRusageInfoVersion0, &usage) != 0 {
+		if darwinLibproc.pidRusage(pid, darwinRusageInfoVersion0, &usage) != 0 {
 			t.Fatal("proc_pid_rusage failed")
 		}
 		total, ok := darwinRusageCPUTimeNS(usage.UserTime, usage.SystemTime)
@@ -108,14 +109,23 @@ func TestNativeRusageCPUTimeIsNanoseconds(t *testing.T) {
 		}
 		return total
 	}
-	time.Sleep(100 * time.Millisecond)
-	before, start := read(), time.Now()
-	time.Sleep(500 * time.Millisecond)
-	cores := float64(read()-before) / float64(time.Since(start).Nanoseconds())
-	// A loaded host can starve the spinner, but never by 40x; the unconverted
-	// tick count reads ~0.024 here, so 0.2 cleanly separates the two.
-	if cores < 0.2 || cores > 1.3 {
-		t.Fatalf("spinner used %.3f cores per wall second; rusage unit conversion is wrong", cores)
+	getrusage := func() int64 {
+		var usage syscall.Rusage
+		if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {
+			t.Fatal(err)
+		}
+		return usage.Utime.Nano() + usage.Stime.Nano()
+	}
+	beforeLibproc, beforeRusage := libproc(), getrusage()
+	var work uint64
+	for getrusage()-beforeRusage < int64(200*time.Millisecond) {
+		for range 1 << 16 {
+			work = work*1664525 + 1013904223
+		}
+	}
+	ratio := float64(libproc()-beforeLibproc) / float64(getrusage()-beforeRusage)
+	if ratio < 0.5 || ratio > 2 {
+		t.Fatalf("libproc CPU / getrusage CPU = %.3f (work=%d); rusage unit conversion is wrong", ratio, work)
 	}
 }
 
@@ -138,33 +148,57 @@ func TestDarwinMachTicksToNS(t *testing.T) {
 
 // A sleeping group must read as idle and a spinning group as working, with
 // reaped children counted, so parking never releases weight held by work.
+// The busy case is condition-driven: it waits for an amount of CPU, not for a
+// wall-clock window, so a loaded host only makes it slower.
 func TestNativeProcessGroupCPUSeparatesIdleFromWork(t *testing.T) {
-	measure := func(script string) float64 {
+	start := func(script string, env ...string) *exec.Cmd {
 		command := exec.Command("/bin/sh", "-c", script)
+		command.Env = append(os.Environ(), env...)
 		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := command.Start(); err != nil {
 			t.Skipf("shell unavailable: %v", err)
 		}
-		defer func() { _ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL); _ = command.Wait() }()
-		time.Sleep(100 * time.Millisecond)
-		before, err := nativeProcessGroupActivity(command.Process.Pid)
+		t.Cleanup(func() { _ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL); _ = command.Wait() })
+		return command
+	}
+	activity := func(pgid int) uint64 {
+		t.Helper()
+		got, err := nativeProcessGroupActivity(pgid)
 		if err != nil {
 			t.Fatal(err)
 		}
-		start := time.Now()
-		time.Sleep(600 * time.Millisecond)
-		after, err := nativeProcessGroupActivity(command.Process.Pid)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return float64(after.CPUNS-before.CPUNS) / float64(time.Since(start).Nanoseconds())
+		return got.CPUNS
 	}
-	if idle := measure("sleep 30"); idle >= workIdleMaxCores {
-		t.Fatalf("sleeping group used %.4f cores", idle)
+
+	idle := start("sleep 600")
+	before, began := activity(idle.Process.Pid), time.Now()
+	time.Sleep(600 * time.Millisecond)
+	if cores := float64(activity(idle.Process.Pid)-before) / float64(time.Since(began).Nanoseconds()); cores >= workIdleMaxCores {
+		t.Fatalf("sleeping group used %.4f cores", cores)
 	}
+
 	// A child that spins and is reaped mid-window still counts as work.
-	if busy := measure("/usr/bin/yes >/dev/null & Y=$!; sleep 0.4; kill $Y; wait $Y; sleep 30"); busy < workIdleWakeCores {
-		t.Fatalf("spinning group read %.4f cores; reaped child time lost or units wrong", busy)
+	dir := t.TempDir()
+	stop, reaped := dir+"/stop", dir+"/reaped"
+	busy := start(`/usr/bin/yes >/dev/null & Y=$!
+while [ ! -e "$SP_STOP" ]; do sleep 0.01; done
+kill $Y; wait $Y; : > "$SP_REAPED"; sleep 600`, "SP_STOP="+stop, "SP_REAPED="+reaped)
+	base := activity(busy.Process.Pid)
+	spun := base
+	deadline := time.Now().Add(testWatchdog)
+	for spun-base < uint64(100*time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("spinning group read %s of CPU; units wrong or spinner never ran", time.Duration(spun-base))
+		}
+		time.Sleep(10 * time.Millisecond)
+		spun = activity(busy.Process.Pid)
+	}
+	if err := os.WriteFile(stop, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitForTestFile(t, reaped)
+	if after := activity(busy.Process.Pid); after < spun {
+		t.Fatalf("group CPU fell from %s to %s after the spinner was reaped; reaped child time lost", time.Duration(spun-base), time.Duration(after-base))
 	}
 	if _, err := nativeProcessGroupActivity(1 << 30); err == nil {
 		t.Fatal("nonexistent process group sampled")

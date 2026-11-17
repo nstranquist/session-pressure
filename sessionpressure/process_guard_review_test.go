@@ -60,7 +60,7 @@ func TestProcessGuardConfirmsLateExitAfterStop(t *testing.T) {
 
 func readReviewPID(t *testing.T, path string) int {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testWatchdog)
 	for time.Now().Before(deadline) {
 		if body, err := os.ReadFile(path); err == nil {
 			pid, err := strconv.Atoi(strings.TrimSpace(string(body)))
@@ -76,7 +76,7 @@ func readReviewPID(t *testing.T, path string) int {
 
 func assertReviewProcessExited(t *testing.T, pid int) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testWatchdog)
 	for time.Now().Before(deadline) {
 		if _, _, err := processGuardIdentity(pid); processGuardGone(err) {
 			return

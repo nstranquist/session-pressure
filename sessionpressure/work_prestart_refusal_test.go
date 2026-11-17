@@ -28,9 +28,16 @@ func TestRunWorkPrestartRefusals(t *testing.T) {
 					t.Cleanup(func() { _ = lease.Release(context.Background()) })
 				}
 			}
-			wait := 250 * time.Millisecond
+			// The budget is not a wall-clock race: the test ends it at the
+			// stage under test, so a slow host cannot spend it earlier.
+			wait := testWaitNotUnderTest
+			deadline := newManualDeadline()
 			if stage == "capacity" || stage == "no_wait" {
 				occupy()
+			}
+			if stage == "capacity" {
+				// The budget is spent before the operation reaches the queue.
+				deadline.expire()
 			}
 			if stage == "no_wait" {
 				wait = 0
@@ -45,11 +52,11 @@ func TestRunWorkPrestartRefusals(t *testing.T) {
 					if calls == 3 {
 						// Pressure clears after the admission observation consumes
 						// the remaining deadline, before reservation reacquisition.
-						<-time.After(2 * wait)
+						deadline.expire()
 					}
 				}
 				if stage == "before_start" && calls == 2 {
-					<-time.After(2 * wait)
+					deadline.expire()
 				}
 				return Admission{Allowed: true, Level: LevelNormal}
 			}
@@ -57,7 +64,7 @@ func TestRunWorkPrestartRefusals(t *testing.T) {
 			code, err := RunWorkCommand(coordinator,
 				WorkRunOptions{Class: WorkClassTest, Wait: wait, Progress: WorkProgressQuiet, Command: []string{"/usr/bin/true"}},
 				admission, time.Millisecond,
-				WorkRunStreams{Stdout: io.Discard, Stderr: io.Discard, CommandFactory: func(string, []string) (*exec.Cmd, io.WriteCloser, error) {
+				WorkRunStreams{Stdout: io.Discard, Stderr: io.Discard, WaitDeadline: deadline.factory, CommandFactory: func(string, []string) (*exec.Cmd, io.WriteCloser, error) {
 					constructed = true
 					return nil, nil, errors.New("child must not be constructed")
 				}})

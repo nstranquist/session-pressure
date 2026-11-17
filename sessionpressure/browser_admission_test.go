@@ -147,7 +147,7 @@ func TestWaitForBrowserAdmissionWaitsThroughPauseAndMemory(t *testing.T) {
 	})
 	var stderr bytes.Buffer
 	reporter := newWorkProgressReporter(WorkProgressHuman, &stderr, "op", WorkClassBrowser, 3, time.Now())
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testWatchdog)
 	defer cancel()
 	admission, err := waitForBrowserAdmission(ctx, true, control, admitter, reporter, 5*time.Millisecond)
 	if err != nil || admission == nil {
@@ -186,8 +186,10 @@ func TestWaitForBrowserAdmissionStopsAtDeadline(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "deadline reached") || !strings.Contains(err.Error(), "BROWSER_NO_HEADROOM") {
 		t.Fatalf("deadline err = %v", err)
 	}
-	if elapsed := time.Since(started); elapsed < 50*time.Millisecond || elapsed > 2*time.Second {
-		t.Fatalf("waited %s, want about the 60ms deadline", elapsed)
+	// Headroom never recovers, so returning at all proves the deadline ended
+	// the wait; the lower bound proves it waited instead of refusing at once.
+	if elapsed := time.Since(started); elapsed < 50*time.Millisecond {
+		t.Fatalf("waited %s, want the 60ms deadline", elapsed)
 	}
 	if !strings.Contains(stderr.String(), "ndev session pressure: waiting") {
 		t.Fatalf("no progress line: %q", stderr.String())

@@ -39,12 +39,30 @@ func TestTreePeakSamplerSeesAChildTree(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("no process listing")
 	}
-	command := exec.Command("sh", "-c", "sleep 3 & sleep 3; wait")
+	// The tree outlives the test's wait; the test kills it.
+	command := exec.Command("sh", "-c", "sleep 600 & sleep 600; wait")
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
-	sampler := startTreePeakSampler(command.Process.Pid, 200*time.Millisecond, listProcessRows, processRSSKB)
-	time.Sleep(time.Second)
+	// Stop after two completed listings, not after a fixed sleep: under load
+	// one process listing can take longer than the sleep did.
+	listed := make(chan struct{}, 64)
+	list := func() ([]processRow, error) {
+		rows, err := listProcessRows()
+		select {
+		case listed <- struct{}{}:
+		default:
+		}
+		return rows, err
+	}
+	sampler := startTreePeakSampler(command.Process.Pid, time.Millisecond, list, processRSSKB)
+	for range 3 {
+		select {
+		case <-listed:
+		case <-time.After(testWatchdog):
+			t.Fatal("tree sampler did not list processes")
+		}
+	}
 	peak, samples := sampler.Stop()
 	_ = command.Process.Kill()
 	_ = command.Wait()

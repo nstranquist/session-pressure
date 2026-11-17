@@ -133,6 +133,10 @@ type WorkRunStreams struct {
 	Stderr         io.Writer
 	Signals        <-chan os.Signal
 	CommandFactory WorkCommandFactory
+	// WaitDeadline, when set, replaces context.WithTimeout for the --wait
+	// budget of the work queue. Tests use it to end the budget at an exact
+	// stage instead of racing a wall-clock deadline against host load.
+	WaitDeadline func(wait time.Duration) (context.Context, context.CancelFunc)
 }
 
 // WorkCommandFactory returns the process that will become the requested work
@@ -1300,7 +1304,9 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 
 	var waitCtx context.Context = context.Background()
 	cancel := func() {}
-	if options.Wait > 0 {
+	if options.Wait > 0 && streams.WaitDeadline != nil {
+		waitCtx, cancel = streams.WaitDeadline(options.Wait)
+	} else if options.Wait > 0 {
 		waitCtx, cancel = context.WithTimeout(context.Background(), options.Wait)
 	}
 	waitCtx, stopWaiting := signal.NotifyContext(waitCtx, workTerminationSignals()...)

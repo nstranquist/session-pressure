@@ -42,14 +42,16 @@ func TestWorkStatusHonorsShortContext(t *testing.T) {
 	defer unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
-	started := time.Now()
-	_, err = coordinator.Status(ctx)
-	elapsed := time.Since(started)
-	if err == nil {
-		t.Fatal("Status should fail while the lease file is locked")
+	// Check the derived lock timeout directly instead of timing Status: on a
+	// loaded host the elapsed time measures scheduling, not the timeout.
+	if timeout := workStateLockTimeout(ctx); timeout <= 0 || timeout > 80*time.Millisecond {
+		t.Fatalf("lock timeout %s under a 80ms ctx; it must follow the caller deadline", timeout)
 	}
-	if elapsed >= time.Second {
-		t.Fatalf("Status waited %s under a 80ms ctx; lock timeout must follow the caller deadline", elapsed)
+	if timeout := workStateLockTimeout(context.Background()); timeout != workStateLockFallback {
+		t.Fatalf("lock timeout without a deadline = %s, want the %s fallback", timeout, workStateLockFallback)
+	}
+	if _, err = coordinator.Status(ctx); err == nil || !errors.Is(err, filelock.ErrTimeout) {
+		t.Fatalf("Status while the lease file is locked: %v; want a lock timeout", err)
 	}
 }
 
@@ -60,7 +62,7 @@ func TestWorkStatusSnapshotDoesNotWaitOnMutationLock(t *testing.T) {
 		t.Fatalf("hold lease lock: %v", err)
 	}
 	defer unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), testWatchdog)
 	defer cancel()
 	status, err := coordinator.StatusSnapshot(ctx)
 	if err != nil {

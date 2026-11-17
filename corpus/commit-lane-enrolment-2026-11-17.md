@@ -18,6 +18,7 @@ that had already landed and been pushed.
 | Capture | repo hook, capture profile: `public-names`, `public-secrets`, `conflict-markers`, `go-format` | Mac, inside the 30 s capture budget |
 | Capture | `go vet` of the captured packages (module `.`), so Darwin-only files are type-checked | Mac |
 | Gate | `go vet ./...` and `go test -count=1 -timeout 10m ./...` (`remote_pass`, linux/amd64) | active Linux gate runner (runner clone `session-pressure`) |
+| Gate | `go test -short` in `sessionpressure`, scoped to that directory (WORK-1157) | Mac, darwin/arm64 |
 | Gate | `go test` in `internal/helpermain`, scoped to that directory | Mac, darwin/arm64 |
 | Gate | `swift test` in `apps/SessionPressure`, scoped to that directory | Mac, darwin/arm64 |
 | Merge | append_merge for `CHANGELOG.md`, `corpus/**/*.md`, `docs/**/*.md` | worker |
@@ -27,13 +28,11 @@ Exemptions with reasons: node (no JavaScript), python (a release-time image
 helper and a live installed-app check, not candidate checks), docs (no
 checker; the hook still scans Markdown for private names and secrets).
 
-Not a lane gate: the Darwin runtime tests of `./sessionpressure`. They
-measure the live host (RSS budget, CPU soak, kernel inventory) or use
-real-time deadlines. Under the worker's own load on the Mac they failed three
-runs in a row with three different timing errors (see Bootstrap findings), at
-about 5 min a run, against 30 s for the whole package on the Linux runner.
-Capture `go vet` type-checks them, the Linux gate runs the portable tests, and
-`make publish-ready` runs them before a release.
+The Darwin runtime tests of `./sessionpressure` were first left out of the
+lane: under the worker's own load on the Mac they failed three runs in a row
+with three different timing errors (see Bootstrap findings). WORK-1157 made
+them load-independent and restored them as `darwin-sessionpressure-tests`
+with `-short`. See "Darwin sessionpressure gate (WORK-1157)" below.
 
 Also not covered by a lane gate: `apps/pressure-ui` (Rust, GPUI). The policy has no
 Rust adapter. Its check stays `make desktop-gpui` before a release. This is a
@@ -98,11 +97,54 @@ the active runner.
   A scan of the same range with the private pattern file found no match in
   added lines, file names or commit messages.
 
+## Darwin sessionpressure gate (WORK-1157)
+
+The tests that failed under the worker on the Mac did not have wrong logic.
+They raced wall-clock budgets against host load. WORK-1157 removed the races
+with four rules. A new test in `sessionpressure` follows them
+(`sessionpressure/timing_seams_test.go`):
+
+- A test that asserts a wait-budget outcome ends the budget itself.
+  `WorkRunStreams.WaitDeadline` is an optional seam (nil keeps
+  `context.WithTimeout`). `manualDeadline` reports
+  `context.DeadlineExceeded` at the stage that the test picks. The prestart
+  refusal stages (capacity, reacquire, before start) use it.
+- A test that asserts success does not race its wait budget. It uses
+  `testWaitNotUnderTest`.
+- A wait for an event that the test expects (a child PID, a queue entry, a
+  goroutine result) polls the condition and uses `testWatchdog` (2 min) only
+  as a hang guard. To prove "does not block", the test makes the blocking
+  path impossible to finish and checks that the call returns (heartbeat
+  refresh). It does not time the call. Where a fallback poll could hide a
+  missed wake, the test turns off the poll (`workCapacityRetryInterval` is a
+  var for that).
+- CPU and unit checks compare two counters of the same quantity (libproc
+  against getrusage), or wait for an amount of CPU, not for a time window.
+- Live-host budgets (native inventory and disk-scan latency, sampler
+  duration, resident RSS, the 64-sample soak, live phase timing) are
+  measurements, not logic. `liveHostBudgets()` is false under `-short`, so
+  the gate keeps the correctness checks of those tests and drops only the
+  budget. `make test` and `make publish-ready` run without `-short` and keep
+  the budgets.
+
+Evidence on the Mac, 2026-11-17, with the package test binary run directly:
+
+- Before (old code, load about 45 to 58): 3 package runs, 3 failed. There
+  were 6 distinct failures: prestart reacquire, profile `failure` (20 s
+  watchdog), FIFO reservation (1 s watchdog), reacquisition recheck (1 s
+  wait, code 124), operator sample 1728 ms > 1500 ms, and the CPU soak.
+- After: 5 `-short` runs passed at 1-minute load 34, 60, 83, 130 and 134
+  (90 to 148 s each). 1 full run with budgets passed at load 24 (124 s).
+  The changed tests also passed under `-race`.
+
 ## Follow-ups
 
-- Make the real-time `sessionpressure` tests independent of host load
-  (`work_prestart_refusal_test.go` reacquire stage, `worknested_test.go:135`),
-  then restore a Darwin runtime check for `./sessionpressure`.
+- Done (WORK-1157): make the real-time `sessionpressure` tests independent
+  of host load, then restore a Darwin runtime check for `./sessionpressure`.
+  See "Darwin sessionpressure gate (WORK-1157)".
+- The Darwin `-short` package run takes several minutes on a loaded Mac.
+  Most of it is real `go test` children in the reuse and profile tests,
+  which the Linux gate also runs. Watch the gate time.
 - Add a Rust adapter or a check for `apps/pressure-ui`.
 - Capture `go vet` of `sessionpressure` took 18.7 s of the 30 s capture
   budget on a loaded Mac. Watch it, because a capture over budget gives no

@@ -52,12 +52,23 @@ verification:
         directory: .
         timeout_ms: 900000
       platforms: [linux/amd64]
-    # Darwin runtime tests of ./sessionpressure are not a lane gate. They
-    # measure the live host (RSS budget, CPU soak, kernel inventory) or use
-    # real-time deadlines, and under the worker's own load they failed three
-    # runs in a row with three different timing errors, at about 5 min a run.
-    # Capture go vet type-checks them; make publish-ready runs them before a
-    # release. See corpus/commit-lane-enrolment-2026-11-17.md.
+    # Darwin runtime tests of ./sessionpressure, scoped to that directory.
+    # -short keeps every correctness check and drops only the live-host
+    # budgets (native inventory latency, sampler duration, resident RSS, the
+    # 64-sample CPU soak, live phase timing), because on a loaded worker host
+    # they measure the host's load, not the code. Real-time waits in these
+    # tests are condition-driven or use an injected wait deadline (WORK-1157),
+    # so host load makes them slower, not red. make test and make
+    # publish-ready run the full set, budgets included.
+    # See corpus/commit-lane-enrolment-2026-11-17.md.
+    - id: darwin-sessionpressure-tests
+      adapter: go
+      command:
+        argv: [go, test, -short, -count=1, -timeout, 15m, .]
+        directory: sessionpressure
+        timeout_ms: 1200000
+      platforms: [darwin/arm64]
+      paths: [sessionpressure]
     - id: darwin-helpermain-tests
       adapter: go
       command:

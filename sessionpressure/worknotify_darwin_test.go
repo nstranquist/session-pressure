@@ -22,7 +22,7 @@ func TestWorkCapacityNotificationCoalescesAndCloses(t *testing.T) {
 	}
 	select {
 	case <-wake:
-	case <-time.After(time.Second):
+	case <-time.After(testWatchdog):
 		t.Fatal("missed capacity notification")
 	}
 	stop()
@@ -43,9 +43,14 @@ func TestWorkCapacityWakeRechecksAfterRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Without the fallback poll, only the release notification can wake the
+	// waiter before the watchdog, so no wall-clock comparison is needed.
+	previousRetry := workCapacityRetryInterval
+	workCapacityRetryInterval = 2 * testWatchdog
+	t.Cleanup(func() { workCapacityRetryInterval = previousRetry })
 	blocked := make(chan struct{}, 1)
 	result := make(chan error, 1)
-	deadline, cancel := context.WithTimeout(ctx, 3*time.Second)
+	deadline, cancel := context.WithTimeout(ctx, testWatchdog)
 	defer cancel()
 	go func() {
 		l, _, err := waiter.WaitAcquire(deadline, func(WorkStatus, WorkBlocker) {
@@ -64,7 +69,6 @@ func TestWorkCapacityWakeRechecksAfterRelease(t *testing.T) {
 	case <-deadline.Done():
 		t.Fatal("not queued")
 	}
-	start := time.Now()
 	if err := lease.Release(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -73,11 +77,8 @@ func TestWorkCapacityWakeRechecksAfterRelease(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if time.Since(start) > time.Second {
-			t.Fatal("release waited for fallback")
-		}
 	case <-deadline.Done():
-		t.Fatal("missed release")
+		t.Fatal("missed release: the waiter was not woken by the notification")
 	}
 }
 func TestWorkCapacityNotifyDisabled(t *testing.T) {

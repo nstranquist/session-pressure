@@ -127,16 +127,15 @@ func TestDarwinGrokVersionedExecutableIdentityUsesPathOnly(t *testing.T) {
 }
 
 func TestNativeProcessInventoryIsFastAndIncludesSelf(t *testing.T) {
-	deadline := 2 * time.Second
 	maxElapsed := time.Second
 	if raceDetectorEnabled {
 		// The race runtime instruments every Go access around the native scan;
 		// preserve the production latency assertion in normal builds while
 		// giving the race-only correctness run enough wall-clock headroom.
-		deadline = 4 * time.Second
 		maxElapsed = 3 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	// The context only guards against a hang; maxElapsed is the budget.
+	ctx, cancel := context.WithTimeout(context.Background(), testWatchdog)
 	defer cancel()
 	started := time.Now()
 	processes, source, err := nativeProcesses(ctx)
@@ -157,14 +156,14 @@ func TestNativeProcessInventoryIsFastAndIncludesSelf(t *testing.T) {
 	if !foundSelf {
 		t.Fatal("native inventory omitted current process or its RSS")
 	}
-	if elapsed > maxElapsed {
+	if liveHostBudgets() && elapsed > maxElapsed {
 		t.Fatalf("native inventory took %s; expected <= %s", elapsed, maxElapsed)
 	}
 	t.Logf("native inventory: rows=%d elapsed=%s", len(processes), elapsed)
 }
 
 func TestNativeDiskWriteCountersAreBoundedAndIncludeSelf(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testWatchdog)
 	defer cancel()
 	started := time.Now()
 	device, err := nativeDiskDeviceCounter(ctx)
@@ -191,7 +190,7 @@ func TestNativeDiskWriteCountersAreBoundedAndIncludeSelf(t *testing.T) {
 	if !foundSelf {
 		t.Fatal("native disk-write scan omitted current process")
 	}
-	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+	if elapsed := time.Since(started); liveHostBudgets() && elapsed > 500*time.Millisecond {
 		t.Fatalf("native disk-write scan took %s; expected <=500ms", elapsed)
 	} else {
 		t.Logf("native disk-write scan: devices=%d pids=%d/%d elapsed=%s", device.DeviceCount, processes.AccessibleCount, processes.TotalPIDCount, elapsed)
@@ -301,11 +300,7 @@ func TestFindDarwinSessionIDPreservesUUIDWordBoundaries(t *testing.T) {
 }
 
 func TestNativeProcessCPUUsesLiveCumulativeDelta(t *testing.T) {
-	timeout := 2 * time.Second
-	if raceDetectorEnabled {
-		timeout = 5 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), testWatchdog)
 	defer cancel()
 	first, _, err := nativeProcesses(ctx)
 	if err != nil {
@@ -333,7 +328,7 @@ func TestNativeProcessCPUUsesLiveCumulativeDelta(t *testing.T) {
 }
 
 func TestNativeSamplerBuildsAgentTreesWithinOperatorBudget(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testWatchdog)
 	defer cancel()
 	snapshot, err := NewSampler().Sample(ctx, DefaultPolicy(16*1024))
 	if err != nil {
@@ -359,7 +354,7 @@ func TestNativeSamplerBuildsAgentTreesWithinOperatorBudget(t *testing.T) {
 	if raceDetectorEnabled {
 		maxDurationMS = 2000
 	}
-	if snapshot.SampleDurationMS > maxDurationMS {
+	if liveHostBudgets() && snapshot.SampleDurationMS > maxDurationMS {
 		t.Fatalf("native sample took %.3fms; expected <= %.0fms", snapshot.SampleDurationMS, maxDurationMS)
 	}
 	t.Logf("native sample: processes=%d trees=%d duration=%.3fms cpu=%.3fms", snapshot.ProcessCount, snapshot.AgentTreeCount, snapshot.SampleDurationMS, snapshot.SampleCPUTimeMS)
@@ -431,6 +426,9 @@ func TestResidentSamplerRepeatedFreshInventoriesStayWithinRSSBudget(t *testing.T
 	// tests have already grown it (40 MB against 28 MB alone, 2026-11-17,
 	// WORK-1095). Run the measurement in a fresh copy of the test binary so
 	// test order cannot change the result.
+	if !liveHostBudgets() {
+		t.Skip("resident RSS budget is a live-host measurement; skipped under -short")
+	}
 	if os.Getenv(residentRSSBudgetChildEnv) != "1" {
 		child := exec.Command(os.Args[0], "-test.run=^TestResidentSamplerRepeatedFreshInventoriesStayWithinRSSBudget$", "-test.v")
 		child.Env = append(os.Environ(), residentRSSBudgetChildEnv+"=1")

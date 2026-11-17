@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 // This is a copy of the test executable. It sleeps on stdin and never starts a
@@ -53,7 +52,7 @@ func TestNativeBrowserInventoryFindsOwnedSleepingExecutable(t *testing.T) {
 	if closeErr != nil {
 		t.Fatal(closeErr)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testWatchdog)
 	defer cancel()
 	child := exec.CommandContext(ctx, path, "-test.run=^TestBrowserKernelInventoryHelper$", "--", "--headless=new")
 	child.Env = append(os.Environ(), "PRESSURE_BROWSER_INVENTORY_HELPER=1")

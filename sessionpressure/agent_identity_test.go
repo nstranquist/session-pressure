@@ -330,7 +330,7 @@ func TestResidentHintsFindLiveIDBeyondRegistryPrefix(t *testing.T) {
 	}
 	catalog := CompileAgentIdentityCatalog(DefaultAgentIdentityRules())
 	_ = peekSessionOwnershipHints(dir, catalog, []string{"z-live"})
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(testWatchdog)
 	for {
 		residentSessionHints.Lock()
 		done := !residentSessionHints.refreshing

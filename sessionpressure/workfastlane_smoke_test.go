@@ -93,7 +93,7 @@ func TestFastLaneAdmitsUnderSyntheticCPURed(t *testing.T) {
 	// then fail when the wait budget runs out.
 	code, err := RunWorkCommand(
 		coordinator,
-		WorkRunOptions{Class: WorkClassExpressTest, Wait: 5 * time.Second, Progress: WorkProgressQuiet, Command: []string{"/usr/bin/true"}},
+		WorkRunOptions{Class: WorkClassExpressTest, Wait: testWaitNotUnderTest, Progress: WorkProgressQuiet, Command: []string{"/usr/bin/true"}},
 		syntheticRedAdmission,
 		10*time.Millisecond,
 		WorkRunStreams{Stdout: io.Discard, Stderr: io.Discard, CommandFactory: testGatedWorkCommand},

@@ -99,7 +99,7 @@ func TestResidentSleepWakesForNewRecoveryDemand(t *testing.T) {
 			t.Parallel()
 			policy := DefaultPolicy(16 * 1024)
 			dir := t.TempDir()
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), testWatchdog)
 			defer cancel()
 			if _, err := BrowserControlStatus(ctx, dir, "paused"); err != nil {
 				t.Fatal(err)
@@ -150,7 +150,7 @@ func TestRecoveryDemandDoesNotWaitOnWorkMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unlock()
-	probeCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	probeCtx, cancel := context.WithTimeout(ctx, testWatchdog)
 	defer cancel()
 	if got := recoverySampleDelay(probeCtx, coordinator.Dir, policy, 120*time.Second); got != 5*time.Second {
 		t.Fatalf("waiting work was hidden by the mutation lock: delay=%s", got)
@@ -179,7 +179,7 @@ func TestRecoveryDemandDoesNotMutateOrWaitOnBrowserControl(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unlock()
-	probe, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	probe, cancel := context.WithTimeout(ctx, testWatchdog)
 	defer cancel()
 	if got := recoverySampleDelay(probe, dir, DefaultPolicy(16*1024), 120*time.Second); got != 5*time.Second {
 		t.Fatalf("browser mutation hid recovery demand: %s", got)

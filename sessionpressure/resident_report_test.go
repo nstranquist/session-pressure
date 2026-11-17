@@ -50,10 +50,10 @@ func TestWaitForResidentReportMatchesInstalledArtifactAndPID(t *testing.T) {
 		time.Sleep(40 * time.Millisecond)
 		_ = store.WriteLatest(Snapshot{GuardPID: 4242, GuardBinarySHA256: installed.SHA256, GuardSourceRevision: "new-rev"})
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testWatchdog)
 	defer cancel()
 	got := WaitForResidentReport(ctx, dir, 4242, 10*time.Millisecond)
-	if !got.Ready || got.SourceRevision != "new-rev" || got.PID != 4242 || got.WaitedMS >= 5000 {
+	if !got.Ready || got.SourceRevision != "new-rev" || got.PID != 4242 {
 		t.Fatalf("resident report: %+v", got)
 	}
 }

@@ -51,8 +51,10 @@ const WorkFiniteLeaseReviewAge = 15 * time.Minute
 
 // Heavy commands normally run for minutes. A two-second retry keeps queued
 // agents responsive without turning every waiter into a 4 Hz lock/read loop on
-// an already constrained host.
-const workCapacityRetryInterval = 2 * time.Second
+// an already constrained host. It is a var only so a test can take the poll
+// out of a notification check.
+var workCapacityRetryInterval = 2 * time.Second
+
 const maximumWorkClockSkew = time.Minute
 
 // WorkReservationAge bounds how long a bypassed queue head can remain soft.

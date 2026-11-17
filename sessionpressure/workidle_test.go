@@ -212,7 +212,7 @@ func TestWorkIdleParkingParksWakesAndReportsTotals(t *testing.T) {
 		t.Fatal("eligible class did not start parking")
 	}
 	waitFor := func(what string, ok func([]bool) bool) {
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(testWatchdog)
 		for time.Now().Before(deadline) {
 			if ok(lease.snapshot()) {
 				return

@@ -493,7 +493,7 @@ func TestWaitAcquireRetriesStateLockTimeoutWithinBudget(t *testing.T) {
 		_ = os.Remove(lockPath)
 	}()
 	var blockers []WorkBlocker
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testWatchdog)
 	defer cancel()
 	operationID, err := NewWorkOperationID()
 	if err != nil {

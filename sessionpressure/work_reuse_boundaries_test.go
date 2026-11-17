@@ -39,7 +39,7 @@ func TestGoReuseSingleflightAndExplicitExecution(t *testing.T) {
 		if profile {
 			argv = []string{"go", "test", "-json", "-count=1", "."}
 		}
-		code, err := RunWorkCommandWithExpressReuse(c, WorkRunOptions{Class: WorkClassExpressTest, Wait: 20 * time.Second, NoReuse: noReuse, ProfileGoTest: profile, Command: argv},
+		code, err := RunWorkCommandWithExpressReuse(c, WorkRunOptions{Class: WorkClassExpressTest, Wait: testWaitNotUnderTest, NoReuse: noReuse, ProfileGoTest: profile, Command: argv},
 			func() Admission { return Admission{Allowed: true, Level: LevelNormal} }, time.Millisecond,
 			WorkRunStreams{Stdout: io.Discard, Stderr: io.Discard, CommandFactory: func(target string, args []string) (*exec.Cmd, io.WriteCloser, error) {
 				cmd := exec.Command(target, args...)

@@ -54,7 +54,7 @@ func TestRemoteSourceDeltaAlongsideCandidateUpload(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(testWatchdog):
 		release()
 		if err := <-done; err != nil {
 			t.Fatal(err)

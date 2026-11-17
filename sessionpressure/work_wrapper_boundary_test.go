@@ -64,7 +64,7 @@ func TestAdmittedGeneratorStartsFreshWrapperChain(t *testing.T) {
 				t.Cleanup(func() { workNestedExec = previous })
 			}
 			code, err := RunWorkCommand(coordinator,
-				WorkRunOptions{Class: WorkClassExpressTest, Wait: time.Second, Command: []string{generator}},
+				WorkRunOptions{Class: WorkClassExpressTest, Wait: testWaitNotUnderTest, Command: []string{generator}},
 				func() Admission { return Admission{Allowed: true, Level: LevelNormal} }, time.Millisecond,
 				WorkRunStreams{Stdout: &stdout, Stderr: &stderr, CommandFactory: func(target string, args []string) (*exec.Cmd, io.WriteCloser, error) {
 					return exec.Command(target, args...), nil, nil

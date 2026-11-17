@@ -110,14 +110,14 @@ func TestRunWorkCommandRecordsQueueCPUEvidenceOnAcquired(t *testing.T) {
 	result := make(chan error, 1)
 	go func() {
 		_, runErr := RunWorkCommand(coordinator,
-			WorkRunOptions{Class: WorkClassBuild, Wait: 5 * time.Second, Progress: WorkProgressQuiet, Command: []string{"/usr/bin/true"}},
+			WorkRunOptions{Class: WorkClassBuild, Wait: testWaitNotUnderTest, Progress: WorkProgressQuiet, Command: []string{"/usr/bin/true"}},
 			admission, time.Millisecond, WorkRunStreams{Stdout: io.Discard, Stderr: io.Discard,
 				CommandFactory: func(target string, args []string) (*exec.Cmd, io.WriteCloser, error) {
 					return exec.Command(target, args...), nil, nil
 				}})
 		result <- runErr
 	}()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testWatchdog)
 	for {
 		status, statusErr := coordinator.Status(ctx)
 		if statusErr == nil && status.QueueDepth == 1 {

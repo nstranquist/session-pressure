@@ -133,7 +133,7 @@ func TestRunWorkCommandTeesStdoutIntoInspectablePreview(t *testing.T) {
 	var stdout bytes.Buffer
 	code, err := RunWorkCommand(
 		coordinator,
-		WorkRunOptions{Class: WorkClassExpressTest, Wait: time.Second, Command: []string{"/bin/echo", "hello-from-tee-preview"}},
+		WorkRunOptions{Class: WorkClassExpressTest, Wait: testWaitNotUnderTest, Command: []string{"/bin/echo", "hello-from-tee-preview"}},
 		func() Admission { return Admission{Allowed: true, Level: LevelNormal} },
 		time.Millisecond,
 		WorkRunStreams{
@@ -172,7 +172,7 @@ func TestRunWorkCommandRejectsNilFactoryCommandWithoutLeakingLease(t *testing.T)
 	coordinator := NewWorkCoordinator(t.TempDir(), testWorkLimits())
 	code, err := RunWorkCommand(
 		coordinator,
-		WorkRunOptions{Class: WorkClassBuild, Wait: time.Second, Command: []string{"/usr/bin/true"}},
+		WorkRunOptions{Class: WorkClassBuild, Wait: testWaitNotUnderTest, Command: []string{"/usr/bin/true"}},
 		func() Admission { return Admission{Allowed: true, Level: LevelNormal} },
 		time.Millisecond,
 		WorkRunStreams{
@@ -203,7 +203,7 @@ func TestRunWorkCommandBindsChildBeforeOpeningGate(t *testing.T) {
 	go func() {
 		code, err := RunWorkCommand(
 			coordinator,
-			WorkRunOptions{Class: WorkClassBuild, Wait: time.Second, Command: []string{"/bin/sleep", "0.3"}},
+			WorkRunOptions{Class: WorkClassBuild, Wait: testWaitNotUnderTest, Command: []string{"/bin/sleep", "0.3"}},
 			func() Admission { return Admission{Allowed: true, Level: LevelNormal} },
 			time.Millisecond,
 			WorkRunStreams{Stdout: io.Discard, Stderr: io.Discard, CommandFactory: testGatedWorkCommand},
@@ -214,7 +214,7 @@ func TestRunWorkCommandBindsChildBeforeOpeningGate(t *testing.T) {
 		}{code: code, err: err}
 	}()
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(testWatchdog)
 	for {
 		if _, err := os.Stat(marker); err == nil {
 			break
@@ -282,7 +282,7 @@ func TestRunWorkCommandUsesNonConsumingFIFOReservationDuringPostQueuePressure(t 
 	go func() {
 		code, err := RunWorkCommand(
 			coordinator,
-			WorkRunOptions{Class: WorkClassBuild, Wait: time.Second, Progress: WorkProgressQuiet, Command: []string{"/usr/bin/true"}},
+			WorkRunOptions{Class: WorkClassBuild, Wait: testWaitNotUnderTest, Progress: WorkProgressQuiet, Command: []string{"/usr/bin/true"}},
 			admissionCheck,
 			time.Millisecond,
 			WorkRunStreams{Stdout: io.Discard, Stderr: io.Discard, CommandFactory: testGatedWorkCommand},
@@ -291,7 +291,7 @@ func TestRunWorkCommandUsesNonConsumingFIFOReservationDuringPostQueuePressure(t 
 	}()
 	select {
 	case <-pressureObserved:
-	case <-time.After(time.Second):
+	case <-time.After(testWatchdog):
 		t.Fatal("post-queue pressure was not observed")
 	}
 	status, err := coordinator.Status(context.Background())
@@ -308,7 +308,7 @@ func TestRunWorkCommandUsesNonConsumingFIFOReservationDuringPostQueuePressure(t 
 		if completed.err != nil || completed.code != 0 {
 			t.Fatalf("post-pressure work result: code=%d err=%v", completed.code, completed.err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(testWatchdog):
 		t.Fatal("work did not resume after pressure recovery")
 	}
 	events, err = NewWorkEventStore(dir).Read(WorkEventFilter{})
@@ -344,7 +344,7 @@ func TestRunWorkCommandRechecksPressureAfterEveryReservationReacquisition(t *tes
 
 	code, err := RunWorkCommand(
 		coordinator,
-		WorkRunOptions{Class: WorkClassBuild, Wait: time.Second, Progress: WorkProgressQuiet, Command: []string{"/usr/bin/true"}},
+		WorkRunOptions{Class: WorkClassBuild, Wait: testWaitNotUnderTest, Progress: WorkProgressQuiet, Command: []string{"/usr/bin/true"}},
 		admissionCheck,
 		time.Millisecond,
 		WorkRunStreams{Stdout: io.Discard, Stderr: io.Discard, CommandFactory: testGatedWorkCommand},
@@ -584,14 +584,14 @@ func TestRunWorkCommandForwardsCancellationToProcessGroupAndClosesLedger(t *test
 	go func() {
 		code, err := RunWorkCommand(
 			coordinator,
-			WorkRunOptions{Class: WorkClassTest, Wait: time.Second, Progress: WorkProgressQuiet, Command: []string{os.Args[0], "-test.run=^TestWorkSignalTreeHelperProcess$"}},
+			WorkRunOptions{Class: WorkClassTest, Wait: testWaitNotUnderTest, Progress: WorkProgressQuiet, Command: []string{os.Args[0], "-test.run=^TestWorkSignalTreeHelperProcess$"}},
 			func() Admission { return Admission{Allowed: true, Level: LevelNormal} },
 			time.Millisecond,
 			WorkRunStreams{Stdout: io.Discard, Stderr: io.Discard, Signals: signals, CommandFactory: testGatedWorkCommand},
 		)
 		result <- outcome{code: code, err: err}
 	}()
-	body := waitForTestFile(t, childPIDPath, 3*time.Second)
+	body := waitForTestFile(t, childPIDPath)
 	childPID, err := strconv.Atoi(strings.TrimSpace(string(body)))
 	if err != nil {
 		t.Fatal(err)
@@ -602,10 +602,10 @@ func TestRunWorkCommandForwardsCancellationToProcessGroupAndClosesLedger(t *test
 		if completed.err != nil || completed.code != 128+int(syscall.SIGTERM) {
 			t.Fatalf("cancelled work: code=%d err=%v", completed.code, completed.err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testWatchdog):
 		t.Fatal("cancelled process group did not exit")
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(testWatchdog)
 	for processAlive(childPID) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -682,9 +682,9 @@ func TestWorkSignalTreeHelperProcess(t *testing.T) {
 	}
 }
 
-func waitForTestFile(t *testing.T, path string, timeout time.Duration) []byte {
+func waitForTestFile(t *testing.T, path string) []byte {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(testWatchdog)
 	for {
 		body, err := os.ReadFile(path)
 		if err == nil {
