@@ -66,6 +66,18 @@ browser only when the control is paused or the browser is past
 `max_runtime_seconds`. The count is left to memory admission
 (`browserControlStops`, `browser_control_enforce_test.go`).
 
+## The automatic pause gates admission only
+
+The second live proof (14:57Z) lost the sweep again: auto mode paused on
+host CPU red, and the work-run's 2 s poll sent SIGTERM to the admitted sweep
+(`wrapper_interrupt`, exit 143). With many agents building, the CPU pause
+flapped about every few minutes (14:45, 14:48, 14:49, 14:57). A browser job is
+bounded at 120 s, so stopping it only loses the work and makes the agent
+retry it. Now the automatic pause blocks new admissions (and `--wait` waits
+through it), while running browser work finishes within its lifetime. The
+operator's pause (`browser pause`, mode `paused`) still stops running work in
+both the work-run poll and the resident.
+
 ## Code
 
 - `sessionpressure/browser_admission.go`: cost model, ledger, decision,

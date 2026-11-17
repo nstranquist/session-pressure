@@ -1,6 +1,7 @@
 package sessionpressure
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -24,6 +25,23 @@ func TestBrowserControlStopsHasNoCountLimit(t *testing.T) {
 		t.Fatal("browser past its finite lifetime kept running")
 	}
 	if !browserControlStops(true, time.Second, limit) {
-		t.Fatal("pause did not stop a young browser")
+		t.Fatal("operator pause did not stop a young browser")
+	}
+}
+
+func TestBrowserOperatorPauseStopsRunningWorkButAutoPauseDoesNot(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(DataDirEnv, dir)
+	// Auto mode with no resident sample is blocked, the same state as a CPU
+	// pause: it gates admission but leaves running work alone.
+	if browserOperatorPaused(dir) {
+		t.Fatal("automatic pause reported as an operator pause")
+	}
+	ctx := context.Background()
+	if _, err := BrowserControlStatus(ctx, dir, "paused"); err != nil {
+		t.Fatal(err)
+	}
+	if !browserOperatorPaused(dir) {
+		t.Fatal("operator pause not reported")
 	}
 }

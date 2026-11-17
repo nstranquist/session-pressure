@@ -29,13 +29,25 @@ func browserControlMaxRuntime(state BrowserControl) time.Duration {
 }
 
 // browserControlStops decides whether the resident stops one automation
-// browser. A pause stops every browser, and no browser outlives the finite
-// lifetime. There is no count limit: memory admission (browser_admission.go,
-// WORK-1114) decides how many run. Before 2026-11-17 an unpaused host spared
-// only the first young browser and stopped every other one, a fixed cap of
-// one that killed a CSP sweep's session when a screenshot ran beside it.
-func browserControlStops(blocked bool, age, maxRuntime time.Duration) bool {
-	return blocked || age >= maxRuntime
+// browser. The operator's pause stops every browser, and no browser outlives
+// the finite lifetime. The automatic CPU pause only gates admission: a
+// running browser ends within its lifetime anyway, and stopping it throws
+// away the job and makes the agent retry it, which adds load. There is no
+// count limit: memory admission (browser_admission.go, WORK-1114) decides how
+// many run. Before 2026-11-17 an unpaused host spared only the first young
+// browser and stopped every other one, a fixed cap of one that killed a CSP
+// sweep's session when a screenshot ran beside it.
+func browserControlStops(operatorPaused bool, age, maxRuntime time.Duration) bool {
+	return operatorPaused || age >= maxRuntime
+}
+
+// browserOperatorPaused reports an explicit operator pause. Read errors keep
+// the job running; the 120 s lifetime still bounds it.
+func browserOperatorPaused(dir string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	state, err := BrowserControlStatus(ctx, dir, "")
+	return err == nil && state.Mode == "paused"
 }
 
 // EnforceBrowserControl is authorized by the host-wide opt-in. Only automation
@@ -59,7 +71,7 @@ func EnforceBrowserControl(ctx context.Context, dir string) error {
 		if err != nil || uid != os.Getuid() || (root.StartIdentity != "" && identity != root.StartIdentity) {
 			continue
 		}
-		if !browserControlStops(state.Blocked, time.Since(started), maxRuntime) {
+		if !browserControlStops(state.Mode == "paused", time.Since(started), maxRuntime) {
 			continue
 		}
 		again, againUID, err := processGuardIdentity(pid)

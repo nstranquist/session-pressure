@@ -1902,7 +1902,11 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 			fmt.Fprintln(streams.Stderr, "browser runtime limit reached (120s)")
 			stopBrowser()
 		case <-browserPoll:
-			if err := CheckBrowserWork(context.Background()); err != nil {
+			// The automatic CPU pause only gates admission: an admitted job
+			// finishes within its 120 s lifetime instead of being lost and
+			// retried. Only the operator's pause stops running work.
+			if browserOperatorPaused(coordinator.Dir) {
+				fmt.Fprintln(streams.Stderr, "browser work paused by the operator")
 				stopBrowser()
 			}
 		case <-forceKill:
