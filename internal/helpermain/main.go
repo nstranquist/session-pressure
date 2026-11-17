@@ -14,7 +14,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 	"time"
 
@@ -293,29 +292,7 @@ func configureMonitor(dir string, sampler *sessionpressure.Sampler, store *sessi
 	return monitor
 }
 
-// residentMaxProcs is the resident's GOMAXPROCS. The resident is a
-// timer-driven sampler: each tick is a few syscalls and small scans with
-// little parallel work. With one P per core (14 on this Mac) every wakeup
-// spread work across idle threads and woke them again (pthread_cond_signal
-// and kevent were about 30% of the idle profile, WORK-1315), and GC ran up
-// to four mark workers. Two Ps keep one free while a scan or syscall holds
-// the other. An explicit GOMAXPROCS in the environment still wins.
-const residentMaxProcs = 2
-
-func residentGOMAXPROCS(environment string, cpus int) int {
-	if strings.TrimSpace(environment) != "" {
-		return 0 // the runtime already applied the operator's value
-	}
-	return max(1, min(residentMaxProcs, cpus))
-}
-
 func run(ctx context.Context) error {
-	// Set only in the resident, not in work-run or child modes: those run
-	// operator commands, and children inherit the environment, which this
-	// does not change.
-	if procs := residentGOMAXPROCS(os.Getenv("GOMAXPROCS"), runtime.NumCPU()); procs > 0 {
-		runtime.GOMAXPROCS(procs)
-	}
 	dir, err := sessionpressure.DataDir()
 	if err != nil {
 		return err

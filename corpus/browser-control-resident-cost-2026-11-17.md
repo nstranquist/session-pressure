@@ -1,7 +1,7 @@
 # Browser control: resident CPU cost and enforcement gate
 
 Owner: claude, session e45120b4.
-Status: idle budget met 2026-11-17 (guard idle duty 0.194% against 0.25%, RSS peak 33 MB against 44 MB, installed 6c67fc0). Work: WORK-1141 (follow-up of WORK-1065).
+Status: idle budget met; WORK-1315 trimmed the remaining idle costs (2026-11-17).
 
 ## Problem
 
@@ -215,20 +215,62 @@ left the window. Readings at 20:35Z, 20:44Z and 20:53Z: 0.261%, 0.228%,
 In the 6c67fc0 profile the disk-write per-process pass takes 0.13s in 600s,
 about 10 passes at 13 ms (it was about 40 passes).
 
+## WORK-1315: remaining idle costs (2026-11-17 22:10Z, installed fe40179)
+
+Baseline: a 10-minute in-place profile of 6c67fc0 (21:25Z) took 1.00 s of
+CPU (0.17%). Runtime thread wakeups were about 300 ms, `Sampler.Sample`
+160 ms, the disk observer 120 ms, browser enforcement 80 ms, GC 80 ms.
+
+Changes in fe40179:
+
+- `proc_pid_rusage` is skipped for rows of another effective uid. A live
+  probe showed 0 of 211 such rows readable for a non-root caller, so the
+  skip changes no result. Accessible PIDs after install: 758 of 974, the same
+  split as before. A darwin test checks that every skipped row is refused.
+- Browser enforcement reads `kern.proc.uid`. A probe timed it about 10% under
+  `kern.proc.all` (91-102 us against 98-111 us a call).
+- Disk observer: writer totals are cached by a generation that moves only on
+  a process pass or prune. Point slices are pruned in place.
+- Identity catalog: the overlay is stat'ed at most every 5 s and the catalog
+  recompiles only when the overlay changed. It used to stat on every lookup
+  and recompile every 5 s.
+- `privacySafeExecutable` returns already safe names without a rune slice.
+- Sampler (option 2): the resident samples every 15 s but refreshes its
+  inventory every 180 s. Trees, host consumers and memory families are now
+  reused while the enriched inventory and the catalog are unchanged. Top
+  trees are cloned before the per-sample semantic-state pass.
+
+Result, steady-state profile 22:00Z: 0.89 s in 600 s (0.15%), against 1.00 s.
+`Sampler.Sample` 160 to 40 ms, disk observer 120 to 100 ms, GC 80 to 60 ms,
+writer aggregation gone. Browser enforcement read 80 to 120 ms, within the
+profile's 10 ms resolution and host load; the probe above is the cleaner
+measure. A first profile right after install (21:49Z) read 1.05 s because it
+held one-time startup work, mainly the first full read of the day's 31 MB
+work-event shard by the interrupt counter (90 ms).
+
+Tried and reverted: resident GOMAXPROCS=2. Thread wakeups (`mcall`,
+`pthread_cond_signal`, `kevent`) stayed at about 300 ms, so the cap gave no
+measured gain and was removed.
+
+Tests: full `go test ./...` passed on the Linux gate runner. The darwin-only tests
+compile but were not run, because native Mac tests are paused (WORK-775).
+The installed resident exercised the darwin paths: inventory from libproc,
+disk attribution counts unchanged, browser control running.
+
 ## Open
 
-- The pressure sample is the largest cost (0.24s in 600s), then the disk
-  observer (0.21s, of which `aggregateWritersLocked` re-sums every writer
-  point on every 15s tick, 0.05s) and browser enforcement (0.16s).
-- `pid_rusage` on other users' processes always fails (277 pids) and can be
-  skipped by uid.
+- Runtime wakeups are now the largest share (about 300 ms in 600 s). The
+  5-second `waitForResidentSample` poll, the 15-second disk tick and the
+  sample timer each wake the runtime. Merging timers or making the poll
+  event-driven (the coordinator already writes `work-capacity.notify`) is
+  the next lever.
+- Browser enforcement still reads the process table on every sample. Reusing
+  the sampler's inventory would remove it, but the inventory can be 180 s
+  old, which delays a stop. That trade needs a decision.
+- The disk process pass needs every row for its total PID count, so it keeps
+  `kern.proc.all`.
+- After a restart the interrupt counter reads the whole day's work-event
+  shard once (90 ms on a 31 MB shard). `work-events.sqlite` already indexes
+  those rows.
 - The control record is written on every sample while browsers are blocked.
   That is pressure-time cost, not idle cost.
-- The control record is written on every sample while browsers are blocked
-  (`LastSample` advances). That is pressure-time cost, not idle cost.
-- The pressure sample itself is now the largest cost.
-- `automatedBrowserProcesses` still scans every process with arguments on each
-  sample. Reusing the sampler's process list would remove that scan.
-- `attachWrapperInterruptToSummary` re-parses the day's work-event shards on
-  every heartbeat (about 6% of the live-data profile, growing with the day's
-  work volume). `work-events.sqlite` already indexes those rows.
