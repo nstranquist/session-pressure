@@ -1,7 +1,7 @@
 # Browser control: resident CPU cost and enforcement gate
 
 Owner: claude, session e45120b4.
-Status: implemented and tested, 2026-11-17. Work: WORK-1141 (follow-up of WORK-1065).
+Status: browser-control saving installed 2026-11-17; idle budget still exceeded, see Correction. Work: WORK-1141 (follow-up of WORK-1065).
 
 ## Problem
 
@@ -71,10 +71,56 @@ Tests: `TestBrowserControlSteadyStateDoesNotRewrite`,
 and `TestNewMonitorDoesNotEnforceBrowsersByDefault`, plus the resident wiring
 check in `internal/helpermain`.
 
+## Correction after install (2026-11-17 18:30Z)
+
+The change above landed as c2c2594 and was installed at 16:59Z
+(`make promote-session-pressure`; CLI, front door and helper agree). Live
+idle duty did not fall: `ps` CPU time of the helper over 30 minutes was 0.30%,
+and the resident's own window read 0.31-0.36%. The per-evaluation saving is
+real but was not the main cause.
+
+The 11:39Z step is a cadence change. `recoverySampleDelay` caps the normal
+90 s sample interval at 15 s whenever browser control is in `auto` mode, so
+browser admission always has resident CPU evidence younger than 30 s. The host
+opted in at about 11:35Z, so the resident went from about 40 to 240 samples
+per hour at level normal. Duty is CPU per wall second, so it rose with the
+sample rate. The 15 s cap protects a real freshness contract
+(`Waiting for fresh resident CPU evidence` blocks browsers past 30 s), and
+browser sessions start about once a minute on this host, so a demand-only
+cadence would rarely leave 15 s.
+
+Measured costs per 15 s sample on this host:
+
+| Item | Cost | Duty at 15 s |
+| --- | --- | --- |
+| whole sample (`sample_cpu_time_avg_ms`) | 8.3 ms | 0.055% |
+| automation-browser scan (1,639 processes, 29 browser-named) | 1.4 ms | 0.009% |
+| 24 h wrapper-interrupt recount, per 5 min heartbeat | about 100 ms | 0.03% |
+| interval CPU (`ps`) | about 45 ms | 0.30% |
+
+A memo of the inventory-derived views (trees, consumers, families) was tried
+and dropped: an A/B over 15 minutes on two identical data copies gave 0.187%
+without and 0.188% with it.
+
+The harness on a data copy reads about 0.19%, the live resident about 0.30%.
+The difference comes from live-only inputs that a copy cannot reproduce (lease
+and notify churn from agents, real disk writes for the disk-write observer,
+browser enforcement). A copy cannot run the real helper safely, because the
+helper signals live browsers.
+
+## In-place CPU profile
+
+The helper takes one bounded CPU profile of itself on `SIGUSR2`
+(`internal/helpermain/cpu_profile.go`): 10 minutes, written to
+`<data dir>/profiles/cpu-<UTC time>.pprof` with mode 0600. Nothing runs until
+the signal, and a second signal during a profile is ignored. Signal only a
+resident whose `source_revisions.installed_helper` includes this change: an
+older helper has no handler, and the default action of `SIGUSR2` ends it.
+
 ## Open
 
-- Installed resident duty after this change: not yet measured. Measure
-  `guard_idle_cpu_duty_percent` for 24 h at host level normal after install.
+- Live duty is 0.30% against 0.25%. Next: profile the installed resident in
+  place (`kill -USR2`), then fix the largest live-only cost it shows.
 - `automatedBrowserProcesses` still scans every process with arguments on each
   sample. Reusing the sampler's process list would remove that scan.
 - `attachWrapperInterruptToSummary` re-parses the day's work-event shards on
