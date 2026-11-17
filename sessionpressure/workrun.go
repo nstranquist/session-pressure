@@ -465,7 +465,14 @@ type workAdmissionGate struct {
 	// With WorkLimits.MemoryAdmission = enforce it arms the memory-headroom
 	// and swap-thrash guards independently of EnforceAdmission. Nil means
 	// active (tests and callers without a policy file).
-	memoryGuardsActive                  func() bool
+	memoryGuardsActive func() bool
+	// resourceHeadroom returns this operation's live resource decision
+	// (work_resource_headroom.go). Nil, or false, fails open.
+	resourceHeadroom func(Admission) (ShadowResourceDecision, bool)
+	// resourceDecision is the last live resource decision; resourceDeferred
+	// records that it held the operation at least once.
+	resourceDecision                    ShadowResourceDecision
+	resourceDeferred                    bool
 	refreshLimits                       func() WorkLimits
 	cpuRed                              int
 	cpuRecovered                        int
@@ -710,10 +717,61 @@ func (gate *workAdmissionGate) storageGraceError(admission Admission, dimension 
 // memory-headroom and swap-thrash guards have their own switch, so red-level
 // host blocking can stay off while the queue still respects memory.
 func (gate *workAdmissionGate) memoryGuardsEnforced() bool {
-	if gate.limits.MemoryAdmission != MemoryAdmissionEnforce {
+	if gate.limits.ResourceAdmission() || gate.limits.MemoryAdmission != MemoryAdmissionEnforce {
+		// Under resource admission the ladder owns memory and swap.
 		return false
 	}
 	return gate.memoryGuardsActive == nil || gate.memoryGuardsActive()
+}
+
+// resourceAdmissionLive reports whether resource-headroom admission decides
+// this operation (WorkLimits.Admission = resource on an enabled policy).
+func (gate *workAdmissionGate) resourceAdmissionLive() bool {
+	if gate == nil || !gate.limits.ResourceAdmission() || gate.resourceHeadroom == nil {
+		return false
+	}
+	return gate.memoryGuardsActive == nil || gate.memoryGuardsActive()
+}
+
+// resourceAdmissionDecision holds new work that the resource ladder sends to
+// queue or relieve. Relieve holds too: no live step restarts a memory family
+// yet, so the operation waits for the headroom it lacks. Admit, throttle and
+// remote fall through. CPU never holds (the ladder only throttles on CPU),
+// and the live path applies only the disk I/O part of a throttle
+// (workrun.go, liveResourceThrottle). A lease this process owns is never
+// held. A missing sample and an empty queue fail open inside the ladder.
+func (gate *workAdmissionGate) resourceAdmissionDecision(admission Admission, ownsLease bool) (workAdmissionDecision, bool) {
+	if ownsLease || !gate.resourceAdmissionLive() {
+		return workAdmissionDecision{}, false
+	}
+	decision, ok := gate.resourceHeadroom(admission)
+	if !ok {
+		return workAdmissionDecision{}, false
+	}
+	gate.resourceDecision = decision
+	if decision.Step != ResourceStepQueue && decision.Step != ResourceStepRelieve {
+		return workAdmissionDecision{}, false
+	}
+	gate.resourceDeferred = true
+	dimension := decision.Dimension
+	if dimension == ResourceDimensionLevel {
+		// Critical is a memory level; holders report the memory dimension.
+		dimension = ResourceDimensionMemory
+	}
+	return workAdmissionDecision{Allowed: false, Dimension: dimension, Reason: "resource headroom: " + decision.Detail(), RetryInterval: WorkAdmissionRetryInterval}, true
+}
+
+// liveResourceThrottle is the part of the last live decision that the run
+// applies: background disk I/O only. CPU parallelism stays a recorded
+// shadow value: a parallelism limit is fixed for the life of the command
+// while CPU contention changes by the second, and the measured busy cores of
+// completed runs were 0.13 to 0.23 of the prediction (corpus,
+// resource-admission-live-2026-11-17.md).
+func (gate *workAdmissionGate) liveResourceThrottle() WorkThrottle {
+	if gate == nil || !gate.resourceAdmissionLive() || gate.resourceDecision.Step != ResourceStepThrottle {
+		return WorkThrottle{}
+	}
+	return WorkThrottle{BackgroundIO: gate.resourceDecision.BackgroundIO}
 }
 
 // memoryHeadroomDecision holds new work under enforced memory admission
@@ -747,6 +805,9 @@ func (gate *workAdmissionGate) ObserveOwned(admission Admission, immediate bool)
 func (gate *workAdmissionGate) observe(admission Admission, immediate, ownsLease bool) workAdmissionDecision {
 	if gate.refreshLimits != nil {
 		gate.limits = gate.refreshLimits()
+	}
+	if decision, ok := gate.resourceAdmissionDecision(admission, ownsLease); ok {
+		return decision
 	}
 	if decision, ok := gate.swapThrashDecision(admission, ownsLease); ok {
 		return decision
@@ -1141,6 +1202,11 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		event.Weight = weight
 		event.SessionDigest = sessionDigest
 		event.ThrottleCores = throttle.Cores
+		event.ThrottleBackgroundIO = throttle.BackgroundIO
+		if admissionGate != nil && admissionGate.resourceDecision.Step != "" {
+			event.ResourceDecision = admissionGate.resourceDecision.Label()
+			event.ResourceRule = ResourceHeadroomRuleVersion
+		}
 		event.CommandDigest = commandDigest
 		event.ToolFamily = toolFamily
 		event.PlacementKey = placementKey
@@ -1216,6 +1282,10 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		remoteEligible: options.Placement != WorkPlacementLocal && (toolFamily == ToolFamilyGo || toolFamily == ToolFamilyNode),
 		owners:         func(leases []WorkLeaseStatus) map[string]string { return eventStore.leaseSessionDigests(leases) }}
 	shadowResource.decide(initialStatus.Leases, time.Now()).apply(&queuedEvent)
+	// The live probe never offers remote: a live hold must not turn into a
+	// local start because the shadow would have sent the work away.
+	liveResource := &shadowResourceProbe{memory: shadowMemory, session: sessionDigest, owners: shadowResource.owners}
+	coordinator.ResourceFit = coordinator.Limits.ResourceAdmission() && configuredWorkPolicyEnabled(coordinator.Dir)
 	coordinator.PredictedPeakMB = shadowMemory.prediction(time.Now())
 	if err := appendEvent(queuedEvent); err != nil {
 		return 1, fmt.Errorf("persist queued work event: %w", err)
@@ -1354,6 +1424,16 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		classPeakRSSP90MB:    newCalibratedClassPeakRSSP90(coordinator.Dir, options.Class, coordinator.Now),
 		freeWeightedCapacity: func() (int, bool) { return coordinatorFreeCapacity(coordinator) },
 		memoryGuardsActive:   func() bool { return configuredWorkPolicyEnabled(coordinator.Dir) },
+		resourceHeadroom: func(Admission) (ShadowResourceDecision, bool) {
+			statusCtx, statusCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer statusCancel()
+			status, statusErr := coordinator.StatusSnapshot(statusCtx)
+			if statusErr != nil {
+				// Unknown coordinator state fails open.
+				return ShadowResourceDecision{}, false
+			}
+			return liveResource.decide(status.Leases, time.Now()), true
+		},
 		memoryHeadroom: func(admission Admission) (ShadowMemoryDecision, int, bool) {
 			statusCtx, statusCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 			defer statusCancel()
@@ -1409,6 +1489,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 				WorkBlockerCapacity:    workCapacityReason(status),
 				WorkBlockerFairness:    "another waiter is the oldest feasible operation",
 				WorkBlockerReservation: "a protected waiter owns the next reservation",
+				WorkBlockerResource:    "the next start does not fit measured memory headroom; retrying as leases finish",
 				WorkBlockerUpgrade:     "a legacy coordinator lease must finish before the state upgrade",
 				WorkBlockerStateLock:   "coordinator state lock is busy under host contention; retrying within --wait",
 			}[blocker],
@@ -1661,6 +1742,11 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	}
 	childExecutable, childArgs := options.Command[0], options.Command[1:]
 	ioWrapped := false
+	if !throttle.Active() {
+		// The caller's explicit opt-in wins; otherwise the live resource
+		// decision may ask for background disk I/O.
+		throttle = admissionGate.liveResourceThrottle()
+	}
 	if wrapper := throttle.IOWrapper(runtime.GOOS, nil); len(wrapper) > 0 {
 		childExecutable, childArgs, ioWrapped = wrapper[0], append(slices.Clone(wrapper[1:]), options.Command...), true
 	}

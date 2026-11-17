@@ -44,3 +44,5 @@ product decisions have all been reconstructed.
 
 - [Browser admission: memory-derived slots](browser-admission-2026-11-17.md): WORK-1114, no fixed browser slot, runtime-priced headroom admission, `--wait` through BROWSER_PAUSED.
 - [Work capacity raised to 20](work-capacity-20-2026-11-17.md): live cap had fallen back to the 12-unit default; raised to 20 from headroom evidence; delivery lane ceiling shown not to be the limit; memory guard still needs enforcement.
+- [Memory guards switch](memory-guards-switch-2026-11-17.md): WORK-1125, `memory_admission = enforce` arms memory headroom and swap-thrash serialization without `enforce_admission`.
+- [Resource admission live, unit cap removed](resource-admission-live-2026-11-17.md): WORK-1125/WORK-1065, `work_limits.admission = resource` default, rule v3, lock fit check, live proof and deviations. KEP: `docs/active/resource-admission/`.

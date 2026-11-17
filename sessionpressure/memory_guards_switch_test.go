@@ -12,19 +12,24 @@ import (
 func TestMemoryGuardsSwitchIsIndependentOfEnforceAdmission(t *testing.T) {
 	for _, test := range []struct {
 		name                       string
+		admission                  string
 		enabled, enforce           bool
 		memoryAdmission            string
 		wantMemory, wantSwapThrash bool
 	}{
-		{"observe, shadow", true, false, MemoryAdmissionShadow, false, false},
-		{"observe, unset", true, false, "", false, false},
-		{"observe, enforce memory", true, false, MemoryAdmissionEnforce, true, true},
-		{"enforcing profile, shadow", true, true, MemoryAdmissionShadow, false, true},
-		{"enforcing profile, enforce memory", true, true, MemoryAdmissionEnforce, true, true},
-		{"disabled policy", false, true, MemoryAdmissionEnforce, false, false},
+		{"observe, shadow", WorkAdmissionWeighted, true, false, MemoryAdmissionShadow, false, false},
+		{"observe, unset", WorkAdmissionWeighted, true, false, "", false, false},
+		{"observe, enforce memory", WorkAdmissionWeighted, true, false, MemoryAdmissionEnforce, true, true},
+		{"enforcing profile, shadow", WorkAdmissionWeighted, true, true, MemoryAdmissionShadow, false, true},
+		{"enforcing profile, enforce memory", WorkAdmissionWeighted, true, true, MemoryAdmissionEnforce, true, true},
+		{"disabled policy", WorkAdmissionWeighted, false, true, MemoryAdmissionEnforce, false, false},
+		// Resource admission guards memory and swap through its own ladder.
+		{"resource admission, observe", WorkAdmissionResource, true, false, "", true, true},
+		{"resource admission, disabled policy", WorkAdmissionResource, false, false, "", false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			policy := DefaultPolicy(36 * 1024)
+			policy.WorkLimits.Admission = test.admission
 			policy.Enabled = test.enabled
 			policy.EnforceAdmission = test.enforce
 			policy.WorkLimits.MemoryAdmission = test.memoryAdmission
@@ -139,6 +144,7 @@ func TestMemoryHeadroomSwitchKeepsFailOpenRules(t *testing.T) {
 func TestDoctorSwapThrashWarningSaysWhetherItSerializes(t *testing.T) {
 	policy := DefaultPolicy(36 * 1024)
 	policy.Enabled, policy.EnforceAdmission = true, false
+	policy.WorkLimits.Admission = WorkAdmissionWeighted
 	in := PressureDoctorInput{
 		Now: time.Now(), Policy: policy, HasLatest: true,
 		Latest: Snapshot{SwapIOAvailable: true, SwapThrashLatched: true, SwapOutMBPerSecond: 80, SwapThrashCause: "agent"},

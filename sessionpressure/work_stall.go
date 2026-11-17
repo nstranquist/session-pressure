@@ -55,10 +55,14 @@ type QueueStallDetector struct {
 	since     time.Time
 	leases    map[string]bool
 	alerted   *QueueStall
+	// fits judges whether a waiter could start now. Nil uses weighted
+	// capacity. Under resource admission it is the memory fit check, so a
+	// waiter that rightly waits for memory is not a stall.
+	fits func(WorkWaiterStatus) bool
 }
 
 // stallCandidate returns the first live, unparked waiter that fits now.
-func stallCandidate(status WorkStatus, admission Admission, effectiveCapacity int, now time.Time) (WorkWaiterStatus, bool) {
+func stallCandidate(status WorkStatus, admission Admission, effectiveCapacity int, now time.Time, fits func(WorkWaiterStatus) bool) (WorkWaiterStatus, bool) {
 	// Allowed already encodes the policy: with enforcement on, red refuses;
 	// in observe mode (guards disabled 2026-11-15) red admits, so an idle
 	// queue at red is a real stall.
@@ -68,6 +72,12 @@ func stallCandidate(status WorkStatus, admission Admission, effectiveCapacity in
 	free := effectiveCapacity - status.Used
 	for _, waiter := range status.Waiters {
 		if waiter.PressureParked || now.Sub(waiter.HeartbeatAt) > queueStallHeartbeatLimit {
+			continue
+		}
+		if fits != nil {
+			if fits(waiter) {
+				return waiter, true
+			}
 			continue
 		}
 		if waiter.Weight <= free {
@@ -94,7 +104,7 @@ func (detector *QueueStallDetector) Observe(now time.Time, status WorkStatus, ad
 		}
 	}
 	detector.leases = current
-	candidate, stalled := stallCandidate(status, admission, effectiveCapacity, now)
+	candidate, stalled := stallCandidate(status, admission, effectiveCapacity, now, detector.fits)
 	if acquired || !stalled {
 		if detector.alerted != nil {
 			ended = detector.alerted
@@ -384,6 +394,22 @@ func (monitor *Monitor) observeQueueStall(snapshot Snapshot) {
 	policy := monitor.stallGuardPolicy(snapshot.PhysicalMemoryMB)
 	admission := AdmissionForWorkSnapshot(snapshot, policy, "resident-stall-guard")
 	capacity := warningEffectiveCapacity(admission, normalizeWorkLimits(policy.WorkLimits))
+	monitor.queueStalls.fits = nil
+	if policy.WorkLimits.ResourceAdmission() {
+		sample := workResourceFitSample{armed: true, snapshot: snapshot, ok: true}
+		leases := make([]WorkLeaseRecord, 0, len(status.Leases))
+		for _, lease := range status.Leases {
+			record := WorkLeaseRecord{Class: lease.Class, StartedAt: lease.StartedAt, PredictedPeakMB: lease.PredictedPeakMB}
+			if lease.Parked {
+				parkedAt := lease.StartedAt
+				record.ParkedAt = &parkedAt
+			}
+			leases = append(leases, record)
+		}
+		monitor.queueStalls.fits = func(waiter WorkWaiterStatus) bool {
+			return resourceFit(leases, WorkLeaseRecord{Class: waiter.Class, PredictedPeakMB: waiter.PredictedPeakMB}, sample, snapshot.Timestamp) == nil
+		}
+	}
 	started, ended := monitor.queueStalls.Observe(snapshot.Timestamp, status, admission, capacity)
 	if ended != nil {
 		RecordQueueStall(monitor.Store.Dir, "work_queue_stall_cleared", *ended)

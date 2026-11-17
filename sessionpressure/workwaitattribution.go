@@ -21,6 +21,7 @@ const (
 	WaitCauseQueueCapacity    = "queue_capacity"
 	WaitCauseQueueFairness    = "queue_fairness"
 	WaitCauseQueueReservation = "queue_reservation"
+	WaitCauseQueueResource    = "queue_resource"
 	WaitCauseQueueOther       = "queue_other"
 	WaitCausePressureCPU      = "pressure_cpu"
 	WaitCausePressureMemory   = "pressure_memory"
@@ -215,6 +216,8 @@ func (operation *waitOperation) causes() map[string]int64 {
 			cause = WaitCauseQueueFairness
 		case WorkBlockerReservation:
 			cause = WaitCauseQueueReservation
+		case WorkBlockerResource:
+			cause = WaitCauseQueueResource
 		}
 		parts[cause] += operation.queueMS
 	}

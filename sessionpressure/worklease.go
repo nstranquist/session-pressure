@@ -63,9 +63,12 @@ const maximumWorkClockSkew = time.Minute
 const WorkReservationAge = 30 * time.Second
 
 var (
-	ErrWorkCapacity       = errors.New("host heavy-work capacity unavailable")
-	ErrWorkFairness       = errors.New("host heavy-work fairness reservation unavailable")
-	ErrWorkReservation    = errors.New("host heavy-work protected reservation unavailable")
+	ErrWorkCapacity    = errors.New("host heavy-work capacity unavailable")
+	ErrWorkFairness    = errors.New("host heavy-work fairness reservation unavailable")
+	ErrWorkReservation = errors.New("host heavy-work protected reservation unavailable")
+	// ErrWorkResource means the selected start does not fit measured memory
+	// headroom at the moment it would take its lease (resource admission).
+	ErrWorkResource       = errors.New("host heavy-work memory headroom unavailable")
 	ErrWorkUpgradePending = errors.New("host heavy-work state upgrade is waiting for legacy leases to finish")
 )
 
@@ -212,6 +215,9 @@ type WorkWaiterRecord struct {
 	ScheduleRunID string    `json:"schedule_run_id,omitempty"`
 	AgentKind     string    `json:"agent_kind,omitempty"`
 	BypassCount   int       `json:"bypass_count,omitempty"`
+	// PredictedPeakMB is the waiter's memory prediction at admission, so a
+	// reader can tell whether it fits measured headroom (stall guard).
+	PredictedPeakMB int64 `json:"predicted_peak_mb,omitempty"`
 	// LastBypassedAt is the retained schema-3 wire name. It records the first
 	// bypass and is intentionally set once so the age reservation cannot slide.
 	LastBypassedAt  *time.Time `json:"last_bypassed_at,omitempty"`
@@ -316,6 +322,8 @@ type WorkWaiterStatus struct {
 	// OverridePosition is this waiter's 1-based place in the operator override
 	// sequence; 1 is the active head. Zero means the waiter is not pinned.
 	OverridePosition int `json:"override_position,omitempty"`
+	// PredictedPeakMB is the waiter's memory prediction at admission.
+	PredictedPeakMB int64 `json:"predicted_peak_mb,omitempty"`
 }
 
 type workState struct {
@@ -344,6 +352,10 @@ type WorkStatus struct {
 	Capacity      int `json:"capacity"`
 	Used          int `json:"used"`
 	Available     int `json:"available"`
+	// Admission is what decides starts: "resource" (measured headroom; the
+	// capacity is then unbounded and used/available are telemetry) or
+	// "weighted" (the unit cap).
+	Admission string `json:"admission,omitempty"`
 	// ParkedWeight is weight held by idle parked leases and not charged.
 	ParkedWeight               int                `json:"parked_weight,omitempty"`
 	Leases                     []WorkLeaseStatus  `json:"leases"`
@@ -405,6 +417,11 @@ type WorkCoordinator struct {
 	// broad class figure (a 15 MB restic backup charged 3.3 GB as "heavy",
 	// 2026-11-16).
 	PredictedPeakMB int64
+	// ResourceFit arms the memory fit check under the state lock (resource
+	// admission on an enabled policy). The admission gate decides before the
+	// lease; this check closes the window in which concurrent starts all see
+	// the same headroom, now that no unit cap bounds them.
+	ResourceFit bool
 }
 
 func NewWorkCoordinator(dir string, limits WorkLimits) *WorkCoordinator {
@@ -600,8 +617,10 @@ func (coordinator *WorkCoordinator) validate() error {
 // normalize Limits in place, which raced when Status and BindPID were invoked
 // concurrently on the same coordinator. Callers may construct a coordinator
 // directly in tests and integrations, so normalize on read without mutation.
+// limits are the limits the coordinator admits against. Under resource
+// admission the unit ceilings are not limits (WorkLimits.admissionLimits).
 func (coordinator *WorkCoordinator) limits() WorkLimits {
-	return normalizeWorkLimits(coordinator.Limits)
+	return normalizeWorkLimits(coordinator.Limits).admissionLimits()
 }
 
 func (coordinator *WorkCoordinator) readState() (workState, error) {
@@ -1433,7 +1452,7 @@ func (coordinator *WorkCoordinator) status(state workState, prunedLeases, pruned
 			OperationID: record.OperationID, Class: record.Class, Weight: record.Weight,
 			PID: record.PID, QueuedAt: record.QueuedAt, HeartbeatAt: record.HeartbeatAt, Position: index + 1,
 			WaitMS: max(int64(0), now.Sub(record.QueuedAt).Milliseconds()), BypassCount: record.BypassCount,
-			Protected: protected, ProtectionReason: protectionReason,
+			Protected: protected, ProtectionReason: protectionReason, PredictedPeakMB: record.PredictedPeakMB,
 			ReservationKind: record.ReservationKind, ReservedAt: record.ReservedAt,
 			PressureParked:   record.pressureParked(),
 			StartExpired:     record.startExpired(now),
@@ -1470,6 +1489,7 @@ func (coordinator *WorkCoordinator) status(state workState, prunedLeases, pruned
 		Capacity:                   limits.Capacity,
 		Used:                       used,
 		Available:                  max(0, limits.Capacity-used),
+		Admission:                  workAdmissionMode(limits),
 		ParkedWeight:               parkedWeight,
 		Leases:                     leases,
 		Waiters:                    waiters,
@@ -1766,6 +1786,7 @@ func (lease *WorkLease) ReserveForPressure(ctx context.Context) (*WorkWaiter, Wo
 		OperationID: lease.record.OperationID, Class: lease.record.Class, Weight: lease.record.Weight,
 		PID: lease.coordinator.PID, OwnerIdentity: ownerIdentity, QueuedAt: queuedAt, HeartbeatAt: now,
 		ReservationKind: WorkReservationPressure, ReservedAt: &reservedAt, ProtectedAt: &protectedAt,
+		PredictedPeakMB: lease.record.PredictedPeakMB,
 	}
 	found := false
 	status, err := lease.coordinator.withState(ctx, func(state *workState) error {
@@ -1874,6 +1895,7 @@ func (coordinator *WorkCoordinator) AcquireOperationWithCapacity(ctx context.Con
 	if effectiveCapacity < limits.Capacity {
 		green = workGreenExpressWindow{}
 	}
+	fit := coordinator.resourceFitSample()
 	status, err := coordinator.withState(ctx, func(state *workState) error {
 		if len(state.Waiters) > 0 {
 			return fmt.Errorf("%w: operation=%s queued_operation=%s position=1", ErrWorkFairness, operationID, state.Waiters[0].OperationID)
@@ -1886,6 +1908,9 @@ func (coordinator *WorkCoordinator) AcquireOperationWithCapacity(ctx context.Con
 			if !(green.Active && IsExpressClass(class) && used+record.Weight <= effectiveCapacity+green.Overcommit) {
 				return fmt.Errorf("%w: class=%s weight=%d used=%d capacity=%d", ErrWorkCapacity, class, record.Weight, used, effectiveCapacity)
 			}
+		}
+		if err := resourceFit(state.Leases, record, fit, coordinator.now()); err != nil {
+			return err
 		}
 		state.Leases = append(state.Leases, record)
 		return nil
@@ -1924,7 +1949,8 @@ func (coordinator *WorkCoordinator) RegisterWaiter(ctx context.Context, class Wo
 		OperationID: operationID, Class: class, Weight: weight, PID: coordinator.PID,
 		OwnerIdentity: ownerIdentity, QueuedAt: now, HeartbeatAt: now,
 		OriginKind: stamp.Kind, ScheduleID: stamp.ScheduleID, ScheduleRunID: stamp.ScheduleRunID, AgentKind: stamp.AgentKind,
-		Interactive: coordinator.Interactive && stamp.ScheduleID == "",
+		Interactive:     coordinator.Interactive && stamp.ScheduleID == "",
+		PredictedPeakMB: max(coordinator.PredictedPeakMB, 0),
 	}
 	status, err := coordinator.withState(ctx, func(state *workState) error {
 		for _, lease := range state.Leases {
@@ -1977,6 +2003,7 @@ func (waiter *WorkWaiter) TryAcquireWithCapacity(ctx context.Context, effectiveC
 	if effectiveCapacity < limits.Capacity {
 		green = workGreenExpressWindow{}
 	}
+	fit := waiter.coordinator.resourceFitSample()
 	status, err := waiter.coordinator.withState(ctx, func(state *workState) error {
 		now := waiter.coordinator.now()
 		position := -1
@@ -2028,6 +2055,9 @@ func (waiter *WorkWaiter) TryAcquireWithCapacity(ctx context.Context, effectiveC
 				protectedAt := now
 				state.Waiters[bypassedIndex].ProtectedAt = &protectedAt
 			}
+		}
+		if err := resourceFit(state.Leases, record, fit, now); err != nil {
+			return err
 		}
 		state.lastSelection = selection
 		state.lastShadowSelection = shadowSelection
@@ -2178,7 +2208,7 @@ func (waiter *WorkWaiter) WaitAcquireWithCapacity(ctx context.Context, effective
 			return lease, status, err
 		}
 		stateLock := transientWorkStateLock(err)
-		if !errors.Is(err, ErrWorkCapacity) && !errors.Is(err, ErrWorkFairness) && !errors.Is(err, ErrWorkReservation) && !stateLock {
+		if !errors.Is(err, ErrWorkCapacity) && !errors.Is(err, ErrWorkFairness) && !errors.Is(err, ErrWorkReservation) && !errors.Is(err, ErrWorkResource) && !stateLock {
 			return nil, status, errors.Join(err, cancelWaiter())
 		}
 		if progress != nil {
@@ -2188,6 +2218,9 @@ func (waiter *WorkWaiter) WaitAcquireWithCapacity(ctx context.Context, effective
 			}
 			if errors.Is(err, ErrWorkReservation) {
 				blocker = WorkBlockerReservation
+			}
+			if errors.Is(err, ErrWorkResource) {
+				blocker = WorkBlockerResource
 			}
 			if stateLock {
 				blocker = WorkBlockerStateLock

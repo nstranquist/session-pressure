@@ -12,6 +12,9 @@ const (
 	// SwapThrashExternalDecision marks work the derate let through because
 	// the resident attributed the latched episode to non-agent memory demand.
 	SwapThrashExternalDecision = "swap_thrash_external"
+	// ResourceDeferredDecision marks work that live resource-headroom
+	// admission held before it started.
+	ResourceDeferredDecision = "resource_deferred"
 )
 
 // swapThrashDecision serializes new heavy work while the resident's swap
@@ -29,7 +32,8 @@ func (gate *workAdmissionGate) swapThrashDecision(admission Admission, ownsLease
 		gate.warningCapacityStatus == nil {
 		return workAdmissionDecision{}, false
 	}
-	if !gate.swapThrashEnforced && !gate.memoryGuardsEnforced() {
+	if gate.resourceAdmissionLive() || (!gate.swapThrashEnforced && !gate.memoryGuardsEnforced()) {
+		// Under resource admission the ladder owns swap thrash.
 		return workAdmissionDecision{}, false
 	}
 	if admission.Snapshot.SwapThrashCause == SwapThrashCauseExternal {
@@ -90,7 +94,7 @@ func (gate *workAdmissionGate) warningCapacityDecision(admission Admission, owns
 	if gate == nil || gate.class == "" {
 		return workAdmissionDecision{}, false
 	}
-	limits := normalizeWorkLimits(gate.limits)
+	limits := normalizeWorkLimits(gate.limits).admissionLimits()
 	if !limits.WarningCapacityEnabled {
 		// Balanced, Throughput, and Observe intentionally keep warning pressure
 		// advisory. Only Interactive opts into a lower arrival ceiling.
@@ -141,7 +145,7 @@ func (gate *workAdmissionGate) warningCapacityDecision(admission Admission, owns
 }
 
 func warningEffectiveCapacity(admission Admission, limits WorkLimits) int {
-	limits = normalizeWorkLimits(limits)
+	limits = normalizeWorkLimits(limits).admissionLimits()
 	if limits.WarningCapacityEnabled && warningPressureDimension(admission) != "" {
 		return limits.WarningCapacity
 	}

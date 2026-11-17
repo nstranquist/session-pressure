@@ -15,6 +15,9 @@ func stallTestPolicy(capacity int) Policy {
 	w.Capacity, w.WarningCapacity, w.ExpressTestWeight, w.TestWeight, w.ExpressBuildWeight, w.BuildWeight = capacity, 4, 1, 2, 2, 5
 	w.BrowserWeight, w.EmulatorWeight, w.HeavyWeight, w.BenchmarkWeight, w.ReclaimWeight = 2, 5, 6, 6, 1
 	w.WarningCapacityEnabled = false
+	// These tests pin the weighted stall rule; resource admission judges a
+	// waiter by memory fit (TestStallGuardUnderResourceAdmission).
+	w.Admission = WorkAdmissionWeighted
 	return policy
 }
 

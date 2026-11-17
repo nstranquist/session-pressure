@@ -186,6 +186,9 @@ func (gate *workAdmissionGate) decisionLabel() string {
 	if gate == nil {
 		return ""
 	}
+	if gate.resourceDeferred {
+		return ResourceDeferredDecision
+	}
 	if gate.swapThrashDeferred {
 		return SwapThrashDeferredDecision
 	}

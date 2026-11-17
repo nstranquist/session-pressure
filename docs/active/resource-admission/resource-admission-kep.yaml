@@ -1,0 +1,25 @@
+schema_version: 1
+title: Resource-headroom admission replaces the weighted unit cap
+slug: resource-admission
+authors: ['@claude']
+owning-surface: ndev.session.pressure
+status: in-progress
+maturity: alpha
+creation-date: "2026-11-17"
+last-updated: "2026-11-17"
+affected-surfaces: [ndev.session.pressure, ndev-commit-delivery]
+affected-packages: [sessionpressure, sessionpressurecmd]
+implementation-refs:
+  - sessionpressure/work_resource_headroom.go
+  - sessionpressure/workrun.go
+  - sessionpressure/worklease.go
+  - sessionpressure/policy.go
+  - sessionpressure/work_stall.go
+acceptance-criteria:
+  - work_limits.admission defaults to resource; capacity, warning_capacity, swap_thrash_capacity and fixed weights do not decide a start under it.
+  - Resource admission is live on an enabled policy with enforce_admission false; red-level host blocking stays off.
+  - Only memory headroom, swap activity and critical level hold a start, and only while another lease runs; a missing sample fails open.
+  - A memory fit check under the coordinator state lock closes the race between concurrent starts.
+  - Work events carry resource_decision, resource_rule and throttle_background_io; WorkStatus and doctor carry admission.
+  - ReadResourceHeadroom and DecideResourceAdmission are exported for the commit-delivery worker.
+verification: []

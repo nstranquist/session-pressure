@@ -1,6 +1,7 @@
 package sessionpressure
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"slices"
@@ -45,7 +46,16 @@ const (
 	// never queues work: it slows the work to one core, because CPU
 	// contention costs time and does not thrash the host. v1 was never
 	// installed, so no event carries it.
-	ResourceHeadroomRuleVersion = "mac-resource-headroom-v2"
+	//
+	// v3 (2026-11-17, live): the p90/p95 core predictor read 4 to 6 times
+	// the busy cores that completed runs measured (measured/predicted p50
+	// 0.13 to 0.23), so CPU throttled 657 of 1,551 replayed starts. v3
+	// predicts the median busy cores. A host with no running lease never
+	// waits: critical and thrash keep one start moving at one core. Thrash
+	// that the resident attributes to processes outside the coordinator
+	// does not queue agent work: queueing cannot end it, so the work runs
+	// with background disk I/O and the memory fit still applies.
+	ResourceHeadroomRuleVersion = "mac-resource-headroom-v3"
 
 	ResourceStepAdmit    = "admit"
 	ResourceStepThrottle = "throttle"
@@ -74,17 +84,23 @@ const (
 	// v1 build readable. No v2 decision uses them.
 	resourceReasonRedV1           = "red"
 	resourceHeadroomRuleVersionV1 = "mac-resource-headroom-v1"
+	// resourceHeadroomRuleVersionV2 keeps shadow rows from the 2026-11-17
+	// v2 install readable.
+	resourceHeadroomRuleVersionV2 = "mac-resource-headroom-v2"
 	resourceReasonDiskWrite       = "disk_write_high"
+	resourceReasonExternalThrash  = "external_thrash"
 	resourceReasonFairShare       = "fair_share"
 	resourceReasonReclaim         = "reclaimable_family"
 	resourceReasonPortable        = "portable"
 	resourceFallbackCores         = 2.0
 	resourceCoresKeyMinimum       = 3
 	resourceCoresScopeMin         = 5
-	resourceCoresKeyPercent       = 90
-	resourceCoresScopePct         = 95
-	resourceReserveDivisor        = 8
-	resourceFairShareMinimum      = 0.5
+	// resourceCoresPercent is the busy-cores percentile of every scope. The
+	// median: a completed run's busy cores is an average over its runtime,
+	// and a high percentile of averages overstates steady contention.
+	resourceCoresPercent     = 50
+	resourceReserveDivisor   = 8
+	resourceFairShareMinimum = 0.5
 	// resourceCPURamp is how long a new lease's predicted cores are charged.
 	// The resident samples CPU every 15 s under pressure and every 90 s when
 	// calm, so a lease is in the host figure after at most one calm interval.
@@ -137,13 +153,13 @@ func percentileFloat(values []float64, percent int) float64 {
 // conservative fallback until one run has been measured in some scope.
 func (history coreHistory) predict(class WorkClass, workload, key string) (float64, string, int) {
 	if samples := history.byKey[key]; key != "" && len(samples) >= resourceCoresKeyMinimum {
-		return percentileFloat(samples, resourceCoresKeyPercent), predictionByKey, len(samples)
+		return percentileFloat(samples, resourceCoresPercent), predictionByKey, len(samples)
 	}
 	if samples := history.byWorkload[workload]; workload != "" && len(samples) >= resourceCoresScopeMin {
-		return percentileFloat(samples, resourceCoresScopePct), predictionByLoad, len(samples)
+		return percentileFloat(samples, resourceCoresPercent), predictionByLoad, len(samples)
 	}
 	if samples := history.byClass[string(class)]; len(samples) >= resourceCoresScopeMin {
-		return percentileFloat(samples, resourceCoresScopePct), predictionByClass, len(samples)
+		return percentileFloat(samples, resourceCoresPercent), predictionByClass, len(samples)
 	}
 	return resourceFallbackCores, predictionFallback, 0
 }
@@ -267,7 +283,7 @@ var (
 	resourceDimensions = []string{ResourceDimensionNone, ResourceDimensionSample, ResourceDimensionLevel, ResourceDimensionSwap, ResourceDimensionMemory, ResourceDimensionCPU, ResourceDimensionIO}
 	resourceReasons    = []string{resourceReasonFits, resourceReasonNoSample, resourceReasonCritical, resourceReasonRedV1, resourceReasonRedLane,
 		resourceReasonThrash, resourceReasonNoRoom, resourceReasonProgress, resourceReasonPartial, resourceReasonSaturated, resourceReasonDiskWrite,
-		resourceReasonFairShare, resourceReasonReclaim, resourceReasonPortable}
+		resourceReasonFairShare, resourceReasonReclaim, resourceReasonPortable, resourceReasonExternalThrash}
 )
 
 func validShadowResourceDecision(label string) bool {
@@ -305,6 +321,7 @@ func decideResourceAdmission(headroom ResourceHeadroom, request ResourceRequest)
 	redLane := headroom.Memory.Level == LevelRed && request.Interactive && request.FastLaneMaxWeight > 0 && request.Weight <= request.FastLaneMaxWeight
 	// away is the step for work that cannot start here now.
 	away := func(dimension, reason string, deficitMB int64) ShadowResourceDecision {
+		decision.BackgroundIO = false
 		switch {
 		case redLane:
 			return set(ResourceStepAdmit, ResourceDimensionLevel, resourceReasonRedLane)
@@ -323,8 +340,15 @@ func decideResourceAdmission(headroom ResourceHeadroom, request ResourceRequest)
 	switch {
 	case !memory.SampleFresh:
 		return set(ResourceStepAdmit, ResourceDimensionSample, resourceReasonNoSample)
+	case memory.Level == LevelCritical && request.RunningLeases == 0:
+		return throttle(1, ResourceDimensionLevel, resourceReasonProgress)
 	case memory.Level == LevelCritical:
 		return away(ResourceDimensionLevel, resourceReasonCritical, 0)
+	case memory.SwapThrashLatched && memory.SwapThrashCause == SwapThrashCauseExternal:
+		// Queueing agent work cannot end thrash outside the coordinator.
+		decision.BackgroundIO = true
+	case (memory.SwapThrashLatched || memory.SwapOutMBPerSecond >= headroomSwapOutRefuseMBPerSecond) && request.RunningLeases == 0:
+		return throttle(1, ResourceDimensionSwap, resourceReasonProgress)
 	case memory.SwapThrashLatched || memory.SwapOutMBPerSecond >= headroomSwapOutRefuseMBPerSecond:
 		return away(ResourceDimensionSwap, resourceReasonThrash, max(request.PredictedPeakMB, 1))
 	}
@@ -348,6 +372,9 @@ func decideResourceAdmission(headroom ResourceHeadroom, request ResourceRequest)
 			return set(ResourceStepRemote, ResourceDimensionCPU, resourceReasonPortable)
 		}
 		return throttle(1, ResourceDimensionCPU, resourceReasonSaturated)
+	}
+	if decision.BackgroundIO && memory.SwapThrashLatched && memory.SwapThrashCause == SwapThrashCauseExternal {
+		return throttle(int(math.Ceil(request.PredictedCores)), ResourceDimensionSwap, resourceReasonExternalThrash)
 	}
 	if decision.BackgroundIO {
 		return throttle(int(math.Ceil(request.PredictedCores)), ResourceDimensionIO, resourceReasonDiskWrite)
@@ -482,4 +509,74 @@ func (decision ShadowResourceDecision) Detail() string {
 	return fmt.Sprintf("%s (%s, %s): predicted %d MB and %.1f cores (%s, %d samples) against headroom %d MB and %.1f cores",
 		decision.Step, decision.Dimension, decision.Reason, decision.PredictedPeak, decision.PredictedCores,
 		decision.CoresSource, decision.CoreSamples, decision.HeadroomMB, decision.HeadroomCores)
+}
+
+// ReadResourceHeadroom assembles the resource view (memory, CPU, disk write,
+// reclaimable memory) from the resident's latest sample, the published queue
+// snapshot and completed work history. External schedulers (the commit
+// delivery worker) read it to price a start before they take a lease.
+func ReadResourceHeadroom(ctx context.Context, dir string, coordinator *WorkCoordinator, now time.Time) (ResourceHeadroom, error) {
+	if coordinator == nil {
+		return ResourceHeadroom{}, fmt.Errorf("work coordinator is required")
+	}
+	status, err := coordinator.StatusSnapshot(ctx)
+	if err != nil {
+		return ResourceHeadroom{}, err
+	}
+	snapshot, ok := NewTelemetryStore(dir).ReadLatest()
+	history := readPeakRSSHistory(dir, now)
+	headroom := computeResourceHeadroom(snapshot, ok, status.Leases, history, now)
+	headroom.Memory.PeakRSS = history.stats()
+	return headroom, nil
+}
+
+// DecideResourceAdmission is the live resource ladder (ResourceHeadroomRuleVersion)
+// for one request. It is pure. The caller fills RunningLeases; a request with
+// no running lease never queues.
+func DecideResourceAdmission(headroom ResourceHeadroom, request ResourceRequest) ShadowResourceDecision {
+	return decideResourceAdmission(headroom, request)
+}
+
+// workResourceFitSample is the resident sample a lease fit check reads. It
+// is read before the state lock: one bounded file read, and the sample is
+// 15 to 90 s old anyway.
+type workResourceFitSample struct {
+	armed    bool
+	snapshot Snapshot
+	ok       bool
+}
+
+func (coordinator *WorkCoordinator) resourceFitSample() workResourceFitSample {
+	if coordinator == nil || !coordinator.ResourceFit {
+		return workResourceFitSample{}
+	}
+	snapshot, ok := NewTelemetryStore(coordinator.Dir).ReadLatest()
+	return workResourceFitSample{armed: true, snapshot: snapshot, ok: ok}
+}
+
+// resourceFit is the memory part of the resource ladder, re-checked inside
+// the state lock against the leases that exist at that moment. It refuses
+// only what the ladder would hold: a start whose predicted peak exceeds
+// measured headroom while another lease runs. A missing or stale sample, an
+// empty host and an unpredicted start fail open. Leases that carry no
+// prediction are charged the conservative fallback.
+func resourceFit(leases []WorkLeaseRecord, record WorkLeaseRecord, sample workResourceFitSample, now time.Time) error {
+	if !sample.armed || record.PredictedPeakMB <= 0 {
+		return nil
+	}
+	statuses := make([]WorkLeaseStatus, 0, len(leases))
+	for _, lease := range leases {
+		if lease.ParkedAt != nil {
+			continue
+		}
+		statuses = append(statuses, WorkLeaseStatus{Class: lease.Class, StartedAt: lease.StartedAt, PredictedPeakMB: lease.PredictedPeakMB})
+	}
+	if len(statuses) == 0 {
+		return nil
+	}
+	headroom := computeHeadroom(sample.snapshot, sample.ok, statuses, peakRSSHistory{}, now)
+	if !headroom.SampleFresh || record.PredictedPeakMB <= headroom.HeadroomMB {
+		return nil
+	}
+	return fmt.Errorf("%w: class=%s predicted_peak_mb=%d headroom_mb=%d running=%d", ErrWorkResource, record.Class, record.PredictedPeakMB, headroom.HeadroomMB, len(statuses))
 }

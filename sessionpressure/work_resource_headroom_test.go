@@ -36,6 +36,8 @@ func TestResourceDecisionLadder(t *testing.T) {
 	redRoomy.Level = LevelRed
 	thrash := roomy
 	thrash.SwapThrashLatched = true
+	externalThrash := thrash
+	externalThrash.SwapThrashCause = SwapThrashCauseExternal
 	reclaimable := lowMemory
 	reclaimable.MemoryFamilies = []MemoryFamily{{Family: "lsp", Relief: "restart_on_demand", RSSSumMB: 6000, ReclaimableMB: 6000}}
 	diskHigh := roomy
@@ -71,6 +73,14 @@ func TestResourceDecisionLadder(t *testing.T) {
 		{"no memory, portable goes remote before relief", reclaimable, with(func(r *ResourceRequest) { r.RemoteEligible = true }), "remote:memory:portable", 0, false},
 		{"swap thrash queues", thrash, job, "queue:swap:swap_thrash", 0, false},
 		{"critical queues", critical, job, "queue:level:critical", 0, false},
+		{"critical, empty queue keeps progress", critical, with(func(r *ResourceRequest) { r.RunningLeases = 0 }), "throttle:level:keep_progress", 1, false},
+		{"swap thrash, empty queue keeps progress", thrash, with(func(r *ResourceRequest) { r.RunningLeases = 0 }), "throttle:swap:keep_progress", 1, false},
+		{"external thrash does not queue agent work", externalThrash, job, "throttle:swap:external_thrash", 4, true},
+		{"external thrash still needs the memory fit", func() Snapshot {
+			s := lowMemory
+			s.SwapThrashLatched, s.SwapThrashCause = true, SwapThrashCauseExternal
+			return s
+		}(), job, "queue:memory:no_headroom", 0, false},
 		{"red without memory headroom queues on memory", red, job, "queue:memory:no_headroom", 0, false},
 		{"red alone does not delay work that fits", redRoomy, job, "admit:none:fits", 0, false},
 		{"red lane admits light interactive work that would wait", red, with(func(r *ResourceRequest) { r.Interactive, r.Weight, r.FastLaneMaxWeight = true, 2, 2 }), "admit:level:red_lane", 0, false},
@@ -244,8 +254,8 @@ func TestCoreHistoryPredictsFromMeasuredRuns(t *testing.T) {
 	history.add(resourceCompleted(WorkClassTest, "key", 10_000, 10_000, 2))
 	history.add(resourceCompleted(WorkClassTest, "key", 900, 50, 0))
 	history.add(WorkEvent{Event: WorkEventCompleted, Class: WorkClassTest, PlacementKey: "key", RuntimeMillis: 10_000})
-	if cores, source, samples := history.predict(WorkClassTest, "", "key"); cores != 6 || source != predictionByKey || samples != 3 {
-		t.Fatalf("key prediction = %.1f %s %d, want p90 of 2,4,6", cores, source, samples)
+	if cores, source, samples := history.predict(WorkClassTest, "", "key"); cores != 4 || source != predictionByKey || samples != 3 {
+		t.Fatalf("key prediction = %.1f %s %d, want the median of 2,4,6", cores, source, samples)
 	}
 	// Three class samples are below the class minimum: another command of
 	// the class still gets the conservative fallback.

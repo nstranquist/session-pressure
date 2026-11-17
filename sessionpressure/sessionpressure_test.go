@@ -680,6 +680,7 @@ func TestDefaultPolicyIsObserveOnlyAndValid(t *testing.T) {
 	}
 	expectedPolicyLimits := defaultWorkLimits(runtime.NumCPU())
 	expectedPolicyLimits.WarningCapacityEnabled = false
+	expectedPolicyLimits.Admission = WorkAdmissionResource
 	if policy.WorkLimits != expectedPolicyLimits {
 		t.Fatalf("unexpected host work limits: %+v", policy.WorkLimits)
 	}

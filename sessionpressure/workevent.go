@@ -62,6 +62,9 @@ const (
 	WorkBlockerReservation WorkBlocker = "reservation"
 	WorkBlockerUpgrade     WorkBlocker = "upgrade"
 	WorkBlockerStateLock   WorkBlocker = "state_lock"
+	// WorkBlockerResource: the selected start did not fit measured memory
+	// headroom when it would take its lease (resource admission).
+	WorkBlockerResource WorkBlocker = "resource"
 	// Browser admission (browser_admission.go) blocks before the work queue.
 	WorkBlockerBrowserPaused WorkBlocker = "browser_paused"
 	WorkBlockerBrowserMemory WorkBlocker = "browser_memory"
@@ -227,6 +230,15 @@ type WorkEvent struct {
 	// operation (work_throttle.go). Throttled runs stay out of the busy-core
 	// history, so the cost model never learns a throttled figure as normal.
 	ThrottleCores int `json:"throttle_cores,omitempty"`
+	// ThrottleBackgroundIO says the run's disk I/O ran at background
+	// priority (taskpolicy -d throttle), from the caller's opt-in or the
+	// live resource decision.
+	ThrottleBackgroundIO bool `json:"throttle_background_io,omitempty"`
+	// ResourceDecision is the live resource-admission decision
+	// (WorkLimits.Admission = resource), as "step:dimension:reason" with
+	// ResourceRule naming the rule. Empty when the weighted cap decided.
+	ResourceDecision string `json:"resource_decision,omitempty"`
+	ResourceRule     string `json:"resource_rule,omitempty"`
 }
 
 func (event WorkEvent) Validate() error {
@@ -248,10 +260,13 @@ func (event WorkEvent) Validate() error {
 	if event.SessionDigest != "" && !validSHA256Digest(event.SessionDigest) {
 		return errors.New("work session_digest must be an opaque sha256 digest")
 	}
+	if !validShadowResourceDecision(event.ResourceDecision) {
+		return fmt.Errorf("work event resource_decision %q is not in the closed vocabulary", event.ResourceDecision)
+	}
 	if !validShadowResourceDecision(event.ShadowResourceDecision) {
 		return fmt.Errorf("work event shadow_resource_decision %q is not in the closed vocabulary", event.ShadowResourceDecision)
 	}
-	if event.ShadowResourceRule != "" && event.ShadowResourceRule != ResourceHeadroomRuleVersion && event.ShadowResourceRule != resourceHeadroomRuleVersionV1 {
+	if event.ShadowResourceRule != "" && event.ShadowResourceRule != ResourceHeadroomRuleVersion && event.ShadowResourceRule != resourceHeadroomRuleVersionV1 && event.ShadowResourceRule != resourceHeadroomRuleVersionV2 {
 		return fmt.Errorf("work event shadow_resource_rule %q is not a known rule version", event.ShadowResourceRule)
 	}
 	if event.ShadowThrottleCores < 0 || event.ThrottleCores < 0 {
@@ -356,7 +371,7 @@ func (event WorkEvent) Validate() error {
 	}
 	if event.Blocker != "" {
 		switch event.Blocker {
-		case WorkBlockerNone, WorkBlockerPressure, WorkBlockerCapacity, WorkBlockerFairness, WorkBlockerReservation, WorkBlockerUpgrade, WorkBlockerStateLock, WorkBlockerBrowserPaused, WorkBlockerBrowserMemory:
+		case WorkBlockerNone, WorkBlockerPressure, WorkBlockerCapacity, WorkBlockerFairness, WorkBlockerReservation, WorkBlockerResource, WorkBlockerUpgrade, WorkBlockerStateLock, WorkBlockerBrowserPaused, WorkBlockerBrowserMemory:
 		default:
 			return fmt.Errorf("unknown work blocker %q", event.Blocker)
 		}
@@ -1228,6 +1243,9 @@ type WorkReviewSignals struct {
 	// swap-thrash derate. They used to be miscounted as memory deferrals.
 	SwapDeferrals              int `json:"swap_deferrals"`
 	SwapThrashExternalBypasses int `json:"swap_thrash_external_bypasses"`
+	// ResourceDeferrals counts operations that live resource-headroom
+	// admission held at least once (work_resource_headroom.go).
+	ResourceDeferrals int `json:"resource_deferrals"`
 	// IdleParked* measure weight returned to the queue by idle leased groups.
 	IdleParkedOperations   int   `json:"idle_parked_operations"`
 	IdleParkedMilliseconds int64 `json:"idle_parked_ms"`
@@ -1244,7 +1262,7 @@ const (
 )
 
 func isQueueBlocker(blocker WorkBlocker) bool {
-	return blocker == WorkBlockerCapacity || blocker == WorkBlockerFairness || blocker == WorkBlockerReservation
+	return blocker == WorkBlockerCapacity || blocker == WorkBlockerFairness || blocker == WorkBlockerReservation || blocker == WorkBlockerResource
 }
 
 // Closed outcomes that classify a cancelled operation as wrapper/agent interrupt.
@@ -1575,6 +1593,9 @@ func SummarizeWorkEvents(events []WorkEvent, since, generatedAt time.Time) WorkS
 				state.warningDecisionSeen = true
 			case SwapThrashExternalDecision:
 				signals.SwapThrashExternalBypasses++
+				state.warningDecisionSeen = true
+			case ResourceDeferredDecision:
+				signals.ResourceDeferrals++
 				state.warningDecisionSeen = true
 			}
 		}

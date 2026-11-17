@@ -114,7 +114,7 @@ func resourceObservations(telemetry []TelemetryEvent, host ResourceReplayHost) [
 		case event.Summary != nil && event.Summary.Level != "":
 			summary := event.Summary
 			snapshot = Snapshot{Level: summary.Level, FreePercent: summary.FreePercent, SwapUsedMB: summary.SwapUsedMB,
-				SwapOutMBPerSecond: summary.SwapOutMBPerSecond, SwapThrashLatched: summary.SwapThrashLatched,
+				SwapOutMBPerSecond: summary.SwapOutMBPerSecond, SwapThrashLatched: summary.SwapThrashLatched, SwapThrashCause: summary.SwapThrashCause,
 				HostCPUPercent: summary.HostCPUPercent, HostCPUAvailable: true}
 		default:
 			continue

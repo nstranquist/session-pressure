@@ -189,6 +189,14 @@ type WorkLimits struct {
 	// the queue still respects memory. An empty queue never waits on memory
 	// and a missing sample fails open.
 	MemoryAdmission string `json:"memory_admission,omitempty"`
+	// Admission selects what decides whether local work may start.
+	// "resource" (the default and the load-time fill since 2026-11-17): measured resource
+	// headroom (work_resource_headroom.go) decides, and the weighted unit
+	// ceilings (Capacity, WarningCapacity, SwapThrashCapacity) are recorded
+	// telemetry, not limits. "weighted" restores the weighted unit ceiling;
+	// it exists only to roll back a live host. Nico, 2026-11-17: admission is
+	// resource-based, with no human-set count.
+	Admission string `json:"admission,omitempty"`
 	// AllowOverrideBeyondCapacity lets an explicit operator override (work
 	// override) admit its waiter past the weighted Capacity ceiling. It
 	// widens only that logical cap: the host-pressure admission gate -
@@ -526,6 +534,7 @@ func DefaultPolicy(physicalMemoryMB float64) Policy {
 		physicalMemoryMB = 16 * 1024
 	}
 	workLimits := defaultWorkLimits(runtime.NumCPU())
+	workLimits.Admission = WorkAdmissionResource
 	policy := basePolicy(workLimits)
 	levels, err := EmbeddedMemoryLevels().Resolve(physicalMemoryMB, "")
 	if err != nil {
@@ -684,6 +693,11 @@ func (policy Policy) Validate() error {
 	case "", MemoryAdmissionShadow, MemoryAdmissionEnforce:
 	default:
 		return fmt.Errorf("work memory_admission %q must be shadow or enforce", w.MemoryAdmission)
+	}
+	switch w.Admission {
+	case "", WorkAdmissionResource, WorkAdmissionWeighted:
+	default:
+		return fmt.Errorf("work admission %q must be %s or %s", w.Admission, WorkAdmissionResource, WorkAdmissionWeighted)
 	}
 	if w.WarningCapacity < 1 || w.WarningCapacity > w.Capacity {
 		return errors.New("work warning_capacity must be positive and no greater than capacity")
@@ -885,6 +899,12 @@ func LoadPolicy(path string, physicalMemoryMB float64) (Policy, bool, error) {
 	if policy.WorkLimits.IdleParkSeconds == 0 {
 		policy.WorkLimits.IdleParkSeconds = defaultIdleParkSeconds
 	}
+	if policy.WorkLimits.Admission == "" {
+		// Nico, 2026-11-17: admission is resource-based on every host. A
+		// policy written before the field existed moves to it on load;
+		// "weighted" stays only as an explicit rollback.
+		policy.WorkLimits.Admission = WorkAdmissionResource
+	}
 	if policy.WorkLimits.SwapThrashCapacity == 0 {
 		// Derive from this policy's own ceiling, not the host default: an
 		// operator-tuned capacity must not inherit a mismatched derate.
@@ -1052,15 +1072,59 @@ func atomicWrite(path string, body []byte, mode os.FileMode) error {
 	return nil
 }
 
-// WorkMemoryAdmissionEnforced reports whether memory-headroom admission holds
-// new work. It does not depend on EnforceAdmission.
-func WorkMemoryAdmissionEnforced(policy Policy) bool {
-	return policy.Enabled && policy.WorkLimits.MemoryAdmission == MemoryAdmissionEnforce
+// Work admission modes (WorkLimits.Admission).
+const (
+	WorkAdmissionResource = "resource"
+	WorkAdmissionWeighted = "weighted"
+	// unboundedWorkCapacity is the coordinator ceiling under resource
+	// admission. It is not a limit: no host runs this many leases, so the
+	// weighted selection keeps only its ordering role. An exclusive class
+	// still weighs the whole ceiling, so it still runs alone.
+	unboundedWorkCapacity = 1 << 20
+)
+
+// ResourceAdmission reports whether measured resource headroom decides
+// admission, not the weighted unit ceiling.
+func (limits WorkLimits) ResourceAdmission() bool {
+	return limits.Admission == WorkAdmissionResource
 }
 
-// WorkSwapThrashEnforced reports whether swap-thrash serialization holds new
-// heavy work: under an enforcing profile, or when memory admission is
-// enforced on its own.
+// admissionLimits returns the limits the coordinator admits against. Under
+// resource admission the unit ceilings do not decide: the capacity is
+// unbounded and the warning ceiling is off. Policy files and telemetry keep
+// the configured values.
+func (limits WorkLimits) admissionLimits() WorkLimits {
+	if !limits.ResourceAdmission() {
+		return limits
+	}
+	limits.Capacity = unboundedWorkCapacity
+	limits.WarningCapacityEnabled = false
+	return limits
+}
+
+// WorkResourceAdmissionLive reports whether resource-headroom admission
+// decides local work. It does not depend on EnforceAdmission.
+func WorkResourceAdmissionLive(policy Policy) bool {
+	return policy.Enabled && policy.WorkLimits.ResourceAdmission()
+}
+
+// WorkMemoryAdmissionEnforced reports whether memory headroom holds new work:
+// always under resource admission, else with memory_admission = enforce. It
+// does not depend on EnforceAdmission.
+func WorkMemoryAdmissionEnforced(policy Policy) bool {
+	return policy.Enabled && (policy.WorkLimits.ResourceAdmission() || policy.WorkLimits.MemoryAdmission == MemoryAdmissionEnforce)
+}
+
+// WorkSwapThrashEnforced reports whether swap thrash holds new work: under
+// resource admission (the ladder), under an enforcing profile, or when memory
+// admission is enforced on its own.
 func WorkSwapThrashEnforced(policy Policy) bool {
-	return policy.Enabled && (policy.EnforceAdmission || policy.WorkLimits.MemoryAdmission == MemoryAdmissionEnforce)
+	return policy.Enabled && (policy.WorkLimits.ResourceAdmission() || policy.EnforceAdmission || policy.WorkLimits.MemoryAdmission == MemoryAdmissionEnforce)
+}
+
+func workAdmissionMode(limits WorkLimits) string {
+	if limits.ResourceAdmission() {
+		return WorkAdmissionResource
+	}
+	return WorkAdmissionWeighted
 }

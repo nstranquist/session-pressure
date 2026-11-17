@@ -242,24 +242,27 @@ func (history peakRSSHistory) stats() []PeakRSSStats {
 // MemoryHeadroom is the one source both Mac admission layers read
 // (`session-pressure --json work headroom`).
 type MemoryHeadroom struct {
-	Rule               string         `json:"rule"`
-	SchemaVersion      int            `json:"schema_version"`
-	SampledAt          time.Time      `json:"sampled_at,omitzero"`
-	SampleFresh        bool           `json:"sample_fresh"`
-	Level              Level          `json:"level,omitempty"`
-	PhysicalMB         int64          `json:"physical_mb"`
-	AvailableMB        int64          `json:"available_mb"`
-	ReserveMB          int64          `json:"reserve_mb"`
-	LeaseCount         int            `json:"lease_count"`
-	LeasePredictedMB   int64          `json:"lease_predicted_mb"`
-	RampingLeaseCount  int            `json:"ramping_lease_count"`
-	LeasedRSSMB        int64          `json:"leased_rss_mb"`
-	LeasedRSSKnown     bool           `json:"leased_rss_known"`
-	InflightMB         int64          `json:"inflight_mb"`
-	HeadroomMB         int64          `json:"headroom_mb"`
-	SwapUsedMB         int64          `json:"swap_used_mb"`
-	SwapOutMBPerSecond float64        `json:"swap_out_mb_per_s"`
-	SwapThrashLatched  bool           `json:"swap_thrash_latched"`
+	Rule               string    `json:"rule"`
+	SchemaVersion      int       `json:"schema_version"`
+	SampledAt          time.Time `json:"sampled_at,omitzero"`
+	SampleFresh        bool      `json:"sample_fresh"`
+	Level              Level     `json:"level,omitempty"`
+	PhysicalMB         int64     `json:"physical_mb"`
+	AvailableMB        int64     `json:"available_mb"`
+	ReserveMB          int64     `json:"reserve_mb"`
+	LeaseCount         int       `json:"lease_count"`
+	LeasePredictedMB   int64     `json:"lease_predicted_mb"`
+	RampingLeaseCount  int       `json:"ramping_lease_count"`
+	LeasedRSSMB        int64     `json:"leased_rss_mb"`
+	LeasedRSSKnown     bool      `json:"leased_rss_known"`
+	InflightMB         int64     `json:"inflight_mb"`
+	HeadroomMB         int64     `json:"headroom_mb"`
+	SwapUsedMB         int64     `json:"swap_used_mb"`
+	SwapOutMBPerSecond float64   `json:"swap_out_mb_per_s"`
+	SwapThrashLatched  bool      `json:"swap_thrash_latched"`
+	// SwapThrashCause is the resident's attribution of a latched episode
+	// ("agent" or "external").
+	SwapThrashCause    string         `json:"swap_thrash_cause,omitempty"`
 	PeakRSS            []PeakRSSStats `json:"peak_rss,omitempty"`
 	PeakRSSWindowHours int            `json:"peak_rss_window_hours"`
 }
@@ -294,6 +297,7 @@ func computeHeadroom(snapshot Snapshot, haveSample bool, leases []WorkLeaseStatu
 	headroom.SwapUsedMB = int64(snapshot.SwapUsedMB)
 	headroom.SwapOutMBPerSecond = snapshot.SwapOutMBPerSecond
 	headroom.SwapThrashLatched = snapshot.SwapThrashLatched
+	headroom.SwapThrashCause = snapshot.SwapThrashCause
 	if work := snapshot.CoordinatedWork; work.Available && work.Fresh {
 		headroom.LeasedRSSMB, headroom.LeasedRSSKnown = int64(work.RSSSumMB), true
 	}

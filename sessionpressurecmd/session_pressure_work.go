@@ -505,6 +505,7 @@ func pressureWorkStatusText(status sessionpressure.WorkStatus) string {
 		}
 	}
 	var text strings.Builder
+	fmt.Fprintf(&text, "admission=%s ", status.Admission)
 	fmt.Fprintf(&text, "capacity=%d used=%d available=%d leases=%d queue=%d held=%d review_leases=%d pruned_leases=%d pruned_waiters=%d state=%s\n", status.Capacity, status.Used, status.Available, len(status.Leases), status.QueueDepth, status.AdmissionHoldCount, reviewCount, status.Pruned, status.PrunedWaiters, status.StatePath)
 	if status.ParkedWeight > 0 {
 		fmt.Fprintf(&text, "  parked_weight=%d (idle leased groups hold no capacity until they work again)\n", status.ParkedWeight)
