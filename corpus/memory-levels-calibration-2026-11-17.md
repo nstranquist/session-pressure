@@ -79,7 +79,7 @@ RSS sums at 90% or more free.
 | Anchor | free % w/r/c | swap MB | tree MB | agent total MB | RSS escalation | guard RSS |
 |---|---|---|---|---|---|---|
 | 16gib-laptop | 25/15/8 | 4096/8192/12288 | 3072/5120/7168 | 8192/11264/13312 | 100 (always) | 30 MB |
-| 48gib-workstation | 25/15/8 | 12288/24576/36864 | 20480/26624/32768 | 36864/45056/53248 | 50 | 36 MB |
+| 48gib-workstation | 25/15/8 | 12288/24576/36864 | 20480/26624/32768 | 36864/45056/53248 | 50 | 44 MB |
 
 - 16 GiB values are exactly the tuned laptop ladder, unchanged.
 - 48 GiB tree: warning about 1.1x the M4 p95 tree, red about 1.45x, critical
@@ -88,8 +88,11 @@ RSS sums at 90% or more free.
   0.25/0.5/0.75 of memory. Free % is the kernel's own measure and stays.
 - RSS escalation 50 on the M4: its lowest free level in history was 46%, at a
   normal 8.9 GB tree. At 50% free a 48 GiB host still has about 24 GiB free.
-- Guard RSS 36 MB on the M4: 30.6 MB was measured with 994 processes in the
-  inventory; 36 gives about 20% headroom. The laptop stays at 30 MB.
+- Guard RSS 44 MB on the M4: its self RSS over 76 samples (to 10:47Z, about
+  1000 processes in the inventory) was p50 34.0, p95 37.1, p99 40.0, max 40.0
+  MB; 44 is about 1.1x p99. A first value of 36 MB (from the single 30.6 MB
+  reading in the brief) was under the M4's own p95 and was corrected before
+  install. The laptop stays at 30 MB (its p99 is 30.5 MB, p95 24.8 MB).
 
 Rejected:
 
@@ -107,7 +110,7 @@ Tests in `sessionpressure/memory_levels_test.go`:
 - The embedded file parses. 16 GiB `DefaultPolicy` equals the old laptop
   ladder field for field, with guard budget 30 MB.
 - 48 GiB uses the measured anchor. 32 GiB interpolates (tree red 15872 MB,
-  escalation 75%, guard 33 MB). 8 GiB and 96 GiB scale MB values and keep
+  escalation 75%, guard 37 MB). 8 GiB and 96 GiB scale MB values and keep
   percent values.
 - Host override applies to the normalized hostname only
   (`Example-MacBook-Pro.local` to `example-macbook-pro`).

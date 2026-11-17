@@ -16,13 +16,13 @@
     {
       "name": "48gib-workstation",
       "memory_gib": 48,
-      "evidence": "mac-48g (48 GiB, M4 Pro) 2026-11-17 04:10..10:25Z, 72 samples: free p5 68%, min 46%; swap 0 in every sample; claude tree RSS sum p50 13814 MB, p95 18294 MB, max 21746 MB at 90% free. Summed RSS double counts shared pages across about 1000 processes, so the RSS rungs only reach red or critical when the kernel free level agrees (50% or lower). Guard RSS reached 30.6 MB with 994 processes in the tree.",
+      "evidence": "mac-48g (48 GiB, M4 Pro) 2026-11-17 04:10..10:25Z, 72 samples: free p5 68%, min 46%; swap 0 in every sample; claude tree RSS sum p50 13814 MB, p95 18294 MB, max 21746 MB at 90% free. Summed RSS double counts shared pages across about 1000 processes, so the RSS rungs only reach red or critical when the kernel free level agrees (50% or lower). Guard self RSS on the M4 (76 samples to 10:47Z, about 1000 processes in the inventory): p50 34.0 MB, p95 37.1 MB, p99 40.0 MB, max 40.0 MB; the budget is about 1.1x p99.",
       "free_percent": {"warning": 25, "red": 15, "critical": 8},
       "swap_mb": {"warning": 12288, "red": 24576, "critical": 36864},
       "tree_mb": {"warning": 20480, "red": 26624, "critical": 32768},
       "agent_total_mb": {"warning": 36864, "red": 45056, "critical": 53248},
       "rss_escalation_free_percent": 50,
-      "guard_max_self_rss_mb": 36
+      "guard_max_self_rss_mb": 44
     }
   ],
   "hosts": {}

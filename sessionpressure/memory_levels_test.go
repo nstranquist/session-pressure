@@ -61,8 +61,8 @@ func TestDefaultPolicyM4UsesMeasuredAnchor(t *testing.T) {
 	if got.RSSEscalationFreePercent != 50 {
 		t.Fatalf("48 GiB RSS escalation = %g, want 50", got.RSSEscalationFreePercent)
 	}
-	if budget := DefaultPolicy(m4MB).ResourceBudgets.MaxSelfRSSMB; budget != 36 {
-		t.Fatalf("48 GiB guard RSS budget = %g, want 36", budget)
+	if budget := DefaultPolicy(m4MB).ResourceBudgets.MaxSelfRSSMB; budget != 44 {
+		t.Fatalf("48 GiB guard RSS budget = %g, want 44", budget)
 	}
 }
 
@@ -73,7 +73,7 @@ func TestResolveInterpolatesAndScales(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Halfway between the 16 and 48 GiB anchors.
-	if mid.TreeMB.Red != (5120+26624)/2 || mid.RSSEscalationFreePercent != 75 || mid.GuardMaxSelfRSSMB != 33 {
+	if mid.TreeMB.Red != (5120+26624)/2 || mid.RSSEscalationFreePercent != 75 || mid.GuardMaxSelfRSSMB != 37 {
 		t.Fatalf("32 GiB = tree red %g, escalation %g, guard %g", mid.TreeMB.Red, mid.RSSEscalationFreePercent, mid.GuardMaxSelfRSSMB)
 	}
 	if !strings.Contains(mid.Rule, "interpolated") {
@@ -90,7 +90,7 @@ func TestResolveInterpolatesAndScales(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if big.TreeMB.Red != 2*26624 || big.SwapMB.Red != 2*24576 || big.RSSEscalationFreePercent != 50 || big.GuardMaxSelfRSSMB != 36 {
+	if big.TreeMB.Red != 2*26624 || big.SwapMB.Red != 2*24576 || big.RSSEscalationFreePercent != 50 || big.GuardMaxSelfRSSMB != 44 {
 		t.Fatalf("96 GiB = tree red %g, swap red %g, escalation %g, guard %g", big.TreeMB.Red, big.SwapMB.Red, big.RSSEscalationFreePercent, big.GuardMaxSelfRSSMB)
 	}
 }
@@ -126,7 +126,7 @@ func TestParseMemoryLevelsRejectsBadConfig(t *testing.T) {
 		{"free order", strings.Replace(valid, `"free_percent": {"warning": 25, "red": 15, "critical": 8},`, `"free_percent": {"warning": 8, "red": 15, "critical": 25},`, 1), "free memory must satisfy warning > red > critical"},
 		{"anchor order", strings.Replace(valid, `"memory_gib": 48`, `"memory_gib": 12`, 1), "strictly ascending memory order"},
 		{"escalation", strings.Replace(valid, `"rss_escalation_free_percent": 50`, `"rss_escalation_free_percent": 150`, 1), "rss_escalation_free_percent: must be in (0, 100]"},
-		{"guard", strings.Replace(valid, `"guard_max_self_rss_mb": 36`, `"guard_max_self_rss_mb": 2`, 1), "guard_max_self_rss_mb: must be between 10 and 256"},
+		{"guard", strings.Replace(valid, `"guard_max_self_rss_mb": 44`, `"guard_max_self_rss_mb": 2`, 1), "guard_max_self_rss_mb: must be between 10 and 256"},
 		{"schema", strings.Replace(valid, `"schema_version": 1`, `"schema_version": 2`, 1), "schema_version: want 1, got 2"},
 		{"trailing", valid + "{}", "trailing data"},
 		{"host key", strings.Replace(valid, `"hosts": {}`, `"hosts": {"Big.Host": {"reason": "x"}}`, 1), "key must be a lowercase short hostname"},
@@ -171,7 +171,7 @@ func TestLoadPolicyCalibratedResolvesHostLevels(t *testing.T) {
 	if err != nil || !persisted {
 		t.Fatalf("LoadPolicy: persisted=%v err=%v", persisted, err)
 	}
-	if policy.Thresholds.TreeRedMB != 26624 || policy.Thresholds.RSSEscalationFreePercent != 50 || policy.ResourceBudgets.MaxSelfRSSMB != 36 {
+	if policy.Thresholds.TreeRedMB != 26624 || policy.Thresholds.RSSEscalationFreePercent != 50 || policy.ResourceBudgets.MaxSelfRSSMB != 44 {
 		t.Fatalf("calibrated M4 policy = tree red %g, escalation %g, guard %g", policy.Thresholds.TreeRedMB, policy.Thresholds.RSSEscalationFreePercent, policy.ResourceBudgets.MaxSelfRSSMB)
 	}
 	// A caller that knows the memory size wins over the native read.
