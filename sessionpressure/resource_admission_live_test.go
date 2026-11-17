@@ -152,17 +152,63 @@ func TestLiveResourceGateHoldsOnlyQueueAndRelieve(t *testing.T) {
 	}
 }
 
-func TestLiveResourceThrottleAppliesOnlyBackgroundIO(t *testing.T) {
+func TestLiveResourceThrottleAppliesIOAndCPUPriorityNotACoreCap(t *testing.T) {
 	allowed := Admission{Allowed: true, Level: LevelNormal}
-	gate := liveResourceGate(ShadowResourceDecision{Step: ResourceStepThrottle, Dimension: ResourceDimensionIO, Reason: resourceReasonDiskWrite, ThrottleCores: 4, BackgroundIO: true}, true)
-	gate.resourceAdmissionDecision(allowed, false)
-	if throttle := gate.liveResourceThrottle(); throttle.Cores != 0 || !throttle.BackgroundIO {
-		t.Fatalf("live throttle = %+v, want background I/O only", throttle)
+	for _, test := range []struct {
+		name     string
+		decision ShadowResourceDecision
+		want     WorkThrottle
+	}{
+		{"disk writes high: background I/O only",
+			ShadowResourceDecision{Step: ResourceStepThrottle, Dimension: ResourceDimensionIO, Reason: resourceReasonDiskWrite, ThrottleCores: 4, BackgroundIO: true},
+			WorkThrottle{BackgroundIO: true}},
+		{"cpu saturated: lower CPU priority",
+			ShadowResourceDecision{Step: ResourceStepThrottle, Dimension: ResourceDimensionCPU, Reason: resourceReasonSaturated, ThrottleCores: 1},
+			WorkThrottle{CPUNice: workThrottleCPUNice}},
+		{"partial cpu headroom: lower CPU priority",
+			ShadowResourceDecision{Step: ResourceStepThrottle, Dimension: ResourceDimensionCPU, Reason: resourceReasonPartial, ThrottleCores: 3},
+			WorkThrottle{CPUNice: workThrottleCPUNice}},
+		{"lone run on a thrashing host: lower CPU priority",
+			ShadowResourceDecision{Step: ResourceStepThrottle, Dimension: ResourceDimensionSwap, Reason: resourceReasonProgress, ThrottleCores: 1},
+			WorkThrottle{CPUNice: workThrottleCPUNice}},
+		{"external thrash: background I/O and lower CPU priority",
+			ShadowResourceDecision{Step: ResourceStepThrottle, Dimension: ResourceDimensionSwap, Reason: resourceReasonExternalThrash, ThrottleCores: 2, BackgroundIO: true},
+			WorkThrottle{BackgroundIO: true, CPUNice: workThrottleCPUNice}},
+		{"admit: nothing", ShadowResourceDecision{Step: ResourceStepAdmit, Dimension: ResourceDimensionNone, Reason: resourceReasonFits}, WorkThrottle{}},
+		{"remote: nothing", ShadowResourceDecision{Step: ResourceStepRemote, Dimension: ResourceDimensionCPU, Reason: resourceReasonPortable}, WorkThrottle{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			gate := liveResourceGate(test.decision, true)
+			gate.resourceAdmissionDecision(allowed, false)
+			if got := gate.liveResourceThrottle(); got != test.want {
+				t.Fatalf("live throttle = %+v, want %+v", got, test.want)
+			}
+		})
 	}
-	gate = liveResourceGate(ShadowResourceDecision{Step: ResourceStepThrottle, Dimension: ResourceDimensionCPU, Reason: resourceReasonSaturated, ThrottleCores: 1}, true)
+	// Weighted admission applies nothing from the ladder.
+	gate := liveResourceGate(ShadowResourceDecision{Step: ResourceStepThrottle, Dimension: ResourceDimensionCPU, Reason: resourceReasonSaturated, ThrottleCores: 1}, true)
+	gate.limits.Admission = WorkAdmissionWeighted
 	gate.resourceAdmissionDecision(allowed, false)
-	if throttle := gate.liveResourceThrottle(); throttle.Active() {
-		t.Fatalf("CPU throttle applied live: %+v", throttle)
+	if got := gate.liveResourceThrottle(); got.Active() {
+		t.Fatalf("weighted admission applied %+v", got)
+	}
+}
+
+func TestWorkThrottleNiceKeepsTheLeaseDefault(t *testing.T) {
+	if got := (WorkThrottle{}).Nice(); got != workLeaseNice {
+		t.Fatalf("default nice = %d, want %d", got, workLeaseNice)
+	}
+	if got := (WorkThrottle{BackgroundIO: true}).Nice(); got != workLeaseNice {
+		t.Fatalf("background I/O changed the nice value to %d", got)
+	}
+	throttle := WorkThrottle{CPUNice: workThrottleCPUNice}
+	if got := throttle.Nice(); got != workThrottleCPUNice || !throttle.Active() {
+		t.Fatalf("cpu throttle nice = %d active=%v", got, throttle.Active())
+	}
+	// A CPU priority never sets a parallelism limit.
+	environment := []string{"PATH=/usr/bin"}
+	if got := throttle.Environment(environment); len(got) != 1 {
+		t.Fatalf("cpu priority changed the environment: %v", got)
 	}
 }
 
@@ -187,9 +233,15 @@ func TestLiveResourceDecisionFitsTheWorkEvent(t *testing.T) {
 	event.ResourceDecision = "throttle:io:disk_write_high"
 	event.ResourceRule = ResourceHeadroomRuleVersion
 	event.ThrottleBackgroundIO = true
+	event.ThrottleCPUNice = workThrottleCPUNice
 	if err := event.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	event.ThrottleCPUNice = 21
+	if err := event.Validate(); err == nil {
+		t.Fatal("nice 21 accepted")
+	}
+	event.ThrottleCPUNice = workThrottleCPUNice
 	event.ResourceDecision = "admit:none:made_up"
 	if err := event.Validate(); err == nil {
 		t.Fatal("open vocabulary accepted")

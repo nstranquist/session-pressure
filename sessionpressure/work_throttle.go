@@ -11,10 +11,13 @@ import (
 // (work_resource_headroom.go): the command runs, with less parallelism and,
 // when disk writes are high, at a lower disk I/O priority.
 //
-// Admission does not apply it. Shadow decisions only record the throttle they
-// would ask for. The mechanism runs when the caller opts in for one command
-// with NDEV_WORK_THROTTLE_CORES (and NDEV_WORK_THROTTLE_IO=1), so it can be
-// measured before any policy uses it.
+// Live resource admission applies two parts of a throttle decision: background
+// disk I/O and a lower CPU priority (CPUNice). The parallelism limit (Cores)
+// stays a recorded shadow value: a limit fixed for the life of the command
+// slowed 13 of 100 measured runs in the 48 h replay (corpus,
+// resource-admission-live-2026-11-17.md), while a nice value takes only the
+// cores other work needs. Cores runs when the caller opts in for one command
+// with NDEV_WORK_THROTTLE_CORES (and NDEV_WORK_THROTTLE_IO=1).
 //
 // Parallelism is lowered through the build tools' own environment contracts.
 // A tool that reads none of them runs unthrottled; the lease's measured CPU
@@ -24,6 +27,11 @@ type WorkThrottle struct {
 	Cores int `json:"cores,omitempty"`
 	// BackgroundIO lowers the command's disk I/O priority.
 	BackgroundIO bool `json:"background_io,omitempty"`
+	// CPUNice is the CPU scheduling priority (nice value) of the command;
+	// 0 means the lease default, workLeaseNice. A higher nice value does not
+	// cap parallelism: the command still uses every idle core, and it yields
+	// only to work at a lower nice value when cores are short.
+	CPUNice int `json:"cpu_nice,omitempty"`
 }
 
 const (
@@ -32,9 +40,26 @@ const (
 	// workThrottleAppliedEnv tells the command and nested wrappers which
 	// limit is in force.
 	workThrottleAppliedEnv = "NDEV_WORK_THROTTLE_APPLIED_CORES"
+	// workLeaseNice is the nice value of every leased command, so that the
+	// interactive host (nice 0) wins CPU from agent work.
+	workLeaseNice = 5
+	// workThrottleCPUNice is the nice value of a command that the resource
+	// ladder admitted short of CPU. It yields to the leases already running
+	// (workLeaseNice) as well as to the interactive host.
+	workThrottleCPUNice = 10
 )
 
-func (throttle WorkThrottle) Active() bool { return throttle.Cores > 0 || throttle.BackgroundIO }
+func (throttle WorkThrottle) Active() bool {
+	return throttle.Cores > 0 || throttle.BackgroundIO || throttle.CPUNice > 0
+}
+
+// Nice returns the nice value to start the command at.
+func (throttle WorkThrottle) Nice() int {
+	if throttle.CPUNice > 0 {
+		return throttle.CPUNice
+	}
+	return workLeaseNice
+}
 
 // WorkThrottleFromEnv reads the caller's opt-in. An invalid value is an
 // error: a typo must not silently run unthrottled.

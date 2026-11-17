@@ -234,6 +234,9 @@ type WorkEvent struct {
 	// priority (taskpolicy -d throttle), from the caller's opt-in or the
 	// live resource decision.
 	ThrottleBackgroundIO bool `json:"throttle_background_io,omitempty"`
+	// ThrottleCPUNice is the nice value the run started at when the live
+	// resource decision lowered its CPU priority; 0 means the lease default.
+	ThrottleCPUNice int `json:"throttle_cpu_nice,omitempty"`
 	// ResourceDecision is the live resource-admission decision
 	// (WorkLimits.Admission = resource), as "step:dimension:reason" with
 	// ResourceRule naming the rule. Empty when the weighted cap decided.
@@ -271,6 +274,9 @@ func (event WorkEvent) Validate() error {
 	}
 	if event.ShadowThrottleCores < 0 || event.ThrottleCores < 0 {
 		return errors.New("work event throttle cores must not be negative")
+	}
+	if event.ThrottleCPUNice < 0 || event.ThrottleCPUNice > 20 {
+		return errors.New("work event throttle cpu nice must be 0 to 20")
 	}
 	if !validShadowMemoryDecision(event.ShadowMemoryDecision) {
 		return fmt.Errorf("work event shadow_memory_decision %q is not in the closed vocabulary", event.ShadowMemoryDecision)

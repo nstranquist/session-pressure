@@ -102,3 +102,42 @@ func TestReplayResourceHeadroomWithoutTelemetry(t *testing.T) {
 		t.Fatalf("replay without telemetry = %+v", replay)
 	}
 }
+
+// The CPU-throttle score compares the throttle's parallelism limit with the
+// busy cores that the same run measured unthrottled.
+func TestReplayResourceHeadroomScoresTheCPUThrottle(t *testing.T) {
+	start := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+	host := ResourceReplayHost{PhysicalMemoryMB: 65536, LogicalCPUs: 10}
+	var events []WorkEvent
+	for i := range 6 {
+		at := start.Add(-time.Duration(60-i) * time.Minute)
+		id := string(rune('a' + i))
+		events = append(events, replayAcquired(at, "h"+id, WorkClassTest, 0), replayCompleted(at.Add(time.Minute), "h"+id, WorkClassTest))
+	}
+	light := replayCompleted(start.Add(4*time.Minute), "light", WorkClassTest)
+	light.CommandCPUMilliseconds = 30_000 // 0.5 busy cores over 60 s
+	events = append(events,
+		replayAcquired(start.Add(1*time.Minute), "running", WorkClassTest, 0),
+		replayAcquired(start.Add(2*time.Minute), "heavy", WorkClassTest, 0),
+		replayCompleted(start.Add(3*time.Minute), "heavy", WorkClassTest), // 4 busy cores over 60 s
+		replayAcquired(start.Add(2*time.Minute), "light", WorkClassTest, 0),
+		light,
+	)
+	// 95% host CPU: no core of headroom, with a lease running.
+	telemetry := []TelemetryEvent{replayHeartbeat(start, LevelNormal, 80, 95, false)}
+	replay := ReplayResourceHeadroom(events, telemetry, host, 2, start)
+
+	score := replay.CPUThrottle[ResourceDimensionCPU+":"+resourceReasonSaturated]
+	if score == nil {
+		t.Fatalf("no cpu_saturated score: steps=%v dimensions=%v scores=%v", replay.Steps, replay.Dimensions, replay.CPUThrottle)
+	}
+	// running (the first start) has nothing beside it and keeps progress;
+	// heavy and light start beside it and throttle to one core.
+	if score.Decisions != 2 || score.Measured != 2 || score.Slowed != 1 || score.SlowedPercent != 50 {
+		t.Fatalf("score = %+v", score)
+	}
+	// heavy averaged 4 busy cores under a 1-core limit: 60 s x (4 - 1).
+	if score.AddedSecondsTotal != 180 || score.RuntimeSecondsTotal != 120 || score.AddedPercent != 150 {
+		t.Fatalf("added = %v s of %v s (%v%%)", score.AddedSecondsTotal, score.RuntimeSecondsTotal, score.AddedPercent)
+	}
+}

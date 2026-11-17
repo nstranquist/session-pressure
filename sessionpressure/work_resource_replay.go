@@ -1,6 +1,7 @@
 package sessionpressure
 
 import (
+	"math"
 	"slices"
 	"sort"
 	"time"
@@ -43,6 +44,10 @@ const (
 	// resourceReplayMaxHold bounds the search for the sample at which a held
 	// start would be released. A hold that reaches it is counted unresolved.
 	resourceReplayMaxHold = time.Hour
+	// resourceReplayCPUMinRuntime is the shortest run whose average busy
+	// cores the CPU-throttle score reads. Shorter runs are mostly process
+	// start-up.
+	resourceReplayCPUMinRuntime = 5 * time.Second
 )
 
 // ResourceReplayHost supplies the host constants that compact heartbeats do
@@ -85,14 +90,40 @@ type ResourceReplay struct {
 	// is zero.
 	// Held counts starts the candidate would hold (queue or relieve).
 	// UnresolvedHolds reached resourceReplayMaxHold with no releasing sample.
-	Held                               int      `json:"held"`
-	UnresolvedHolds                    int      `json:"unresolved_holds"`
-	HoldP50MS                          int64    `json:"hold_p50_ms"`
-	HoldP95MS                          int64    `json:"hold_p95_ms"`
-	StartsBeforePressure               int      `json:"starts_before_pressure"`
-	CandidateUnthrottledBeforePressure int      `json:"candidate_unthrottled_before_pressure"`
-	CandidateThrottledBeforePressure   int      `json:"candidate_throttled_before_pressure"`
-	Limitations                        []string `json:"limitations"`
+	Held                               int   `json:"held"`
+	UnresolvedHolds                    int   `json:"unresolved_holds"`
+	HoldP50MS                          int64 `json:"hold_p50_ms"`
+	HoldP95MS                          int64 `json:"hold_p95_ms"`
+	StartsBeforePressure               int   `json:"starts_before_pressure"`
+	CandidateUnthrottledBeforePressure int   `json:"candidate_unthrottled_before_pressure"`
+	CandidateThrottledBeforePressure   int   `json:"candidate_throttled_before_pressure"`
+	// CPUThrottle scores the parallelism limit of throttle decisions against
+	// the busy cores that the same runs measured, by dimension.
+	CPUThrottle map[string]*ResourceReplayCPUThrottle `json:"cpu_throttle"`
+	Limitations []string                              `json:"limitations"`
+}
+
+// ResourceReplayCPUThrottle asks whether a throttle step's parallelism limit
+// would have slowed the run it was given to. The live queue ran the work
+// unthrottled, so the run's average busy cores (command CPU time / runtime)
+// is what the work used. A run that averaged more busy cores than the limit
+// is counted slowed, and runtime x (busy cores / limit - 1) is a lower bound
+// on the time the limit adds: the average hides bursts above it.
+type ResourceReplayCPUThrottle struct {
+	Decisions int `json:"decisions"`
+	// Measured counts decisions whose run completed with command CPU and ran
+	// at least resourceReplayCPUMinRuntime.
+	Measured            int     `json:"measured"`
+	Slowed              int     `json:"slowed"`
+	SlowedPercent       float64 `json:"slowed_percent"`
+	BusyOverLimitP50    float64 `json:"busy_over_limit_p50"`
+	BusyOverLimitP95    float64 `json:"busy_over_limit_p95"`
+	AddedSecondsP95     float64 `json:"added_seconds_p95"`
+	AddedSecondsTotal   float64 `json:"added_seconds_total"`
+	RuntimeSecondsTotal float64 `json:"runtime_seconds_total"`
+	// AddedPercent is AddedSecondsTotal / RuntimeSecondsTotal, in percent.
+	AddedPercent  float64 `json:"added_percent"`
+	ratios, added []float64
 }
 
 type resourceObservation struct {
@@ -157,7 +188,8 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 			"running leases are rebuilt from acquired and terminal events; a lease whose terminal event was lost stays open until the trace ends",
 			"a hold with no releasing sample inside one hour is counted as one hour and as unresolved",
 			"an elapsed shadow window, not this replay, is the evidence for promotion",
-		}}
+			"cpu_throttle compares a limit with the run's average busy cores; bursts above the average are not seen, so slowed and added_seconds are lower bounds",
+		}, CPUThrottle: map[string]*ResourceReplayCPUThrottle{}}
 	sorted := slices.Clone(events)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Timestamp.Before(sorted[j].Timestamp) })
 	observations := resourceObservations(telemetry, host)
@@ -171,7 +203,11 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 	}
 	var intervals []leaseInterval
 	intervalIndex := map[string]int{}
+	completed := map[string]WorkEvent{}
 	for _, event := range sorted {
+		if event.Event == WorkEventCompleted {
+			completed[event.OperationID] = event
+		}
 		switch {
 		case event.Event == WorkEventAcquired:
 			intervalIndex[event.OperationID] = len(intervals)
@@ -275,6 +311,9 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 			holds = append(holds, hold)
 		}
 		tally.heldFor = append(tally.heldFor, event.WaitMilliseconds+hold)
+		if decision.Step == ResourceStepThrottle && decision.ThrottleCores > 0 {
+			replay.scoreCPUThrottle(decision, completed[event.OperationID])
+		}
 
 		followed := false
 		for next := observationIndex + 1; next < len(observations) && !observations[next].at.After(event.Timestamp.Add(resourceReplayPressureWindow)); next++ {
@@ -304,7 +343,50 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 		replay.ByClass = append(replay.ByClass, row)
 	}
 	sort.Slice(replay.ByClass, func(i, j int) bool { return replay.ByClass[i].Class < replay.ByClass[j].Class })
+	for _, score := range replay.CPUThrottle {
+		score.finish()
+	}
 	return replay
+}
+
+// scoreCPUThrottle adds one throttle decision to its dimension's score. run
+// is the operation's completed event, or zero when it did not complete.
+func (replay *ResourceReplay) scoreCPUThrottle(decision ShadowResourceDecision, run WorkEvent) {
+	score := replay.CPUThrottle[decision.Dimension+":"+decision.Reason]
+	if score == nil {
+		score = &ResourceReplayCPUThrottle{}
+		replay.CPUThrottle[decision.Dimension+":"+decision.Reason] = score
+	}
+	score.Decisions++
+	if run.Event != WorkEventCompleted || !run.CommandCPUAvailable || run.CommandCPUMilliseconds <= 0 ||
+		run.RuntimeMillis < resourceReplayCPUMinRuntime.Milliseconds() {
+		return
+	}
+	score.Measured++
+	runtime := float64(run.RuntimeMillis) / 1000
+	busy := float64(run.CommandCPUMilliseconds) / float64(run.RuntimeMillis)
+	ratio := busy / float64(decision.ThrottleCores)
+	added := 0.0
+	if ratio > 1 {
+		score.Slowed++
+		added = runtime * (ratio - 1)
+	}
+	score.RuntimeSecondsTotal += runtime
+	score.AddedSecondsTotal += added
+	score.ratios, score.added = append(score.ratios, ratio), append(score.added, added)
+}
+
+func (score *ResourceReplayCPUThrottle) finish() {
+	if score.Measured > 0 {
+		score.SlowedPercent = roundTenth(100 * float64(score.Slowed) / float64(score.Measured))
+		score.BusyOverLimitP50 = roundHundredth(percentileFloat(score.ratios, 50))
+		score.BusyOverLimitP95 = roundHundredth(percentileFloat(score.ratios, 95))
+		score.AddedSecondsP95 = roundTenth(percentileFloat(score.added, 95))
+	}
+	if score.RuntimeSecondsTotal > 0 {
+		score.AddedPercent = roundTenth(100 * score.AddedSecondsTotal / score.RuntimeSecondsTotal)
+	}
+	score.AddedSecondsTotal, score.RuntimeSecondsTotal = roundTenth(score.AddedSecondsTotal), roundTenth(score.RuntimeSecondsTotal)
 }
 
 // ReadResourceReplay runs the replay for `work evaluate`. events is the
@@ -331,3 +413,5 @@ func ReadResourceReplay(dir string, events []WorkEvent, telemetry []TelemetryEve
 	}
 	return replay
 }
+
+func roundHundredth(value float64) float64 { return math.Round(value*100) / 100 }

@@ -737,8 +737,8 @@ func (gate *workAdmissionGate) resourceAdmissionLive() bool {
 // queue or relieve. Relieve holds too: no live step restarts a memory family
 // yet, so the operation waits for the headroom it lacks. Admit, throttle and
 // remote fall through. CPU never holds (the ladder only throttles on CPU),
-// and the live path applies only the disk I/O part of a throttle
-// (workrun.go, liveResourceThrottle). A lease this process owns is never
+// and the live path applies the disk I/O and CPU-priority parts of a
+// throttle, not its parallelism limit (liveResourceThrottle). A lease this process owns is never
 // held. A missing sample and an empty queue fail open inside the ladder.
 func (gate *workAdmissionGate) resourceAdmissionDecision(admission Admission, ownsLease bool) (workAdmissionDecision, bool) {
 	if ownsLease || !gate.resourceAdmissionLive() {
@@ -762,16 +762,22 @@ func (gate *workAdmissionGate) resourceAdmissionDecision(admission Admission, ow
 }
 
 // liveResourceThrottle is the part of the last live decision that the run
-// applies: background disk I/O only. CPU parallelism stays a recorded
-// shadow value: a parallelism limit is fixed for the life of the command
-// while CPU contention changes by the second, and the measured busy cores of
-// completed runs were 0.13 to 0.23 of the prediction (corpus,
-// resource-admission-live-2026-11-17.md).
+// applies: background disk I/O, and a lower CPU priority (workThrottleCPUNice)
+// when the ladder throttled for CPU or kept a lone run moving on a pressured
+// host. The parallelism limit stays a recorded shadow value: it is fixed for
+// the life of the command while CPU contention changes by the second, and in
+// the 48 h replay it slowed 13 of 100 measured runs (corpus,
+// resource-admission-live-2026-11-17.md). A nice value takes only the cores
+// that other work needs, so it cannot slow a run on idle cores.
 func (gate *workAdmissionGate) liveResourceThrottle() WorkThrottle {
 	if gate == nil || !gate.resourceAdmissionLive() || gate.resourceDecision.Step != ResourceStepThrottle {
 		return WorkThrottle{}
 	}
-	return WorkThrottle{BackgroundIO: gate.resourceDecision.BackgroundIO}
+	throttle := WorkThrottle{BackgroundIO: gate.resourceDecision.BackgroundIO}
+	if gate.resourceDecision.ThrottleCores > 0 && gate.resourceDecision.Dimension != ResourceDimensionIO {
+		throttle.CPUNice = workThrottleCPUNice
+	}
+	return throttle
 }
 
 // memoryHeadroomDecision holds new work under enforced memory admission
@@ -1203,6 +1209,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		event.SessionDigest = sessionDigest
 		event.ThrottleCores = throttle.Cores
 		event.ThrottleBackgroundIO = throttle.BackgroundIO
+		event.ThrottleCPUNice = throttle.CPUNice
 		if admissionGate != nil && admissionGate.resourceDecision.Step != "" {
 			event.ResourceDecision = admissionGate.resourceDecision.Label()
 			event.ResourceRule = ResourceHeadroomRuleVersion
@@ -1744,7 +1751,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	ioWrapped := false
 	if !throttle.Active() {
 		// The caller's explicit opt-in wins; otherwise the live resource
-		// decision may ask for background disk I/O.
+		// decision may ask for background disk I/O and a lower CPU priority.
 		throttle = admissionGate.liveResourceThrottle()
 	}
 	if wrapper := throttle.IOWrapper(runtime.GOOS, nil); len(wrapper) > 0 {
@@ -1808,7 +1815,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	}
 	treePeak := startTreePeakSampler(command.Process.Pid, treeRSSSampleInterval, listProcessRows, processRSSKB)
 	defer treePeak.Stop()
-	if priorityErr := syscall.Setpriority(syscall.PRIO_PROCESS, command.Process.Pid, 5); priorityErr != nil && !errors.Is(priorityErr, syscall.ESRCH) {
+	if priorityErr := syscall.Setpriority(syscall.PRIO_PROCESS, command.Process.Pid, throttle.Nice()); priorityErr != nil && !errors.Is(priorityErr, syscall.ESRCH) {
 		fmt.Fprintln(streams.Stderr, "ndev session pressure: lower leased command priority:", priorityErr)
 	}
 	bindCtx, bindCancel := context.WithTimeout(context.Background(), 5*time.Second)
