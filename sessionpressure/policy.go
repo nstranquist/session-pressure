@@ -63,6 +63,11 @@ type Thresholds struct {
 	AgentTotalWarningMB   float64 `json:"agent_total_warning_mb"`
 	AgentTotalRedMB       float64 `json:"agent_total_red_mb"`
 	AgentTotalCriticalMB  float64 `json:"agent_total_critical_mb"`
+	// RSSEscalationFreePercent holds the tree and agent-total RSS rungs at
+	// warning while kernel free memory is above it. Summed RSS double counts
+	// shared pages, so on a large host it can pass red with 90% free. 0 is
+	// off: the RSS rungs escalate on their own (the 16 GiB laptop).
+	RSSEscalationFreePercent float64 `json:"rss_escalation_free_percent,omitempty"`
 }
 
 // StoragePolicy is independent from memory-oriented admission and shedding.
@@ -463,19 +468,23 @@ type Policy struct {
 	HeartbeatSeconds                int    `json:"heartbeat_seconds"`
 	// SustainSamples is the minimum live window before rolling resource
 	// budgets replace conservative single-sample checks.
-	SustainSamples         int                   `json:"sustain_samples"`
-	CriticalSustainSamples int                   `json:"critical_sustain_samples"`
-	ActionCooldownSeconds  int                   `json:"action_cooldown_seconds"`
-	CandidateMinAgeSeconds int                   `json:"candidate_min_age_seconds"`
-	CandidateMaxCPUPercent float64               `json:"candidate_max_cpu_percent"`
-	RetentionDays          int                   `json:"retention_days"`
-	BlockNewAt             Level                 `json:"block_new_at"`
-	Thresholds             Thresholds            `json:"thresholds"`
-	ResourceBudgets        ResourceBudgets       `json:"resource_budgets"`
-	WorkLimits             WorkLimits            `json:"work_limits"`
-	LaunchAdmission        LaunchAdmissionPolicy `json:"launch_admission"`
-	Storage                StoragePolicy         `json:"storage"`
-	DiskWrite              DiskWritePolicy       `json:"disk_write"`
+	SustainSamples         int     `json:"sustain_samples"`
+	CriticalSustainSamples int     `json:"critical_sustain_samples"`
+	ActionCooldownSeconds  int     `json:"action_cooldown_seconds"`
+	CandidateMinAgeSeconds int     `json:"candidate_min_age_seconds"`
+	CandidateMaxCPUPercent float64 `json:"candidate_max_cpu_percent"`
+	RetentionDays          int     `json:"retention_days"`
+	BlockNewAt             Level   `json:"block_new_at"`
+	// MemoryLevels is "calibrated" or "manual" (empty). Calibrated policies
+	// take their memory thresholds and guard RSS budget from memory-levels.json
+	// on every load (see memory_levels.go); manual policies keep their own.
+	MemoryLevels    string                `json:"memory_levels,omitempty"`
+	Thresholds      Thresholds            `json:"thresholds"`
+	ResourceBudgets ResourceBudgets       `json:"resource_budgets"`
+	WorkLimits      WorkLimits            `json:"work_limits"`
+	LaunchAdmission LaunchAdmissionPolicy `json:"launch_admission"`
+	Storage         StoragePolicy         `json:"storage"`
+	DiskWrite       DiskWritePolicy       `json:"disk_write"`
 }
 
 func (policy Policy) IntervalSeconds(level Level) int {
@@ -489,13 +498,27 @@ func (policy Policy) IntervalSeconds(level Level) int {
 	}
 }
 
-// DefaultPolicy scales memory thresholds to the host while preserving the
-// tuned 16 GiB values used by the resource-constrained development laptop.
+// DefaultPolicy takes its memory thresholds from the embedded
+// memory_levels.json anchors for physicalMemoryMB (no host override), so the
+// tuned 16 GiB laptop values and the measured large-host values live in one
+// config file instead of code.
 func DefaultPolicy(physicalMemoryMB float64) Policy {
 	if physicalMemoryMB <= 0 {
 		physicalMemoryMB = 16 * 1024
 	}
 	workLimits := defaultWorkLimits(runtime.NumCPU())
+	policy := basePolicy(workLimits)
+	levels, err := EmbeddedMemoryLevels().Resolve(physicalMemoryMB, "")
+	if err != nil {
+		panic(fmt.Sprintf("embedded memory levels for %.0f MB: %v", physicalMemoryMB, err))
+	}
+	levels.Apply(&policy)
+	return policy
+}
+
+// basePolicy holds every default except the memory ladder, which comes from
+// memory_levels.json through MemoryLevels.Apply.
+func basePolicy(workLimits WorkLimits) Policy {
 	return Policy{
 		SchemaVersion:    SchemaVersion,
 		Profile:          PolicyProfileObserve,
@@ -520,26 +543,14 @@ func DefaultPolicy(physicalMemoryMB float64) Policy {
 		Thresholds: Thresholds{
 			HostCPUWarningPercent: 85,
 			HostCPURedPercent:     95,
-			FreeWarningPercent:    25,
-			FreeRedPercent:        15,
-			FreeCriticalPercent:   8,
-			SwapWarningMB:         physicalMemoryMB * 0.25,
-			SwapRedMB:             physicalMemoryMB * 0.50,
-			SwapCriticalMB:        physicalMemoryMB * 0.75,
 			// 8 MB/s sustained is ~0.7 TB/day of SSD writes; 32 MB/s is
 			// ~115 GB/hour. The observed 2026-11-02 storm ran 69-607 MB/s.
 			SwapOutWarningMBPerSecond: 8,
 			SwapOutThrashMBPerSecond:  32,
 			SwapOutReleaseMBPerSecond: 16,
-			TreeWarningMB:             physicalMemoryMB * 0.1875,
-			TreeRedMB:                 physicalMemoryMB * 0.3125,
-			TreeCriticalMB:            physicalMemoryMB * 0.4375,
-			AgentTotalWarningMB:       physicalMemoryMB * 0.50,
-			AgentTotalRedMB:           physicalMemoryMB * 0.6875,
-			AgentTotalCriticalMB:      physicalMemoryMB * 0.8125,
 		},
 		ResourceBudgets: ResourceBudgets{
-			MaxSelfRSSMB:          30,
+			// MaxSelfRSSMB comes from memory_levels.json (guard_max_self_rss_mb).
 			MaxIdleCPUPercent:     0.25,
 			MaxPressureCPUPercent: 6,
 			MaxSampleDurationMS:   2000,
@@ -616,6 +627,12 @@ func (policy Policy) Validate() error {
 	}
 	if policy.BlockNewAt != LevelRed && policy.BlockNewAt != LevelCritical {
 		return errors.New("block_new_at must be red or critical")
+	}
+	if policy.MemoryLevels != "" && policy.MemoryLevels != MemoryLevelsCalibrated && policy.MemoryLevels != MemoryLevelsManual {
+		return fmt.Errorf("memory_levels must be %q or %q (got %q)", MemoryLevelsCalibrated, MemoryLevelsManual, policy.MemoryLevels)
+	}
+	if t := policy.Thresholds.RSSEscalationFreePercent; t < 0 || t > 100 {
+		return errors.New("rss_escalation_free_percent must be between 0 (off) and 100")
 	}
 	b := policy.ResourceBudgets
 	if b.MaxSelfRSSMB <= 0 || b.MaxIdleCPUPercent <= 0 || b.MaxPressureCPUPercent <= 0 || b.MaxSampleDurationMS <= 0 || b.MaxSampleCPUTimeMS <= 0 || b.MaxTelemetryBytesDay <= 0 {
@@ -952,6 +969,13 @@ func LoadPolicy(path string, physicalMemoryMB float64) (Policy, bool, error) {
 		if policy.DiskWrite.TraceMaxDurationSeconds == 0 {
 			policy.DiskWrite.TraceMaxDurationSeconds = defaults.DiskWrite.TraceMaxDurationSeconds
 		}
+	}
+	if policy.MemoryLevels == MemoryLevelsCalibrated {
+		levels, err := ResolveHostMemoryLevels(filepath.Dir(path), physicalMemoryMB)
+		if err != nil {
+			return Policy{}, true, err
+		}
+		levels.Apply(&policy)
 	}
 	if err := policy.Validate(); err != nil {
 		return Policy{}, true, fmt.Errorf("validate policy: %w", err)

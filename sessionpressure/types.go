@@ -675,11 +675,23 @@ func evaluate(snapshot Snapshot, policy Policy, includeCPU bool) Snapshot {
 		add(LevelWarning, "host free memory %d%% <= warning %.0f%%", snapshot.FreePercent, policy.Thresholds.FreeWarningPercent)
 	}
 
+	// rssRung adds an RSS-sum breach. Summed RSS double counts shared pages,
+	// so above warning it needs the kernel free level to agree when policy
+	// sets RSSEscalationFreePercent (large hosts, see memory_levels.json).
+	rssRung := func(candidate Level, format string, args ...any) {
+		hold := policy.Thresholds.RSSEscalationFreePercent
+		if candidate.AtLeast(LevelRed) && hold > 0 && free > hold {
+			add(LevelWarning, format+" held at warning: host free %d%% > %.0f%%", append(args, snapshot.FreePercent, hold)...)
+			return
+		}
+		add(candidate, format, args...)
+	}
+
 	switch {
 	case snapshot.AgentRSSSumMB >= policy.Thresholds.AgentTotalCriticalMB:
-		add(LevelCritical, "agent RSS sum %.0f MB >= critical %.0f MB", snapshot.AgentRSSSumMB, policy.Thresholds.AgentTotalCriticalMB)
+		rssRung(LevelCritical, "agent RSS sum %.0f MB >= critical %.0f MB", snapshot.AgentRSSSumMB, policy.Thresholds.AgentTotalCriticalMB)
 	case snapshot.AgentRSSSumMB >= policy.Thresholds.AgentTotalRedMB:
-		add(LevelRed, "agent RSS sum %.0f MB >= red %.0f MB", snapshot.AgentRSSSumMB, policy.Thresholds.AgentTotalRedMB)
+		rssRung(LevelRed, "agent RSS sum %.0f MB >= red %.0f MB", snapshot.AgentRSSSumMB, policy.Thresholds.AgentTotalRedMB)
 	case snapshot.AgentRSSSumMB >= policy.Thresholds.AgentTotalWarningMB:
 		add(LevelWarning, "agent RSS sum %.0f MB >= warning %.0f MB", snapshot.AgentRSSSumMB, policy.Thresholds.AgentTotalWarningMB)
 	}
@@ -688,9 +700,9 @@ func evaluate(snapshot Snapshot, policy Policy, includeCPU bool) Snapshot {
 		rss := treeRungRSSMB(top)
 		switch {
 		case rss >= policy.Thresholds.TreeCriticalMB:
-			add(LevelCritical, "%s tree %d RSS sum %.0f MB%s >= critical %.0f MB", top.Agent, top.RootPID, rss, treeLSPSuffix(top), policy.Thresholds.TreeCriticalMB)
+			rssRung(LevelCritical, "%s tree %d RSS sum %.0f MB%s >= critical %.0f MB", top.Agent, top.RootPID, rss, treeLSPSuffix(top), policy.Thresholds.TreeCriticalMB)
 		case rss >= policy.Thresholds.TreeRedMB:
-			add(LevelRed, "%s tree %d RSS sum %.0f MB%s >= red %.0f MB", top.Agent, top.RootPID, rss, treeLSPSuffix(top), policy.Thresholds.TreeRedMB)
+			rssRung(LevelRed, "%s tree %d RSS sum %.0f MB%s >= red %.0f MB", top.Agent, top.RootPID, rss, treeLSPSuffix(top), policy.Thresholds.TreeRedMB)
 		case rss >= policy.Thresholds.TreeWarningMB:
 			add(LevelWarning, "%s tree %d RSS sum %.0f MB%s >= warning %.0f MB", top.Agent, top.RootPID, rss, treeLSPSuffix(top), policy.Thresholds.TreeWarningMB)
 		}

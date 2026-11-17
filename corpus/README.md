@@ -38,3 +38,5 @@ product decisions have all been reconstructed.
 - [Remote Go limits follow the admitted runner lane](light-rerun-lane-env-2026-11-15.md): light requests rerun or admitted heavy drop the GOMAXPROCS=1 / -p=1 pins via NCD_RUNNER_LANE.
 
 - [Storage retention providers, storage watch, tm-exclude plan](storage-retention-watch-2026-11-16.md): S2 ST6/ST7/ST3: binary-revisions, turso-backups, go-build-orphans, resolved Go caches, disk/TM/X10/quota alerts, Time Machine exclusion plan.
+
+- [Memory levels calibration](memory-levels-calibration-2026-11-17.md): WORK-1057 memory levels in `memory-levels.json`, anchors from monitor history on the 16 GiB and 48 GiB Macs, RSS rungs held at warning while kernel free memory is high, install on both Macs.
