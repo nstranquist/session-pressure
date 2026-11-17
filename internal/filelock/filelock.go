@@ -14,9 +14,15 @@
 //     same process before they race the OS lock. Without this, two goroutines
 //     hitting O_EXCL nearly simultaneously can both lose ordering even though
 //     only one wins the file.
-//   - Stale recovery: lock file carries {pid, timestamp}. Missing, malformed,
-//     or dead-PID locks are reclaimed. A live owner is never preempted solely
-//     because a critical section outlived StaleAge; waiters time out safely.
+//   - Stale recovery: lock file carries {pid, timestamp, token}. A missing
+//     sidecar is never removed: the waiter retries the create at once. A
+//     dead-PID sidecar, or a malformed one older than the n-1 initialization
+//     grace, is removed only by the one waiter that holds the kernel reclaim
+//     guard (flock on path + ".lock.reclaim") and that judges it stale again
+//     under the guard. Without the guard, a waiter that judged an old sidecar
+//     stale could delete a successor's live sidecar and let two processes in
+//     (WORK-1225). A live owner is never preempted solely because a critical
+//     section outlived StaleAge; waiters time out safely.
 //
 // Sibling to the existing `internal/lock/` package, which is the `ndev lock`
 // CLI dispatcher (different audience, different concern).
@@ -159,19 +165,83 @@ func readLockInfo(lockFile string) *info {
 	return &i
 }
 
-// isStale returns true if the lock file is missing, old-and-malformed, or owned
-// by a dead PID. Timestamp age is diagnostic only while the PID is alive:
-// stealing an aged live lock would allow overlapping critical sections.
-func isStale(lockFile string) bool {
-	i := readLockInfo(lockFile)
-	if i == nil {
-		stat, err := os.Stat(lockFile)
-		if err == nil && time.Since(stat.ModTime()) < lockInitializationGrace {
-			return false
+// sidecarState is a waiter's judgement of the current lock sidecar.
+type sidecarState int
+
+const (
+	sidecarLive sidecarState = iota
+	sidecarMissing
+	sidecarStale
+)
+
+// judgeSidecar classifies the lock file. A malformed sidecar is stale only
+// after the n-1 initialization grace. Timestamp age is diagnostic only while
+// the PID is alive: stealing an aged live lock would allow overlapping
+// critical sections.
+func judgeSidecar(lockFile string) sidecarState {
+	if i := readLockInfo(lockFile); i != nil {
+		if isProcessAlive(i.PID) {
+			return sidecarLive
 		}
-		return true
+		return sidecarStale
 	}
-	return !isProcessAlive(i.PID)
+	stat, err := os.Stat(lockFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return sidecarMissing
+	}
+	if err == nil && time.Since(stat.ModTime()) < lockInitializationGrace {
+		return sidecarLive
+	}
+	return sidecarStale
+}
+
+// testHookBeforeReclaimGuard runs after a waiter first judges the sidecar
+// stale and before it takes the reclaim guard. Tests use it to put a
+// competing waiter into that window.
+var testHookBeforeReclaimGuard func()
+
+// reclaimStale removes a stale sidecar and reports whether the caller should
+// try the create again at once.
+//
+// A missing sidecar is not removed: the owner released it, so a retry either
+// wins or finds the successor. A stale sidecar is removed only under the
+// non-blocking reclaim guard, after a second judgement. Inside the guard no
+// other waiter removes the sidecar and os.Link never replaces an existing
+// one, so the file judged stale is the file removed. The guard is
+// non-blocking, so a stopped reclaimer makes others poll, not hang, and the
+// kernel drops it when its process exits.
+func reclaimStale(lockFile string) bool {
+	switch judgeSidecar(lockFile) {
+	case sidecarMissing:
+		return true
+	case sidecarLive:
+		return false
+	}
+	if hook := testHookBeforeReclaimGuard; hook != nil {
+		hook()
+	}
+	guard, err := os.OpenFile(lockFile+".reclaim", os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return false
+	}
+	defer guard.Close()
+	fd := int(guard.Fd())
+	if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		// Another waiter is reclaiming; poll and judge again later.
+		return false
+	}
+	defer syscall.Flock(fd, syscall.LOCK_UN)
+	switch judgeSidecar(lockFile) {
+	case sidecarMissing:
+		return true
+	case sidecarLive:
+		return false
+	}
+	if err := os.Remove(lockFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+		// An undeletable sidecar must not spin the caller; poll until timeout.
+		return false
+	}
+	return true
 }
 
 // tryCreateLock builds and closes the ownership record privately, then uses a
@@ -334,8 +404,7 @@ func AcquireContext(ctx context.Context, path string, timeout time.Duration) (un
 				})
 			}, nil
 		}
-		if isStale(lockFile) {
-			removeLock(lockFile)
+		if reclaimStale(lockFile) {
 			continue
 		}
 		remaining := time.Until(deadline)

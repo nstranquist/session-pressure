@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **File lock: no overlap after a release (WORK-1225).** A waiter that lost
+  the create could judge a just-released sidecar stale and then delete the
+  successor's live sidecar, so two processes held the lock together. A
+  missing sidecar now means "retry", and a dead-owner sidecar is removed only
+  under a non-blocking `flock` reclaim guard after a second judgement. See
+  `corpus/filelock-reclaim-race-2026-11-17.md`.
 - **Commit-delivery lane (WORK-1121).** The repository is enrolled in
   commit-delivery. Linux `go vet` and `go test` run on the gate runner. The
   Darwin-only Go packages and the Swift app run on the Mac, scoped by path.

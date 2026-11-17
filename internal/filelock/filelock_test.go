@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -280,8 +282,110 @@ func TestFreshMalformedLockIsNotStolenDuringNMinusOneInitialization(t *testing.T
 	if err := os.WriteFile(lockFile, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if isStale(lockFile) {
+	if judgeSidecar(lockFile) != sidecarLive {
 		t.Fatal("fresh, not-yet-initialized n-1 sidecar was treated as stale")
+	}
+}
+
+// plantDeadOwner writes a complete sidecar whose owner PID does not exist.
+func plantDeadOwner(t *testing.T, lockFile string) {
+	t.Helper()
+	bogus := []byte(`{"pid":2147483646,"timestamp":` + fmt.Sprint(time.Now().UnixMilli()) + `,"token":"dead"}`)
+	if err := os.WriteFile(lockFile, bogus, 0o644); err != nil {
+		t.Fatalf("plant: %v", err)
+	}
+}
+
+// setReclaimHook installs testHookBeforeReclaimGuard for one test.
+func setReclaimHook(t *testing.T, hook func()) {
+	t.Helper()
+	testHookBeforeReclaimGuard = hook
+	t.Cleanup(func() { testHookBeforeReclaimGuard = nil })
+}
+
+// WORK-1225: a waiter lost the create, the owner released, and a successor
+// published its sidecar before the waiter acted. The waiter must not remove
+// the successor's live sidecar. The old code judged the missing file stale
+// and then deleted whatever was there.
+func TestReclaimNeverRemovesSuccessorAfterOwnerReleased(t *testing.T) {
+	lockFile := filepath.Join(t.TempDir(), "data.lock")
+	setReclaimHook(t, func() { t.Fatal("a missing sidecar must not enter the reclaim path") })
+	// The sidecar is missing at judgement time; the successor wins the retry.
+	if !reclaimStale(lockFile) {
+		t.Fatal("missing sidecar must make the waiter retry at once")
+	}
+	successor, err := tryCreateLock(lockFile)
+	if err != nil || successor == nil {
+		t.Fatalf("successor create: owner=%+v err=%v", successor, err)
+	}
+	if owner, err := tryCreateLock(lockFile); err != nil || owner != nil {
+		t.Fatalf("waiter retry must lose to the successor: owner=%+v err=%v", owner, err)
+	}
+	if reclaimStale(lockFile) {
+		t.Fatal("live successor sidecar was judged reclaimable")
+	}
+	if got := readLockInfo(lockFile); got == nil || got.Token != successor.Token {
+		t.Fatalf("successor sidecar was removed or replaced: %+v", got)
+	}
+}
+
+// WORK-1225: two waiters judged the same dead owner stale. The faster one
+// reclaimed and published its own live sidecar before the slower one took
+// the guard. The slower one must judge again under the guard and keep the
+// successor's sidecar.
+func TestReclaimJudgesAgainUnderGuard(t *testing.T) {
+	lockFile := filepath.Join(t.TempDir(), "data.lock")
+	plantDeadOwner(t, lockFile)
+	var successor *info
+	setReclaimHook(t, func() {
+		testHookBeforeReclaimGuard = nil
+		if !reclaimStale(lockFile) {
+			t.Error("competing waiter could not reclaim the dead owner")
+		}
+		owner, err := tryCreateLock(lockFile)
+		if err != nil || owner == nil {
+			t.Errorf("competing waiter create: owner=%+v err=%v", owner, err)
+		}
+		successor = owner
+	})
+	if reclaimStale(lockFile) {
+		t.Fatal("waiter reclaimed a sidecar that became live before it took the guard")
+	}
+	if successor == nil {
+		t.Fatal("competing waiter did not publish a sidecar")
+	}
+	if got := readLockInfo(lockFile); got == nil || got.Token != successor.Token {
+		t.Fatalf("successor sidecar was removed or replaced: %+v", got)
+	}
+}
+
+// Only the holder of the reclaim guard removes a stale sidecar. A waiter that
+// finds the guard held polls instead of removing.
+func TestReclaimGuardExcludesConcurrentReclaimers(t *testing.T) {
+	lockFile := filepath.Join(t.TempDir(), "data.lock")
+	plantDeadOwner(t, lockFile)
+	guard, err := os.OpenFile(lockFile+".reclaim", os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Close()
+	if err := syscall.Flock(int(guard.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("hold guard: %v", err)
+	}
+	if reclaimStale(lockFile) {
+		t.Fatal("waiter reclaimed while another reclaimer held the guard")
+	}
+	if _, err := os.Stat(lockFile); err != nil {
+		t.Fatalf("stale sidecar removed without the guard: %v", err)
+	}
+	if err := syscall.Flock(int(guard.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	if !reclaimStale(lockFile) {
+		t.Fatal("waiter did not reclaim after the guard was released")
+	}
+	if _, err := os.Stat(lockFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale sidecar still present after reclaim: %v", err)
 	}
 }
 
@@ -404,13 +508,17 @@ func TestExclusiveCriticalSectionAcrossProcesses(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "data")
 	ledger := filepath.Join(dir, "critical-section.log")
-	const processCount = 12
+	// Each helper takes the lock several times back to back. Releases then
+	// overlap with other helpers' create attempts far more often, which is
+	// the window where WORK-1225 let a waiter delete a successor's sidecar.
+	const processCount, roundsPerProcess = 12, 20
 	commands := make([]*exec.Cmd, 0, processCount)
 	for index := 0; index < processCount; index++ {
 		command := exec.Command(os.Args[0], "-test.run=^TestFileLockProcessHelper$")
 		command.Env = append(os.Environ(),
 			"NDEV_FILELOCK_HELPER_TARGET="+target,
 			"NDEV_FILELOCK_HELPER_LEDGER="+ledger,
+			fmt.Sprintf("NDEV_FILELOCK_HELPER_ROUNDS=%d", roundsPerProcess),
 		)
 		if err := command.Start(); err != nil {
 			t.Fatalf("start helper %d: %v", index, err)
@@ -449,7 +557,7 @@ func TestExclusiveCriticalSectionAcrossProcesses(t *testing.T) {
 			t.Fatalf("unknown critical-section ledger row %q", line)
 		}
 	}
-	if active != "" || completed != processCount {
+	if active != "" || completed != processCount*roundsPerProcess {
 		t.Fatalf("cross-process critical-section ledger incomplete: active=%s completed=%d body=%s", active, completed, body)
 	}
 }
@@ -460,34 +568,37 @@ func TestFileLockProcessHelper(t *testing.T) {
 	if target == "" || ledger == "" {
 		return
 	}
-	unlock, err := Acquire(target, 5*time.Second)
+	rounds, err := strconv.Atoi(os.Getenv("NDEV_FILELOCK_HELPER_ROUNDS"))
+	if err != nil || rounds < 1 {
+		t.Fatalf("NDEV_FILELOCK_HELPER_ROUNDS must be a positive integer: %v", err)
+	}
+	for round := 0; round < rounds; round++ {
+		if err := runCriticalSection(target, ledger, fmt.Sprintf("%d.%d", os.Getpid(), round)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// runCriticalSection holds the lock while it appends a start and an end row
+// for id to the ledger.
+func runCriticalSection(target, ledger, id string) error {
+	unlock, err := Acquire(target, 10*time.Second)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	defer unlock()
 	file, err := os.OpenFile(ledger, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
-	pid := os.Getpid()
-	if _, err := fmt.Fprintf(file, "start %d\n", pid); err != nil {
+	if _, err := fmt.Fprintf(file, "start %s\n", id); err != nil {
 		_ = file.Close()
-		t.Fatal(err)
+		return err
 	}
-	if err := file.Sync(); err != nil {
+	time.Sleep(time.Millisecond)
+	if _, err := fmt.Fprintf(file, "end %s\n", id); err != nil {
 		_ = file.Close()
-		t.Fatal(err)
+		return err
 	}
-	time.Sleep(10 * time.Millisecond)
-	if _, err := fmt.Fprintf(file, "end %d\n", pid); err != nil {
-		_ = file.Close()
-		t.Fatal(err)
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
+	return file.Close()
 }
