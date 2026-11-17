@@ -42,6 +42,31 @@ git merge-file --diff-algorithm=histogram current base other`
 	}
 }
 
+// A pool-user job keeps the Go caches its runner chose; without the runner's
+// marker an inherited GOCACHE is still replaced by the shared caches.
+func TestRemoteRunnerPreludeKeepsPoolGoCaches(t *testing.T) {
+	run := func(env ...string) string {
+		t.Helper()
+		// The toolchain check is the prelude's first group; skip it here.
+		prelude := remoteRunnerPrelude()
+		prelude = prelude[strings.Index(prelude, "export PATH="):]
+		cmd := exec.Command("/bin/bash", "-c", prelude+`printf '%s|%s|%s' "$GOCACHE" "$GOMODCACHE" "$GOPATH"`)
+		cmd.Env = append([]string{"PATH=/usr/bin:/bin"}, env...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("prelude: %v: %s", err, out)
+		}
+		return string(out)
+	}
+	pool := []string{"NCD_RUNNER_GO_ENV=pool", "GOCACHE=/c/go-build", "GOMODCACHE=/c/go-mod", "GOPATH=/h/go"}
+	if got := run(pool...); got != "/c/go-build|/c/go-mod|/h/go" {
+		t.Fatalf("pool caches replaced: %s", got)
+	}
+	if got := run("GOCACHE=/private/invalid-cache"); got != "/srv/build/cache/go-build|/srv/build/cache/go-mod|/srv/build/go" {
+		t.Fatalf("an inherited cache survived without the runner marker: %s", got)
+	}
+}
+
 func TestRunnerSubscriberReconnectPreservesExactlyOneTranscript(t *testing.T) {
 	calls := 0
 	var out bytes.Buffer
