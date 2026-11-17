@@ -224,6 +224,11 @@ func TestProcessIncidentStorageFailurePreventsSignal(t *testing.T) {
 }
 
 func TestProcessIncidentsConcurrentUpdates(t *testing.T) {
+	// The test proves that no update is lost. Eight queued writers on a loaded
+	// host can outwait the 2s production bound, so the bound is not under test.
+	previous := processIncidentLockTimeout
+	processIncidentLockTimeout = testWatchdog
+	t.Cleanup(func() { processIncidentLockTimeout = previous })
 	dir := t.TempDir()
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {

@@ -177,23 +177,33 @@ func TestWaitForBrowserAdmissionRefusesAtOnceWithoutWait(t *testing.T) {
 func TestWaitForBrowserAdmissionStopsAtDeadline(t *testing.T) {
 	admitter := testBrowserAdmitter(t, t.TempDir(), 401, func() MemoryHeadroom { return freshHeadroom(time.Now(), 10) })
 	ok := func(context.Context) error { return nil }
-	var stderr bytes.Buffer
-	reporter := newWorkProgressReporter(WorkProgressHuman, &stderr, "op", WorkClassBrowser, 3, time.Now())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	_, err := waitForBrowserAdmission(ctx, true, ok, admitter, reporter, 10*time.Millisecond)
+	// The budget ends at the first refusal, not after a wall-clock 60ms: on a
+	// loaded host the first lock wait alone can outlast a short timeout. The
+	// long retry keeps the timer from starting another attempt on a spent
+	// context.
+	deadline := newManualDeadline()
+	stderr := &expireOnWrite{deadline: deadline, marker: "ndev session pressure: waiting"}
+	reporter := newWorkProgressReporter(WorkProgressHuman, stderr, "op", WorkClassBrowser, 3, time.Now())
+	_, err := waitForBrowserAdmission(deadline, true, ok, admitter, reporter, testWatchdog)
 	if err == nil || !strings.Contains(err.Error(), "deadline reached") || !strings.Contains(err.Error(), "BROWSER_NO_HEADROOM") {
-		t.Fatalf("deadline err = %v", err)
+		t.Fatalf("deadline err = %v (progress %q)", err, stderr.String())
 	}
-	// Headroom never recovers, so returning at all proves the deadline ended
-	// the wait; the lower bound proves it waited instead of refusing at once.
-	if elapsed := time.Since(started); elapsed < 50*time.Millisecond {
-		t.Fatalf("waited %s, want the 60ms deadline", elapsed)
+}
+
+// expireOnWrite ends a manual deadline when the progress stream first shows
+// the marker, so a test can end a wait budget at an exact stage.
+type expireOnWrite struct {
+	bytes.Buffer
+	deadline *manualDeadline
+	marker   string
+}
+
+func (w *expireOnWrite) Write(p []byte) (int, error) {
+	n, err := w.Buffer.Write(p)
+	if strings.Contains(w.Buffer.String(), w.marker) {
+		w.deadline.expire()
 	}
-	if !strings.Contains(stderr.String(), "ndev session pressure: waiting") {
-		t.Fatalf("no progress line: %q", stderr.String())
-	}
+	return n, err
 }
 
 func TestWaitForBrowserAdmissionReturnsControlErrors(t *testing.T) {

@@ -108,11 +108,15 @@ func ReadProcessIncidents(dir string) (ProcessIncidentReport, error) {
 	return report, nil
 }
 
+// processIncidentLockTimeout bounds one incident ledger update. It is a var
+// only so a concurrency test can take host load out of the lock wait.
+var processIncidentLockTimeout = 2 * time.Second
+
 func updateProcessIncidents(ctx context.Context, dir string, fn func(*ProcessIncidentReport) error) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	unlock, err := filelock.AcquireContext(ctx, processIncidentPath(dir), 2*time.Second)
+	unlock, err := filelock.AcquireContext(ctx, processIncidentPath(dir), processIncidentLockTimeout)
 	if err != nil {
 		return err
 	}

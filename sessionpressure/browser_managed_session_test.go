@@ -79,7 +79,7 @@ func TestManagedSessionLeaseActiveExemptsOnlyLiveIdleLeases(t *testing.T) {
 func TestBrowserKernelArgsReturnsUserDataDir(t *testing.T) {
 	args := []string{
 		"/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-		"--headless=new", "--remote-debugging-port=0", "--user-data-dir=/Users/u/.nicos-dev/browser/profiles/csp-sweep",
+		"--headless=new", "--remote-debugging-port=0", "--user-data-dir=/Users/example/.nicos-dev/browser/profiles/csp-sweep",
 	}
 	var body bytes.Buffer
 	_ = binary.Write(&body, binary.LittleEndian, uint32(len(args)))
@@ -90,7 +90,7 @@ func TestBrowserKernelArgsReturnsUserDataDir(t *testing.T) {
 		body.WriteByte(0)
 	}
 	automated, dir, err := browserKernelArgs(body.Bytes())
-	if err != nil || !automated || dir != "/Users/u/.nicos-dev/browser/profiles/csp-sweep" {
+	if err != nil || !automated || dir != "/Users/example/.nicos-dev/browser/profiles/csp-sweep" {
 		t.Fatalf("browserKernelArgs = %v, %q, %v", automated, dir, err)
 	}
 }

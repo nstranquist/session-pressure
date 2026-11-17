@@ -18,6 +18,11 @@ func TestGoReuseSingleflightAndExplicitExecution(t *testing.T) {
 	t.Setenv("SP_REUSE_COUNTER", counter)
 	t.Setenv("SP_REUSE_RELEASE", release)
 	t.Setenv("NDEV_PRESSURE_NO_GREEN_EXPRESS", "1")
+	// A source listing over its 15s production bound falls back to a plain
+	// run. Under load that would hide the singleflight decision under test.
+	previousListTimeout := expressSourceListTimeout
+	expressSourceListTimeout = testWatchdog
+	t.Cleanup(func() { expressSourceListTimeout = previousListTimeout })
 	for path, body := range map[string]string{
 		"go.mod":          "module fixture.invalid/reuse\n\ngo 1.25\n",
 		"fixture_test.go": "package reuse\nimport (\"os\"; \"testing\"; \"time\")\nfunc TestExecution(t *testing.T) { f,e:=os.OpenFile(os.Getenv(\"SP_REUSE_COUNTER\"),os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600); if e!=nil {t.Fatal(e)}; f.WriteString(\"run\\n\"); f.Close(); for end := time.Now().Add(2*time.Minute); time.Now().Before(end); time.Sleep(5*time.Millisecond) { if _, e := os.Stat(os.Getenv(\"SP_REUSE_RELEASE\")); e == nil { return } }; t.Fatal(\"never released\") }\n",
@@ -89,7 +94,15 @@ func TestGoReuseSingleflightAndExplicitExecution(t *testing.T) {
 		t.Helper()
 		data, err := os.ReadFile(counter)
 		if err != nil || bytes.Count(data, []byte("run\n")) != want {
-			t.Fatalf("executions=%q want=%d err=%v", data, want, err)
+			var decisions []string
+			if events, readErr := NewWorkEventStore(c.Dir).Read(WorkEventFilter{}); readErr == nil {
+				for _, event := range events {
+					if event.ReuseDecision != "" || event.ReuseStatus != "" {
+						decisions = append(decisions, fmt.Sprintf("%s/%s/%s/%s", event.Event, event.ReuseStatus, event.ReuseDecision, event.ReuseRefusalReason))
+					}
+				}
+			}
+			t.Fatalf("executions=%q want=%d err=%v reuse=%v", data, want, err, decisions)
 		}
 	}
 	check(1)

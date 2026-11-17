@@ -446,8 +446,13 @@ func stopExpressSourceList(cmd *exec.Cmd) error {
 	return errors.Join(killErr, waitErr)
 }
 
+// expressSourceListTimeout bounds one source enumeration. On timeout the work
+// runs without reuse. It is a var only so a reuse test can take host load out
+// of the decision it checks.
+var expressSourceListTimeout = 15 * time.Second
+
 func contextWithExpressSourceTimeout() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 15*time.Second)
+	return context.WithTimeout(context.Background(), expressSourceListTimeout)
 }
 
 func resolveExpressGoTool(name, cwdOverride string) (string, error) {

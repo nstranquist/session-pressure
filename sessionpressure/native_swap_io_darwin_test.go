@@ -171,7 +171,22 @@ func TestNativeProcessGroupCPUSeparatesIdleFromWork(t *testing.T) {
 	}
 
 	idle := start("sleep 600")
-	before, began := activity(idle.Process.Pid), time.Now()
+	// Start returns before the shell has exec'd sleep. On a loaded host that
+	// startup CPU would land inside the window, so measure only once the
+	// group's CPU has stopped changing.
+	settled := activity(idle.Process.Pid)
+	for watchdog := time.Now().Add(testWatchdog); ; {
+		time.Sleep(50 * time.Millisecond)
+		next := activity(idle.Process.Pid)
+		if next == settled {
+			break
+		}
+		if time.Now().After(watchdog) {
+			t.Fatalf("sleeping group CPU never settled: %d ns", next)
+		}
+		settled = next
+	}
+	before, began := settled, time.Now()
 	time.Sleep(600 * time.Millisecond)
 	if cores := float64(activity(idle.Process.Pid)-before) / float64(time.Since(began).Nanoseconds()); cores >= workIdleMaxCores {
 		t.Fatalf("sleeping group used %.4f cores", cores)
