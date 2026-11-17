@@ -122,6 +122,8 @@ type peakRSSHistory struct {
 	byClass    map[string]peakSamples
 	byWorkload map[string]peakSamples
 	byKey      map[string]peakSamples
+	// cores is the busy-core history of the same events (work_resource_headroom.go).
+	cores coreHistory
 }
 
 func addPeak(groups map[string]peakSamples, name string, peak float64, tree bool) {
@@ -134,8 +136,9 @@ func addPeak(groups map[string]peakSamples, name string, peak float64, tree bool
 }
 
 func buildPeakRSSHistory(events []WorkEvent) peakRSSHistory {
-	history := peakRSSHistory{byClass: map[string]peakSamples{}, byWorkload: map[string]peakSamples{}, byKey: map[string]peakSamples{}}
+	history := peakRSSHistory{byClass: map[string]peakSamples{}, byWorkload: map[string]peakSamples{}, byKey: map[string]peakSamples{}, cores: newCoreHistory()}
 	for _, event := range events {
+		history.cores.add(event)
 		// A peak under headroomMinMeasuredPeakMB is not a measurement: argv
 		// probes (`true`, `exit 0`) and wrappers whose real work ran in a
 		// process wait4 never saw (440 s express-build runs at about 1 MB on

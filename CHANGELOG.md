@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- **Resource-headroom admission, shadow only (WORK-1065, a candidate under
+  WORK-3).** Work events now record what admission from live headroom and
+  measured cost would decide: `shadow_resource_decision` as
+  `step:dimension:reason`, with the predicted busy cores, the CPU headroom
+  and the throttle it would ask for. The ladder is admit, throttle, remote,
+  relieve, queue. It reads memory, swap activity, CPU and disk-write
+  headroom, all scaled by the host's memory and logical CPUs, and no session
+  count, slot count or weighted capacity. Nothing admits, refuses or
+  throttles from it: the live queue is unchanged, and there is no policy
+  field to turn it on.
+- **`work evaluate` scores the resource candidate against host samples.**
+  `replay.resource_headroom` joins resident samples to each lease start. It
+  reports, per class, the share of starts the candidate would delay or
+  throttle beside the live p95 wait, and how many starts that a swap-thrash
+  latch or a critical level followed the candidate would still start
+  unthrottled. It does not change `promotion_ready`.
+- **Opt-in work throttle.** `NDEV_WORK_THROTTLE_CORES=N` limits a leased
+  command's parallelism through `GOMAXPROCS`, `GOFLAGS -p`, `MAKEFLAGS -j`
+  and the cmake, cargo, rayon, OpenMP, uv and node-gyp job variables. It
+  never raises a limit the caller set. `NDEV_WORK_THROTTLE_IO=1` lowers disk
+  I/O priority (`taskpolicy -d throttle` on macOS, `ionice -c 3` on Linux).
+  Admission never sets either. Throttled runs carry `throttle_cores` on
+  their events and stay out of the busy-core history.
+
 - **Probe history explains slow runner logins.** Each fleet health probe now
   reports `probe_ms` (SSH wall time, retries included) and `probe_attempts`.
   `gaterunner-fleet status` and `select` store every probe in a new

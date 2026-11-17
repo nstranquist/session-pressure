@@ -46,6 +46,9 @@ type WorkReplayComparison struct {
 	// QueueStalls is the trace measurement of the stall guard condition
 	// (work_stall.go). The CLI attaches it with the resident level timeline.
 	QueueStalls *WorkStallReplay `json:"queue_stalls,omitempty"`
+	// ResourceHeadroom scores the resource-headroom candidate against host
+	// samples (work_resource_replay.go). It does not gate PromotionReady.
+	ResourceHeadroom *ResourceReplay `json:"resource_headroom,omitempty"`
 }
 
 // WorkReplayMinimumRegressionSamples is the smallest per-class population on

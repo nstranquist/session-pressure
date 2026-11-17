@@ -211,6 +211,19 @@ type WorkEvent struct {
 	ShadowPredictedPeakMB  int64  `json:"shadow_predicted_peak_mb,omitempty"`
 	ShadowPredictionSource string `json:"shadow_prediction_source,omitempty"`
 	ShadowHeadroomMB       int64  `json:"shadow_headroom_mb,omitempty"`
+
+	// ShadowResource* is what resource-headroom admission
+	// (work_resource_headroom.go) would have decided, as "step:dimension:reason".
+	// It never admits, throttles or refuses work.
+	ShadowResourceDecision string  `json:"shadow_resource_decision,omitempty"`
+	ShadowResourceRule     string  `json:"shadow_resource_rule,omitempty"`
+	ShadowPredictedCores   float64 `json:"shadow_predicted_cores,omitempty"`
+	ShadowHeadroomCores    float64 `json:"shadow_headroom_cores,omitempty"`
+	ShadowThrottleCores    int     `json:"shadow_throttle_cores,omitempty"`
+	// ThrottleCores is the parallelism limit the caller applied to this
+	// operation (work_throttle.go). Throttled runs stay out of the busy-core
+	// history, so the cost model never learns a throttled figure as normal.
+	ThrottleCores int `json:"throttle_cores,omitempty"`
 }
 
 func (event WorkEvent) Validate() error {
@@ -231,6 +244,15 @@ func (event WorkEvent) Validate() error {
 	}
 	if event.SessionDigest != "" && !validSHA256Digest(event.SessionDigest) {
 		return errors.New("work session_digest must be an opaque sha256 digest")
+	}
+	if !validShadowResourceDecision(event.ShadowResourceDecision) {
+		return fmt.Errorf("work event shadow_resource_decision %q is not in the closed vocabulary", event.ShadowResourceDecision)
+	}
+	if event.ShadowResourceRule != "" && event.ShadowResourceRule != ResourceHeadroomRuleVersion {
+		return fmt.Errorf("work event shadow_resource_rule %q is not a known rule version", event.ShadowResourceRule)
+	}
+	if event.ShadowThrottleCores < 0 || event.ThrottleCores < 0 {
+		return errors.New("work event throttle cores must not be negative")
 	}
 	if !validShadowMemoryDecision(event.ShadowMemoryDecision) {
 		return fmt.Errorf("work event shadow_memory_decision %q is not in the closed vocabulary", event.ShadowMemoryDecision)

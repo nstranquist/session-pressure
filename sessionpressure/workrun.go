@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -1013,6 +1014,12 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	if err := ValidateWorkPlacement(options.Placement, options.PlacementReason); err != nil {
 		return 2, err
 	}
+	// The caller's explicit throttle opt-in (work_throttle.go). Admission
+	// never sets it.
+	throttle, throttleErr := WorkThrottleFromEnv(os.Environ())
+	if throttleErr != nil {
+		return 2, throttleErr
+	}
 	if runtime.GOOS == "darwin" && options.Placement != WorkPlacementLocal {
 		if operation := unsupportedWrappedGoOperation(options.Command); operation != "" {
 			enabled, err := RemoteWorkEnabled(coordinator.Dir)
@@ -1128,6 +1135,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		}
 		event.Weight = weight
 		event.SessionDigest = sessionDigest
+		event.ThrottleCores = throttle.Cores
 		event.CommandDigest = commandDigest
 		event.ToolFamily = toolFamily
 		event.PlacementKey = placementKey
@@ -1171,6 +1179,13 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	shadowMemory := &shadowMemoryProbe{dir: coordinator.Dir, class: options.Class, workload: options.Workload,
 		key: placementKey, interactive: options.Interactive, weight: weight, fastLane: coordinator.limits().FastLaneMaxWeight}
 	shadowMemory.decide(initialAdmission, initialStatus.Leases, time.Now()).apply(&queuedEvent)
+	// The resource candidate (WORK-1065) shares the memory probe's history.
+	// Portable means the caller did not pin local placement and the tool
+	// family is one the gate runner serves.
+	shadowResource := &shadowResourceProbe{memory: shadowMemory, session: sessionDigest,
+		remoteEligible: options.Placement != WorkPlacementLocal && (toolFamily == ToolFamilyGo || toolFamily == ToolFamilyNode),
+		owners:         func(leases []WorkLeaseStatus) map[string]string { return eventStore.leaseSessionDigests(leases) }}
+	shadowResource.decide(initialStatus.Leases, time.Now()).apply(&queuedEvent)
 	coordinator.PredictedPeakMB = shadowMemory.prediction(time.Now())
 	if err := appendEvent(queuedEvent); err != nil {
 		return 1, fmt.Errorf("persist queued work event: %w", err)
@@ -1439,6 +1454,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		}
 	}
 	shadowMemory.decide(admissionAfterWait, otherLeases, acquiredAt).apply(&acquiredEvent)
+	shadowResource.decide(otherLeases, acquiredAt).apply(&acquiredEvent)
 	if eventErr := appendEvent(acquiredEvent); eventErr != nil {
 		releaseErr := release()
 		stopWaiting()
@@ -1613,7 +1629,12 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	if commandFactory == nil {
 		commandFactory = newGatedWorkCommand
 	}
-	command, gate, commandErr := commandFactory(options.Command[0], options.Command[1:])
+	childExecutable, childArgs := options.Command[0], options.Command[1:]
+	ioWrapped := false
+	if wrapper := throttle.IOWrapper(runtime.GOOS, nil); len(wrapper) > 0 {
+		childExecutable, childArgs, ioWrapped = wrapper[0], append(slices.Clone(wrapper[1:]), options.Command...), true
+	}
+	command, gate, commandErr := commandFactory(childExecutable, childArgs)
 	if commandErr != nil {
 		if releaseErr := release(); releaseErr != nil {
 			commandErr = errors.Join(commandErr, fmt.Errorf("release work lease: %w", releaseErr))
@@ -1650,7 +1671,11 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		}
 		return 1, errors.Join(fmt.Errorf("configure leased command: %w", environmentErr), recordTerminal(WorkEventFailed, "configure_failed", nil))
 	}
-	command.Env = withWorkOperationEnv(withoutGoTestGitBinding(environment, requestedWorkArgv(command.Args)), operationID)
+	requestedArgv := requestedWorkArgv(command.Args)
+	if ioWrapped {
+		requestedArgv = options.Command
+	}
+	command.Env = withWorkOperationEnv(withoutGoTestGitBinding(throttle.Environment(environment), requestedArgv), operationID)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if startErr := command.Start(); startErr != nil {
 		if gate != nil {
