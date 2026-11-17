@@ -14,7 +14,7 @@ struct BrowserControlView: View {
                     Label(status.blocked ? "Browser work blocked" : "Browser work permitted",
                           systemImage: status.blocked ? "pause.circle.fill" : "checkmark.circle")
                     Text(status.reason).font(.caption).foregroundStyle(.secondary)
-                    Text("One browser job at a time. Each job has a \(status.maxRuntimeSeconds)-second limit.")
+                    Text("Browser jobs run in parallel while memory fits one more session. Each job has a \(status.maxRuntimeSeconds)-second limit.")
                         .font(.caption).foregroundStyle(.secondary)
                     HStack {
                         Button("Pause browser work") { update("pause") }.disabled(changing || status.mode == "paused")

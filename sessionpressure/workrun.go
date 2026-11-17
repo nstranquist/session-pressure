@@ -1043,16 +1043,6 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		_, code, err := rejectRemoteWork(coordinator.Dir, "work", "explicit remote placement requires enabled remote Go routing; local fallback is disabled")
 		return code, err
 	}
-	if options.Class == WorkClassBrowser {
-		if err := CheckBrowserWork(context.Background()); err != nil {
-			return 14, workRefusal(WorkRefusalBrowser, err)
-		}
-		unlock, err := AcquireBrowserSlot(context.Background(), coordinator.Dir)
-		if err != nil {
-			return 14, workRefusal(WorkRefusalBrowser, fmt.Errorf("browser slot busy: %w", err))
-		}
-		defer unlock()
-	}
 	if options.Progress == "" {
 		options.Progress = WorkProgressHuman
 	}
@@ -1158,6 +1148,31 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		event.SchedulingPolicy = coordinator.schedulingPolicy()
 		event.SelectorSchemaVersion = workSelectorSchemaVersion
 		return eventStore.AppendDurable(event)
+	}
+	// Browser work waits for the browser control and for memory headroom
+	// that fits one more session of its runtime. The wait spends the same
+	// --wait budget as the work queue below.
+	var browserAdmitted *browserAdmission
+	if options.Class == WorkClassBrowser {
+		browserStarted := time.Now()
+		browserCtx, browserCancel := context.Background(), context.CancelFunc(func() {})
+		if options.Wait > 0 {
+			browserCtx, browserCancel = context.WithTimeout(browserCtx, options.Wait)
+		}
+		browserCtx, stopBrowserSignals := signal.NotifyContext(browserCtx, workTerminationSignals()...)
+		predicted, _ := readPeakRSSHistory(coordinator.Dir, browserStarted).predict(options.Class, options.Workload, placementKey)
+		admitter := newBrowserAdmitter(coordinator, os.Getenv(BrowserRuntimeEnv), predicted)
+		admitted, err := waitForBrowserAdmission(browserCtx, options.Wait > 0, CheckBrowserWork, admitter, reporter, 0)
+		stopBrowserSignals()
+		browserCancel()
+		if err != nil {
+			return 14, workRefusal(WorkRefusalBrowser, err)
+		}
+		browserAdmitted = admitted
+		defer browserAdmitted.Release()
+		if options.Wait > 0 {
+			options.Wait = max(time.Millisecond, options.Wait-time.Since(browserStarted))
+		}
 	}
 	initialStatus, err := coordinator.Status(context.Background())
 	if err != nil {
@@ -1710,6 +1725,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		return 1, errors.Join(fmt.Errorf("bind work lease to child: %w", bindErr), finalizeErr)
 	}
 	childStartedAt = time.Now().UTC()
+	browserAdmitted.Started()
 	if eventErr := appendEvent(WorkEvent{
 		Event: WorkEventStarted, LeaseID: lease.Record().ID, PID: command.Process.Pid,
 		WaitMilliseconds: max(int64(0), childStartedAt.Sub(startedAt).Milliseconds()), Outcome: "child_bound",

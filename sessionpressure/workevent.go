@@ -62,6 +62,9 @@ const (
 	WorkBlockerReservation WorkBlocker = "reservation"
 	WorkBlockerUpgrade     WorkBlocker = "upgrade"
 	WorkBlockerStateLock   WorkBlocker = "state_lock"
+	// Browser admission (browser_admission.go) blocks before the work queue.
+	WorkBlockerBrowserPaused WorkBlocker = "browser_paused"
+	WorkBlockerBrowserMemory WorkBlocker = "browser_memory"
 )
 
 type ExpressReuseDecision string
@@ -353,7 +356,7 @@ func (event WorkEvent) Validate() error {
 	}
 	if event.Blocker != "" {
 		switch event.Blocker {
-		case WorkBlockerNone, WorkBlockerPressure, WorkBlockerCapacity, WorkBlockerFairness, WorkBlockerReservation, WorkBlockerUpgrade, WorkBlockerStateLock:
+		case WorkBlockerNone, WorkBlockerPressure, WorkBlockerCapacity, WorkBlockerFairness, WorkBlockerReservation, WorkBlockerUpgrade, WorkBlockerStateLock, WorkBlockerBrowserPaused, WorkBlockerBrowserMemory:
 		default:
 			return fmt.Errorf("unknown work blocker %q", event.Blocker)
 		}

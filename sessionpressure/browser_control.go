@@ -132,7 +132,5 @@ func CheckBrowserWork(ctx context.Context) error {
 	return nil
 }
 
-// AcquireBrowserSlot serializes finite browser commands across all agents.
-func AcquireBrowserSlot(ctx context.Context, dir string) (func(), error) {
-	return filelock.AcquireContext(ctx, filepath.Join(dir, "browser-execution"), 2*time.Second)
-}
+// Browser concurrency is derived from memory headroom per admission
+// (browser_admission.go); there is no fixed browser slot.

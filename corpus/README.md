@@ -41,3 +41,5 @@ product decisions have all been reconstructed.
 
 - [Resource-headroom admission, shadow candidate](resource-headroom-shadow-2026-11-17.md): WORK-1065 under WORK-3; CPU, disk-write and ladder beside the memory shadow, opt-in throttle, host-sample replay in `work evaluate`, seven-day numbers and open deviations.
 - [Memory levels calibration](memory-levels-calibration-2026-11-17.md): WORK-1057 memory levels in `memory-levels.json`, anchors from monitor history on the 16 GiB and 48 GiB Macs, RSS rungs held at warning while kernel free memory is high, install on both Macs.
+
+- [Browser admission: memory-derived slots](browser-admission-2026-11-17.md): WORK-1114, no fixed browser slot, runtime-priced headroom admission, `--wait` through BROWSER_PAUSED.
