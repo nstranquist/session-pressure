@@ -68,6 +68,20 @@ type Thresholds struct {
 	// shared pages, so on a large host it can pass red with 90% free. 0 is
 	// off: the RSS rungs escalate on their own (the 16 GiB laptop).
 	RSSEscalationFreePercent float64 `json:"rss_escalation_free_percent,omitempty"`
+	// Footprint rungs judge phys_footprint sums in place of RSS sums when the
+	// sample has footprint readings (macOS). All zero means off: the tree and
+	// agent-total rungs then judge RSS with the bands above.
+	TreeFootprintWarningMB        float64 `json:"tree_footprint_warning_mb,omitempty"`
+	TreeFootprintRedMB            float64 `json:"tree_footprint_red_mb,omitempty"`
+	TreeFootprintCriticalMB       float64 `json:"tree_footprint_critical_mb,omitempty"`
+	AgentTotalFootprintWarningMB  float64 `json:"agent_total_footprint_warning_mb,omitempty"`
+	AgentTotalFootprintRedMB      float64 `json:"agent_total_footprint_red_mb,omitempty"`
+	AgentTotalFootprintCriticalMB float64 `json:"agent_total_footprint_critical_mb,omitempty"`
+}
+
+// FootprintRungsEnabled reports whether the footprint bands are set.
+func (t Thresholds) FootprintRungsEnabled() bool {
+	return t.TreeFootprintRedMB > 0 && t.AgentTotalFootprintRedMB > 0
 }
 
 // StoragePolicy is independent from memory-oriented admission and shedding.
@@ -725,6 +739,19 @@ func (policy Policy) Validate() error {
 	}
 	if !(t.AgentTotalWarningMB < t.AgentTotalRedMB && t.AgentTotalRedMB < t.AgentTotalCriticalMB) {
 		return errors.New("agent-total thresholds must satisfy warning < red < critical")
+	}
+	footprint := []float64{t.TreeFootprintWarningMB, t.TreeFootprintRedMB, t.TreeFootprintCriticalMB, t.AgentTotalFootprintWarningMB, t.AgentTotalFootprintRedMB, t.AgentTotalFootprintCriticalMB}
+	anyFootprint := false
+	for _, value := range footprint {
+		anyFootprint = anyFootprint || value != 0
+	}
+	if anyFootprint {
+		if !(0 < t.TreeFootprintWarningMB && t.TreeFootprintWarningMB < t.TreeFootprintRedMB && t.TreeFootprintRedMB < t.TreeFootprintCriticalMB) {
+			return errors.New("tree footprint thresholds must satisfy 0 < warning < red < critical, or all be 0 (off)")
+		}
+		if !(0 < t.AgentTotalFootprintWarningMB && t.AgentTotalFootprintWarningMB < t.AgentTotalFootprintRedMB && t.AgentTotalFootprintRedMB < t.AgentTotalFootprintCriticalMB) {
+			return errors.New("agent-total footprint thresholds must satisfy 0 < warning < red < critical, or all be 0 (off)")
+		}
 	}
 	s := policy.Storage
 	if s.Enabled {

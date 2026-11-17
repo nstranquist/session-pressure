@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Per-process `phys_footprint`.** The native inventory keeps the kernel's
+  physical footprint from the `proc_pid_rusage` call it already makes (no
+  extra syscall). Agent trees, the agent total, latest.json and heartbeats
+  carry footprint next to the RSS sums (`footprint_mb`, `agent_footprint_mb`,
+  `top_tree_footprint_mb`). `memory-levels.json` anchors may set
+  `tree_footprint_mb` and `agent_total_footprint_mb`; where a sample measured
+  footprint, those bands judge the tree and agent-total rungs in place of
+  RSS. RSS bands remain the fallback (Linux, no readings).
+
 ## 0.7.3 — 2026-11-17
 
 ### Memory levels per host, fleet probe under load, resource-headroom shadow

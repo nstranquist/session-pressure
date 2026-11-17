@@ -172,6 +172,8 @@ func nativeProcesses(ctx context.Context) ([]Process, string, error) {
 			elapsed = int64(now.Sub(started).Seconds())
 		}
 		rssKB := int64(0)
+		footprintKB := int64(0)
+		footprintValid := false
 		cpuTotalNS := uint64(0)
 		cpuTotalValid := false
 		cpuStartID := uint64(0)
@@ -180,6 +182,9 @@ func nativeProcesses(ctx context.Context) ([]Process, string, error) {
 		diskWriteBytes := uint64(0)
 		if darwinLibproc.pidRusageV2(int32(pid), darwinRusageInfoVersion2, &usage) == 0 {
 			rssKB = int64(usage.ResidentSize / 1024)
+			// Same rusage call: the footprint costs no extra syscall.
+			footprintKB = int64(usage.PhysicalFootprint / 1024)
+			footprintValid = true
 			if total, ok := darwinRusageCPUTimeNS(usage.UserTime, usage.SystemTime); ok {
 				cpuTotalNS = total
 				cpuTotalValid = true
@@ -196,6 +201,7 @@ func nativeProcesses(ctx context.Context) ([]Process, string, error) {
 		}
 		processes = append(processes, Process{
 			PID: pid, PPID: int(row.Eproc.Ppid), RSSKB: rssKB,
+			FootprintKB: footprintKB, FootprintValid: footprintValid,
 			// kern.proc.all currently returns zero p_pctcpu values on the target
 			// macOS host. Preserve it only as a diagnostic fallback; the sampler
 			// marks CPU authoritative after a same-process rusage delta.

@@ -446,6 +446,13 @@ func (sampler *Sampler) Sample(ctx context.Context, policy Policy) (Snapshot, er
 	}
 	for _, tree := range allTrees {
 		snapshot.AgentRSSSumMB += tree.RSSSumMB
+		if tree.FootprintProcessCount > 0 {
+			snapshot.AgentFootprintMB += tree.FootprintMB
+			snapshot.AgentFootprintAvailable = true
+		} else {
+			// A tree without readings counts with RSS so the total never undercounts.
+			snapshot.AgentFootprintMB += tree.RSSSumMB
+		}
 		snapshot.AgentCPUPercent += tree.CPUPercentSum
 		if !validCPUEvidence(tree.CPUAvailable, tree.CPUPercentSum) {
 			snapshot.AgentCPUAvailable = false
@@ -1072,6 +1079,8 @@ func (sampler *Sampler) SampleHost(ctx context.Context, policy Policy, latest *S
 			snapshot.ProcessRSSSumMB = latest.ProcessRSSSumMB
 			snapshot.AgentTreeCount = latest.AgentTreeCount
 			snapshot.AgentRSSSumMB = latest.AgentRSSSumMB
+			snapshot.AgentFootprintMB = latest.AgentFootprintMB
+			snapshot.AgentFootprintAvailable = latest.AgentFootprintAvailable
 			snapshot.MemoryMomentum = latest.MemoryMomentum
 			snapshot.FreePercentSlopePerMinute = latest.FreePercentSlopePerMinute
 			snapshot.MinutesToMemoryRed = latest.MinutesToMemoryRed
@@ -1297,6 +1306,10 @@ func buildAgentTreesWithCatalog(processes []Process, catalog *AgentIdentityCatal
 			tree.PIDs = append(tree.PIDs, pid)
 			tree.ProcessCount++
 			tree.RSSSumMB += float64(process.RSSKB) / 1024
+			tree.FootprintMB += float64(processFootprintKB(process)) / 1024
+			if process.FootprintValid {
+				tree.FootprintProcessCount++
+			}
 			tree.CPUPercentSum += process.CPUPercent
 			if !process.CPUAvailable {
 				tree.CPUAvailable = false
@@ -1307,6 +1320,10 @@ func buildAgentTreesWithCatalog(processes []Process, catalog *AgentIdentityCatal
 		}
 		walk(rootPID)
 		tree.RSSSumMB = math.Round(tree.RSSSumMB*10) / 10
+		tree.FootprintMB = math.Round(tree.FootprintMB*10) / 10
+		if tree.FootprintProcessCount == 0 {
+			tree.FootprintMB = 0
+		}
 		tree.CPUPercentSum = math.Round(tree.CPUPercentSum*100) / 100
 		trees = append(trees, tree)
 	}

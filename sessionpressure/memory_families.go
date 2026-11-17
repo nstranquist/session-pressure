@@ -237,20 +237,25 @@ func annotateTreeLSP(trees []AgentTree, processes []Process, familyByPID map[int
 	if len(familyByPID) == 0 {
 		return
 	}
-	rssByPID := make(map[int]int64, len(processes))
+	type memoryKB struct{ rss, footprint int64 }
+	byPID := make(map[int]memoryKB, len(processes))
 	for _, process := range processes {
-		rssByPID[process.PID] = process.RSSKB
+		byPID[process.PID] = memoryKB{process.RSSKB, processFootprintKB(process)}
 	}
 	for index := range trees {
-		count, rssKB := 0, int64(0)
+		count, rssKB, footprintKB := 0, int64(0), int64(0)
 		for _, pid := range trees[index].PIDs {
 			if familyByPID[pid] == MemoryFamilyLSP {
 				count++
-				rssKB += rssByPID[pid]
+				rssKB += byPID[pid].rss
+				footprintKB += byPID[pid].footprint
 			}
 		}
 		trees[index].LSPProcessCount = count
 		trees[index].LSPRSSSumMB = roundMB(float64(rssKB) / 1024)
+		if trees[index].FootprintProcessCount > 0 {
+			trees[index].LSPFootprintMB = roundMB(float64(footprintKB) / 1024)
+		}
 	}
 }
 

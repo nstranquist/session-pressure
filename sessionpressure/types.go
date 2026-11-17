@@ -87,13 +87,19 @@ func (level Level) AtLeast(want Level) bool {
 // out of durable telemetry except for tree roots; full commands are never
 // persisted because agent prompts can contain sensitive text.
 type Process struct {
-	PID          int     `json:"pid"`
-	PPID         int     `json:"ppid"`
-	RSSKB        int64   `json:"rss_kb"`
-	CPUPercent   float64 `json:"cpu_percent"`
-	CPUAvailable bool    `json:"cpu_available"`
-	Elapsed      string  `json:"elapsed,omitempty"`
-	Command      string  `json:"-"`
+	PID   int   `json:"pid"`
+	PPID  int   `json:"ppid"`
+	RSSKB int64 `json:"rss_kb"`
+	// FootprintKB is the kernel's phys_footprint (proc_pid_rusage): memory
+	// the process owns, without the shared pages that make RSS sums double
+	// count. FootprintValid is false where the platform or permissions do
+	// not expose it (Linux, other users' processes).
+	FootprintKB    int64   `json:"footprint_kb,omitempty"`
+	FootprintValid bool    `json:"-"`
+	CPUPercent     float64 `json:"cpu_percent"`
+	CPUAvailable   bool    `json:"cpu_available"`
+	Elapsed        string  `json:"elapsed,omitempty"`
+	Command        string  `json:"-"`
 
 	// Native samplers populate identity directly so macOS does not need to
 	// materialize every process's potentially prompt-bearing command line.
@@ -142,7 +148,14 @@ type AgentTree struct {
 	// LSP* is the language-server share of this tree (memory families).
 	LSPProcessCount int     `json:"lsp_process_count,omitempty"`
 	LSPRSSSumMB     float64 `json:"lsp_rss_sum_mb,omitempty"`
-	PIDs            []int   `json:"-"`
+	// FootprintMB sums phys_footprint over the tree. A process without a
+	// footprint reading counts with its RSS, so the sum never undercounts.
+	// FootprintProcessCount is how many processes had a real reading; 0
+	// means no footprint was measured and FootprintMB is not set.
+	FootprintMB           float64 `json:"footprint_mb,omitempty"`
+	FootprintProcessCount int     `json:"footprint_process_count,omitempty"`
+	LSPFootprintMB        float64 `json:"lsp_footprint_mb,omitempty"`
+	PIDs                  []int   `json:"-"`
 }
 
 // HostConsumer is a privacy-safe whole-host attribution bucket. It groups
@@ -237,43 +250,48 @@ type Snapshot struct {
 	SwapCalmStartUsedMB float64 `json:"swap_calm_start_used_mb,omitempty"`
 	// SwapLagReleased reports that sticky swap use did not escalate a live
 	// warning to red because the calm window held (Thresholds.SwapLagReleaseMinutes).
-	SwapLagReleased            bool                    `json:"swap_lag_released,omitempty"`
-	LogicalCPUCount            int                     `json:"logical_cpu_count"`
-	HostCPUPercent             float64                 `json:"host_cpu_percent"`
-	HostCPUAvailable           bool                    `json:"host_cpu_available"`
-	HostCPUSource              string                  `json:"host_cpu_source,omitempty"`
-	HostCPUSampleWindowMS      float64                 `json:"host_cpu_sample_window_ms,omitempty"`
-	HostCPULivePercent         float64                 `json:"host_cpu_live_percent,omitempty"`
-	HostCPULiveWindowMS        float64                 `json:"host_cpu_live_window_ms,omitempty"`
-	HostCPURollingPercent      float64                 `json:"host_cpu_rolling_percent,omitempty"`
-	HostCPURollingWindowMS     float64                 `json:"host_cpu_rolling_window_ms,omitempty"`
-	HostCPURollingAvailable    bool                    `json:"host_cpu_rolling_available"`
-	HostCPUError               string                  `json:"host_cpu_error,omitempty"`
-	ThermalState               ThermalState            `json:"thermal_state,omitempty"`
-	ThermalAvailable           bool                    `json:"thermal_available,omitempty"`
-	LowPowerMode               bool                    `json:"low_power_mode,omitempty"`
-	LowPowerModeAvailable      bool                    `json:"low_power_mode_available,omitempty"`
-	PowerThermalSource         string                  `json:"power_thermal_source,omitempty"`
-	PowerThermalError          string                  `json:"power_thermal_error,omitempty"`
-	AgentCPUPercent            float64                 `json:"agent_cpu_percent"`
-	AgentCPUAvailable          bool                    `json:"agent_cpu_available"`
-	CoordinatedWork            CoordinatedWorkSnapshot `json:"coordinated_work"`
-	ProcessCount               int                     `json:"process_count"`
-	ProcessRSSSumMB            float64                 `json:"process_rss_sum_mb"`
-	AgentTreeCount             int                     `json:"agent_tree_count"`
-	AgentRSSSumMB              float64                 `json:"agent_rss_sum_mb"`
-	MemoryMomentum             MemoryMomentum          `json:"memory_momentum"`
-	FreePercentSlopePerMinute  float64                 `json:"free_percent_slope_per_minute,omitempty"`
-	MinutesToMemoryRed         *float64                `json:"minutes_to_memory_red,omitempty"`
-	MemoryMomentumSampleCount  int                     `json:"memory_momentum_sample_count,omitempty"`
-	ProcessInventoryAvailable  bool                    `json:"process_inventory_available"`
-	ProcessInventoryFresh      bool                    `json:"process_inventory_fresh"`
-	ProcessInventoryCapturedAt time.Time               `json:"process_inventory_captured_at,omitempty,omitzero"`
-	ProcessInventoryAgeSeconds float64                 `json:"process_inventory_age_seconds,omitempty"`
-	ProcessInventorySource     string                  `json:"process_inventory_source,omitempty"`
-	ProcessInventoryError      string                  `json:"process_inventory_error,omitempty"`
-	GuardPID                   int                     `json:"guard_pid"`
-	GuardBinarySHA256          string                  `json:"guard_binary_sha256,omitempty"`
+	SwapLagReleased         bool                    `json:"swap_lag_released,omitempty"`
+	LogicalCPUCount         int                     `json:"logical_cpu_count"`
+	HostCPUPercent          float64                 `json:"host_cpu_percent"`
+	HostCPUAvailable        bool                    `json:"host_cpu_available"`
+	HostCPUSource           string                  `json:"host_cpu_source,omitempty"`
+	HostCPUSampleWindowMS   float64                 `json:"host_cpu_sample_window_ms,omitempty"`
+	HostCPULivePercent      float64                 `json:"host_cpu_live_percent,omitempty"`
+	HostCPULiveWindowMS     float64                 `json:"host_cpu_live_window_ms,omitempty"`
+	HostCPURollingPercent   float64                 `json:"host_cpu_rolling_percent,omitempty"`
+	HostCPURollingWindowMS  float64                 `json:"host_cpu_rolling_window_ms,omitempty"`
+	HostCPURollingAvailable bool                    `json:"host_cpu_rolling_available"`
+	HostCPUError            string                  `json:"host_cpu_error,omitempty"`
+	ThermalState            ThermalState            `json:"thermal_state,omitempty"`
+	ThermalAvailable        bool                    `json:"thermal_available,omitempty"`
+	LowPowerMode            bool                    `json:"low_power_mode,omitempty"`
+	LowPowerModeAvailable   bool                    `json:"low_power_mode_available,omitempty"`
+	PowerThermalSource      string                  `json:"power_thermal_source,omitempty"`
+	PowerThermalError       string                  `json:"power_thermal_error,omitempty"`
+	AgentCPUPercent         float64                 `json:"agent_cpu_percent"`
+	AgentCPUAvailable       bool                    `json:"agent_cpu_available"`
+	CoordinatedWork         CoordinatedWorkSnapshot `json:"coordinated_work"`
+	ProcessCount            int                     `json:"process_count"`
+	ProcessRSSSumMB         float64                 `json:"process_rss_sum_mb"`
+	AgentTreeCount          int                     `json:"agent_tree_count"`
+	AgentRSSSumMB           float64                 `json:"agent_rss_sum_mb"`
+	// AgentFootprintMB sums tree footprints (RSS for trees without readings).
+	// AgentFootprintAvailable says at least one tree had a real reading; the
+	// footprint rungs only judge when it is true.
+	AgentFootprintMB           float64        `json:"agent_footprint_mb,omitempty"`
+	AgentFootprintAvailable    bool           `json:"agent_footprint_available,omitempty"`
+	MemoryMomentum             MemoryMomentum `json:"memory_momentum"`
+	FreePercentSlopePerMinute  float64        `json:"free_percent_slope_per_minute,omitempty"`
+	MinutesToMemoryRed         *float64       `json:"minutes_to_memory_red,omitempty"`
+	MemoryMomentumSampleCount  int            `json:"memory_momentum_sample_count,omitempty"`
+	ProcessInventoryAvailable  bool           `json:"process_inventory_available"`
+	ProcessInventoryFresh      bool           `json:"process_inventory_fresh"`
+	ProcessInventoryCapturedAt time.Time      `json:"process_inventory_captured_at,omitempty,omitzero"`
+	ProcessInventoryAgeSeconds float64        `json:"process_inventory_age_seconds,omitempty"`
+	ProcessInventorySource     string         `json:"process_inventory_source,omitempty"`
+	ProcessInventoryError      string         `json:"process_inventory_error,omitempty"`
+	GuardPID                   int            `json:"guard_pid"`
+	GuardBinarySHA256          string         `json:"guard_binary_sha256,omitempty"`
 	// GuardSourceRevision is the session-pressure source revision linked into
 	// the sampling process. Builds with -trimpath omit -ldflags from build
 	// info (golang/go#52372), so the running process is the only reliable
@@ -629,19 +647,37 @@ func treeRungRSSMB(tree AgentTree) float64 {
 	return max(0, tree.RSSSumMB-tree.LSPRSSSumMB)
 }
 
-// topRungTree is the tree with the largest rung size. Trees are ordered by
-// raw RSS, so a tree that is mostly language servers can sort first.
-func topRungTree(trees []AgentTree) (AgentTree, bool) {
+// treeRungFootprintMB is the footprint form of treeRungRSSMB: the tree's
+// phys_footprint sum without its language servers.
+func treeRungFootprintMB(tree AgentTree) float64 {
+	if tree.FootprintProcessCount == 0 {
+		return treeRungRSSMB(tree)
+	}
+	return max(0, tree.FootprintMB-tree.LSPFootprintMB)
+}
+
+// topRungTreeBy is the tree with the largest rung size under the given
+// measure. Trees are ordered by raw RSS, so a tree that is mostly language
+// servers can sort first.
+func topRungTreeBy(trees []AgentTree, size func(AgentTree) float64) (AgentTree, bool) {
 	if len(trees) == 0 {
 		return AgentTree{}, false
 	}
 	best := trees[0]
 	for _, tree := range trees[1:] {
-		if treeRungRSSMB(tree) > treeRungRSSMB(best) {
+		if size(tree) > size(best) {
 			best = tree
 		}
 	}
 	return best, true
+}
+
+// treeLSPFootprintSuffix is treeLSPSuffix for the footprint rung.
+func treeLSPFootprintSuffix(tree AgentTree) string {
+	if tree.LSPFootprintMB < 1 || tree.LSPProcessCount == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" without language servers (tree %.0f MB, language servers %.0f MB in %d processes)", tree.FootprintMB, tree.LSPFootprintMB, tree.LSPProcessCount)
 }
 
 // treeLSPSuffix says what the rung left out, so the reason still shows the
@@ -687,24 +723,39 @@ func evaluate(snapshot Snapshot, policy Policy, includeCPU bool) Snapshot {
 		add(candidate, format, args...)
 	}
 
-	switch {
-	case snapshot.AgentRSSSumMB >= policy.Thresholds.AgentTotalCriticalMB:
-		rssRung(LevelCritical, "agent RSS sum %.0f MB >= critical %.0f MB", snapshot.AgentRSSSumMB, policy.Thresholds.AgentTotalCriticalMB)
-	case snapshot.AgentRSSSumMB >= policy.Thresholds.AgentTotalRedMB:
-		rssRung(LevelRed, "agent RSS sum %.0f MB >= red %.0f MB", snapshot.AgentRSSSumMB, policy.Thresholds.AgentTotalRedMB)
-	case snapshot.AgentRSSSumMB >= policy.Thresholds.AgentTotalWarningMB:
-		add(LevelWarning, "agent RSS sum %.0f MB >= warning %.0f MB", snapshot.AgentRSSSumMB, policy.Thresholds.AgentTotalWarningMB)
+	// The tree and agent-total rungs judge phys_footprint when the sample
+	// measured it and the policy has footprint bands; otherwise summed RSS.
+	t := policy.Thresholds
+	useFootprint := snapshot.AgentFootprintAvailable && t.FootprintRungsEnabled()
+	agentMetric, agentLabel := snapshot.AgentRSSSumMB, "agent RSS sum"
+	agentBand := [3]float64{t.AgentTotalWarningMB, t.AgentTotalRedMB, t.AgentTotalCriticalMB}
+	treeBand := [3]float64{t.TreeWarningMB, t.TreeRedMB, t.TreeCriticalMB}
+	treeSize, treeLabel, treeSuffix := treeRungRSSMB, "RSS sum", treeLSPSuffix
+	if useFootprint {
+		agentMetric, agentLabel = snapshot.AgentFootprintMB, "agent footprint"
+		agentBand = [3]float64{t.AgentTotalFootprintWarningMB, t.AgentTotalFootprintRedMB, t.AgentTotalFootprintCriticalMB}
+		treeBand = [3]float64{t.TreeFootprintWarningMB, t.TreeFootprintRedMB, t.TreeFootprintCriticalMB}
+		treeSize, treeLabel, treeSuffix = treeRungFootprintMB, "footprint", treeLSPFootprintSuffix
 	}
 
-	if top, ok := topRungTree(snapshot.TopAgentTrees); ok {
-		rss := treeRungRSSMB(top)
+	switch {
+	case agentMetric >= agentBand[2]:
+		rssRung(LevelCritical, "%s %.0f MB >= critical %.0f MB", agentLabel, agentMetric, agentBand[2])
+	case agentMetric >= agentBand[1]:
+		rssRung(LevelRed, "%s %.0f MB >= red %.0f MB", agentLabel, agentMetric, agentBand[1])
+	case agentMetric >= agentBand[0]:
+		add(LevelWarning, "%s %.0f MB >= warning %.0f MB", agentLabel, agentMetric, agentBand[0])
+	}
+
+	if top, ok := topRungTreeBy(snapshot.TopAgentTrees, treeSize); ok {
+		size := treeSize(top)
 		switch {
-		case rss >= policy.Thresholds.TreeCriticalMB:
-			rssRung(LevelCritical, "%s tree %d RSS sum %.0f MB%s >= critical %.0f MB", top.Agent, top.RootPID, rss, treeLSPSuffix(top), policy.Thresholds.TreeCriticalMB)
-		case rss >= policy.Thresholds.TreeRedMB:
-			rssRung(LevelRed, "%s tree %d RSS sum %.0f MB%s >= red %.0f MB", top.Agent, top.RootPID, rss, treeLSPSuffix(top), policy.Thresholds.TreeRedMB)
-		case rss >= policy.Thresholds.TreeWarningMB:
-			add(LevelWarning, "%s tree %d RSS sum %.0f MB%s >= warning %.0f MB", top.Agent, top.RootPID, rss, treeLSPSuffix(top), policy.Thresholds.TreeWarningMB)
+		case size >= treeBand[2]:
+			rssRung(LevelCritical, "%s tree %d %s %.0f MB%s >= critical %.0f MB", top.Agent, top.RootPID, treeLabel, size, treeSuffix(top), treeBand[2])
+		case size >= treeBand[1]:
+			rssRung(LevelRed, "%s tree %d %s %.0f MB%s >= red %.0f MB", top.Agent, top.RootPID, treeLabel, size, treeSuffix(top), treeBand[1])
+		case size >= treeBand[0]:
+			add(LevelWarning, "%s tree %d %s %.0f MB%s >= warning %.0f MB", top.Agent, top.RootPID, treeLabel, size, treeSuffix(top), treeBand[0])
 		}
 	}
 

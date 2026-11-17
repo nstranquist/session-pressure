@@ -49,15 +49,19 @@ type LevelBand struct {
 
 // MemoryLevelAnchor is the calibrated ladder for one measured host shape.
 type MemoryLevelAnchor struct {
-	Name                     string    `json:"name"`
-	MemoryGiB                float64   `json:"memory_gib"`
-	Evidence                 string    `json:"evidence"`
-	FreePercent              LevelBand `json:"free_percent"`
-	SwapMB                   LevelBand `json:"swap_mb"`
-	TreeMB                   LevelBand `json:"tree_mb"`
-	AgentTotalMB             LevelBand `json:"agent_total_mb"`
-	RSSEscalationFreePercent float64   `json:"rss_escalation_free_percent"`
-	GuardMaxSelfRSSMB        float64   `json:"guard_max_self_rss_mb"`
+	Name         string    `json:"name"`
+	MemoryGiB    float64   `json:"memory_gib"`
+	Evidence     string    `json:"evidence"`
+	FreePercent  LevelBand `json:"free_percent"`
+	SwapMB       LevelBand `json:"swap_mb"`
+	TreeMB       LevelBand `json:"tree_mb"`
+	AgentTotalMB LevelBand `json:"agent_total_mb"`
+	// Footprint bands judge phys_footprint sums where the host measures them
+	// (macOS). Every anchor sets both, or none does (footprint rungs off).
+	TreeFootprintMB          *LevelBand `json:"tree_footprint_mb,omitempty"`
+	AgentTotalFootprintMB    *LevelBand `json:"agent_total_footprint_mb,omitempty"`
+	RSSEscalationFreePercent float64    `json:"rss_escalation_free_percent"`
+	GuardMaxSelfRSSMB        float64    `json:"guard_max_self_rss_mb"`
 }
 
 // MemoryLevelHost overrides single resolved values for one host. Absent
@@ -68,6 +72,8 @@ type MemoryLevelHost struct {
 	SwapMB                   *LevelBand `json:"swap_mb,omitempty"`
 	TreeMB                   *LevelBand `json:"tree_mb,omitempty"`
 	AgentTotalMB             *LevelBand `json:"agent_total_mb,omitempty"`
+	TreeFootprintMB          *LevelBand `json:"tree_footprint_mb,omitempty"`
+	AgentTotalFootprintMB    *LevelBand `json:"agent_total_footprint_mb,omitempty"`
 	RSSEscalationFreePercent *float64   `json:"rss_escalation_free_percent,omitempty"`
 	GuardMaxSelfRSSMB        *float64   `json:"guard_max_self_rss_mb,omitempty"`
 }
@@ -82,17 +88,20 @@ type MemoryLevelsConfig struct {
 
 // MemoryLevels is the resolved ladder for one host, with its provenance.
 type MemoryLevels struct {
-	Source                   string    `json:"source"`
-	Host                     string    `json:"host,omitempty"`
-	HostOverride             bool      `json:"host_override"`
-	PhysicalMemoryMB         float64   `json:"physical_memory_mb"`
-	Rule                     string    `json:"rule"`
-	FreePercent              LevelBand `json:"free_percent"`
-	SwapMB                   LevelBand `json:"swap_mb"`
-	TreeMB                   LevelBand `json:"tree_mb"`
-	AgentTotalMB             LevelBand `json:"agent_total_mb"`
-	RSSEscalationFreePercent float64   `json:"rss_escalation_free_percent"`
-	GuardMaxSelfRSSMB        float64   `json:"guard_max_self_rss_mb"`
+	Source           string    `json:"source"`
+	Host             string    `json:"host,omitempty"`
+	HostOverride     bool      `json:"host_override"`
+	PhysicalMemoryMB float64   `json:"physical_memory_mb"`
+	Rule             string    `json:"rule"`
+	FreePercent      LevelBand `json:"free_percent"`
+	SwapMB           LevelBand `json:"swap_mb"`
+	TreeMB           LevelBand `json:"tree_mb"`
+	AgentTotalMB     LevelBand `json:"agent_total_mb"`
+	// Nil footprint bands mean the footprint rungs are off.
+	TreeFootprintMB          *LevelBand `json:"tree_footprint_mb,omitempty"`
+	AgentTotalFootprintMB    *LevelBand `json:"agent_total_footprint_mb,omitempty"`
+	RSSEscalationFreePercent float64    `json:"rss_escalation_free_percent"`
+	GuardMaxSelfRSSMB        float64    `json:"guard_max_self_rss_mb"`
 }
 
 var hostKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -162,6 +171,17 @@ func (levels MemoryLevels) validate(prefix string) error {
 	if err := validateBand(prefix+"agent_total_mb", levels.AgentTotalMB, true, 0); err != nil {
 		return err
 	}
+	if (levels.TreeFootprintMB == nil) != (levels.AgentTotalFootprintMB == nil) {
+		return fmt.Errorf("%stree_footprint_mb and agent_total_footprint_mb: set both or neither", prefix)
+	}
+	if levels.TreeFootprintMB != nil {
+		if err := validateBand(prefix+"tree_footprint_mb", *levels.TreeFootprintMB, true, 0); err != nil {
+			return err
+		}
+		if err := validateBand(prefix+"agent_total_footprint_mb", *levels.AgentTotalFootprintMB, true, 0); err != nil {
+			return err
+		}
+	}
 	if err := validateEscalation(prefix+"rss_escalation_free_percent", levels.RSSEscalationFreePercent); err != nil {
 		return err
 	}
@@ -174,6 +194,8 @@ func (anchor MemoryLevelAnchor) levels() MemoryLevels {
 		SwapMB:                   anchor.SwapMB,
 		TreeMB:                   anchor.TreeMB,
 		AgentTotalMB:             anchor.AgentTotalMB,
+		TreeFootprintMB:          anchor.TreeFootprintMB,
+		AgentTotalFootprintMB:    anchor.AgentTotalFootprintMB,
 		RSSEscalationFreePercent: anchor.RSSEscalationFreePercent,
 		GuardMaxSelfRSSMB:        anchor.GuardMaxSelfRSSMB,
 	}
@@ -188,6 +210,15 @@ func (config MemoryLevelsConfig) Validate() error {
 		return errors.New("anchors: at least one measured host shape is required")
 	}
 	names := map[string]bool{}
+	withFootprint := 0
+	for _, anchor := range config.Anchors {
+		if anchor.TreeFootprintMB != nil || anchor.AgentTotalFootprintMB != nil {
+			withFootprint++
+		}
+	}
+	if withFootprint != 0 && withFootprint != len(config.Anchors) {
+		return fmt.Errorf("anchors: footprint bands are set on %d of %d anchors; set them on every anchor or on none", withFootprint, len(config.Anchors))
+	}
 	for index, anchor := range config.Anchors {
 		prefix := fmt.Sprintf("anchors[%d] (%s).", index, anchor.Name)
 		if strings.TrimSpace(anchor.Name) == "" {
@@ -224,7 +255,10 @@ func (config MemoryLevelsConfig) Validate() error {
 		if strings.TrimSpace(override.Reason) == "" {
 			return fmt.Errorf("%sreason: required; say why this host differs from its memory size", prefix)
 		}
-		for field, band := range map[string]*LevelBand{"swap_mb": override.SwapMB, "tree_mb": override.TreeMB, "agent_total_mb": override.AgentTotalMB} {
+		if (override.TreeFootprintMB != nil || override.AgentTotalFootprintMB != nil) && withFootprint == 0 {
+			return fmt.Errorf("%sfootprint bands: the anchors have none, so a host cannot override them", prefix)
+		}
+		for field, band := range map[string]*LevelBand{"swap_mb": override.SwapMB, "tree_mb": override.TreeMB, "agent_total_mb": override.AgentTotalMB, "tree_footprint_mb": override.TreeFootprintMB, "agent_total_footprint_mb": override.AgentTotalFootprintMB} {
 			if band != nil {
 				if err := validateBand(prefix+field, *band, true, 0); err != nil {
 					return err
@@ -256,6 +290,22 @@ func lerpBand(a, b LevelBand, t float64) LevelBand {
 	return LevelBand{Warning: lerp(a.Warning, b.Warning, t), Red: lerp(a.Red, b.Red, t), Critical: lerp(a.Critical, b.Critical, t)}
 }
 
+func scaleBandPtr(band *LevelBand, factor float64) *LevelBand {
+	if band == nil {
+		return nil
+	}
+	scaled := scaleBand(*band, factor)
+	return &scaled
+}
+
+func lerpBandPtr(a, b *LevelBand, t float64) *LevelBand {
+	if a == nil || b == nil {
+		return nil
+	}
+	band := lerpBand(*a, *b, t)
+	return &band
+}
+
 func scaleBand(band LevelBand, factor float64) LevelBand {
 	return LevelBand{Warning: band.Warning * factor, Red: band.Red * factor, Critical: band.Critical * factor}
 }
@@ -277,6 +327,7 @@ func (config MemoryLevelsConfig) Resolve(physicalMemoryMB float64, host string) 
 		factor := memoryGiB / first.MemoryGiB
 		levels = first.levels()
 		levels.SwapMB, levels.TreeMB, levels.AgentTotalMB = scaleBand(first.SwapMB, factor), scaleBand(first.TreeMB, factor), scaleBand(first.AgentTotalMB, factor)
+		levels.TreeFootprintMB, levels.AgentTotalFootprintMB = scaleBandPtr(first.TreeFootprintMB, factor), scaleBandPtr(first.AgentTotalFootprintMB, factor)
 		levels.Rule = fmt.Sprintf("anchor %s scaled x%.3f", first.Name, factor)
 		if factor == 1 {
 			levels.Rule = "anchor " + first.Name
@@ -286,6 +337,7 @@ func (config MemoryLevelsConfig) Resolve(physicalMemoryMB float64, host string) 
 		factor := memoryGiB / last.MemoryGiB
 		levels = last.levels()
 		levels.SwapMB, levels.TreeMB, levels.AgentTotalMB = scaleBand(last.SwapMB, factor), scaleBand(last.TreeMB, factor), scaleBand(last.AgentTotalMB, factor)
+		levels.TreeFootprintMB, levels.AgentTotalFootprintMB = scaleBandPtr(last.TreeFootprintMB, factor), scaleBandPtr(last.AgentTotalFootprintMB, factor)
 		levels.Rule = fmt.Sprintf("anchor %s scaled x%.3f", last.Name, factor)
 		if factor == 1 {
 			levels.Rule = "anchor " + last.Name
@@ -299,6 +351,8 @@ func (config MemoryLevelsConfig) Resolve(physicalMemoryMB float64, host string) 
 			SwapMB:                   lerpBand(low.SwapMB, high.SwapMB, t),
 			TreeMB:                   lerpBand(low.TreeMB, high.TreeMB, t),
 			AgentTotalMB:             lerpBand(low.AgentTotalMB, high.AgentTotalMB, t),
+			TreeFootprintMB:          lerpBandPtr(low.TreeFootprintMB, high.TreeFootprintMB, t),
+			AgentTotalFootprintMB:    lerpBandPtr(low.AgentTotalFootprintMB, high.AgentTotalFootprintMB, t),
 			RSSEscalationFreePercent: lerp(low.RSSEscalationFreePercent, high.RSSEscalationFreePercent, t),
 			GuardMaxSelfRSSMB:        lerp(low.GuardMaxSelfRSSMB, high.GuardMaxSelfRSSMB, t),
 			Rule:                     fmt.Sprintf("interpolated %.2f between anchors %s and %s", t, low.Name, high.Name),
@@ -321,6 +375,14 @@ func (config MemoryLevelsConfig) Resolve(physicalMemoryMB float64, host string) 
 		if override.AgentTotalMB != nil {
 			levels.AgentTotalMB = *override.AgentTotalMB
 		}
+		if override.TreeFootprintMB != nil {
+			band := *override.TreeFootprintMB
+			levels.TreeFootprintMB = &band
+		}
+		if override.AgentTotalFootprintMB != nil {
+			band := *override.AgentTotalFootprintMB
+			levels.AgentTotalFootprintMB = &band
+		}
 		if override.RSSEscalationFreePercent != nil {
 			levels.RSSEscalationFreePercent = *override.RSSEscalationFreePercent
 		}
@@ -339,7 +401,14 @@ func (levels MemoryLevels) validateOrdering() error {
 	if !(levels.FreePercent.Warning > levels.FreePercent.Red && levels.FreePercent.Red > levels.FreePercent.Critical) {
 		return errors.New("free_percent must satisfy warning > red > critical")
 	}
-	for field, band := range map[string]LevelBand{"swap_mb": levels.SwapMB, "tree_mb": levels.TreeMB, "agent_total_mb": levels.AgentTotalMB} {
+	bands := map[string]LevelBand{"swap_mb": levels.SwapMB, "tree_mb": levels.TreeMB, "agent_total_mb": levels.AgentTotalMB}
+	if levels.TreeFootprintMB != nil {
+		bands["tree_footprint_mb"] = *levels.TreeFootprintMB
+	}
+	if levels.AgentTotalFootprintMB != nil {
+		bands["agent_total_footprint_mb"] = *levels.AgentTotalFootprintMB
+	}
+	for field, band := range bands {
 		if !(band.Warning < band.Red && band.Red < band.Critical) {
 			return fmt.Errorf("%s must satisfy warning < red < critical (got %g, %g, %g)", field, band.Warning, band.Red, band.Critical)
 		}
@@ -374,6 +443,12 @@ func (levels MemoryLevels) Apply(policy *Policy) {
 	t.SwapWarningMB, t.SwapRedMB, t.SwapCriticalMB = levels.SwapMB.Warning, levels.SwapMB.Red, levels.SwapMB.Critical
 	t.TreeWarningMB, t.TreeRedMB, t.TreeCriticalMB = levels.TreeMB.Warning, levels.TreeMB.Red, levels.TreeMB.Critical
 	t.AgentTotalWarningMB, t.AgentTotalRedMB, t.AgentTotalCriticalMB = levels.AgentTotalMB.Warning, levels.AgentTotalMB.Red, levels.AgentTotalMB.Critical
+	t.TreeFootprintWarningMB, t.TreeFootprintRedMB, t.TreeFootprintCriticalMB = 0, 0, 0
+	t.AgentTotalFootprintWarningMB, t.AgentTotalFootprintRedMB, t.AgentTotalFootprintCriticalMB = 0, 0, 0
+	if levels.TreeFootprintMB != nil && levels.AgentTotalFootprintMB != nil {
+		t.TreeFootprintWarningMB, t.TreeFootprintRedMB, t.TreeFootprintCriticalMB = levels.TreeFootprintMB.Warning, levels.TreeFootprintMB.Red, levels.TreeFootprintMB.Critical
+		t.AgentTotalFootprintWarningMB, t.AgentTotalFootprintRedMB, t.AgentTotalFootprintCriticalMB = levels.AgentTotalFootprintMB.Warning, levels.AgentTotalFootprintMB.Red, levels.AgentTotalFootprintMB.Critical
+	}
 	t.RSSEscalationFreePercent = levels.RSSEscalationFreePercent
 	if levels.RSSEscalationFreePercent >= 100 {
 		t.RSSEscalationFreePercent = 0
@@ -473,4 +548,13 @@ func procMemTotalMB(path string) (float64, error) {
 		}
 	}
 	return 0, fmt.Errorf("%s: no MemTotal line", path)
+}
+
+// processFootprintKB is the process's phys_footprint, or its RSS when the
+// kernel gave no footprint reading, so footprint sums never undercount.
+func processFootprintKB(process Process) int64 {
+	if process.FootprintValid {
+		return process.FootprintKB
+	}
+	return process.RSSKB
 }

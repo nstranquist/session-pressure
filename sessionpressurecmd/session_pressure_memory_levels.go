@@ -48,6 +48,13 @@ func cmdSessionPressureMemoryLevels(g *Flags, args []string) int {
 			levels.TreeMB.Warning, levels.TreeMB.Red, levels.TreeMB.Critical,
 			levels.AgentTotalMB.Warning, levels.AgentTotalMB.Red, levels.AgentTotalMB.Critical,
 			levels.RSSEscalationFreePercent, levels.GuardMaxSelfRSSMB)
+		if levels.TreeFootprintMB != nil && levels.AgentTotalFootprintMB != nil {
+			text += fmt.Sprintf("tree footprint MB %g/%g/%g\nagent total footprint MB %g/%g/%g\n(footprint bands judge the tree and agent-total rungs where footprint is measured; RSS bands are the fallback)\n",
+				levels.TreeFootprintMB.Warning, levels.TreeFootprintMB.Red, levels.TreeFootprintMB.Critical,
+				levels.AgentTotalFootprintMB.Warning, levels.AgentTotalFootprintMB.Red, levels.AgentTotalFootprintMB.Critical)
+		} else {
+			text += "footprint bands: off (tree and agent-total rungs judge RSS)\n"
+		}
 		if mode != sessionpressure.MemoryLevelsCalibrated {
 			text += "note: policy.json keeps its own memory thresholds until `policy memory-levels calibrated`\n"
 		}

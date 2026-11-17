@@ -51,10 +51,16 @@ type TelemetrySnapshotSummary struct {
 	SwapLagReleased    bool      `json:"swap_lag_released,omitempty"`
 	// MemoryFamilies is the compact top-3 family projection
 	// "family=rss/reclaimable" in MB, for example "lsp=6100/6100,agent_host=3012/0".
-	MemoryFamilies             string         `json:"memory_families,omitempty"`
-	HostCPUPercent             float64        `json:"host_cpu_percent"`
-	AgentTreeCount             int            `json:"agent_tree_count"`
-	AgentRSSSumMB              float64        `json:"agent_rss_sum_mb"`
+	MemoryFamilies string  `json:"memory_families,omitempty"`
+	HostCPUPercent float64 `json:"host_cpu_percent"`
+	AgentTreeCount int     `json:"agent_tree_count"`
+	AgentRSSSumMB  float64 `json:"agent_rss_sum_mb"`
+	// Footprint and top-tree rung sizes (language servers excluded) are the
+	// calibration inputs for memory-levels.json; footprint is omitted where
+	// the platform does not measure it.
+	AgentFootprintMB           float64        `json:"agent_footprint_mb,omitempty"`
+	TopTreeRSSMB               float64        `json:"top_tree_rss_mb,omitempty"`
+	TopTreeFootprintMB         float64        `json:"top_tree_footprint_mb,omitempty"`
 	MemoryMomentum             MemoryMomentum `json:"memory_momentum"`
 	FreePercentSlopePerMinute  float64        `json:"free_percent_slope_per_minute,omitempty"`
 	MinutesToMemoryRed         *float64       `json:"minutes_to_memory_red,omitempty"`
@@ -83,7 +89,18 @@ func compactTelemetrySummary(snapshot Snapshot) TelemetrySnapshotSummary {
 	if len(snapshot.Reasons) > 0 {
 		primaryReason = boundedText(snapshot.Reasons[0], actionReasonLimit)
 	}
+	agentFootprintMB, topTreeRSSMB, topTreeFootprintMB := 0.0, 0.0, 0.0
+	if top, ok := topRungTreeBy(snapshot.TopAgentTrees, treeRungRSSMB); ok {
+		topTreeRSSMB = math.Round(treeRungRSSMB(top)*10) / 10
+	}
+	if snapshot.AgentFootprintAvailable {
+		agentFootprintMB = math.Round(snapshot.AgentFootprintMB*10) / 10
+		if top, ok := topRungTreeBy(snapshot.TopAgentTrees, treeRungFootprintMB); ok {
+			topTreeFootprintMB = math.Round(treeRungFootprintMB(top)*10) / 10
+		}
+	}
 	return TelemetrySnapshotSummary{
+		AgentFootprintMB: agentFootprintMB, TopTreeRSSMB: topTreeRSSMB, TopTreeFootprintMB: topTreeFootprintMB,
 		SchemaVersion: SchemaVersion, Timestamp: snapshot.Timestamp, Level: snapshot.Level,
 		PrimaryReason: primaryReason, FreePercent: snapshot.FreePercent, SwapUsedMB: snapshot.SwapUsedMB,
 		SwapInMBPerSecond: snapshot.SwapInMBPerSecond, SwapOutMBPerSecond: snapshot.SwapOutMBPerSecond,

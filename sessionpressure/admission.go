@@ -336,6 +336,8 @@ func sanitizeResidentFallback(snapshot Snapshot, policy Policy, now time.Time) S
 		snapshot.ProcessRSSSumMB = 0
 		snapshot.AgentTreeCount = 0
 		snapshot.AgentRSSSumMB = 0
+		snapshot.AgentFootprintMB = 0
+		snapshot.AgentFootprintAvailable = false
 		snapshot.AgentCPUPercent = 0
 		snapshot.AgentCPUAvailable = false
 		snapshot.CoordinatedWork = CoordinatedWorkSnapshot{ByClass: []CoordinatedWorkClassUsage{}}
