@@ -1,8 +1,8 @@
 # Fleet health probe under runner load (2026-11-17)
 
 Owner: claude/garrid-desktop-parity
-Status: 2026-11-17. Fixed in source and tested. Release and install are
-recorded below as they happen.
+Status: 2026-11-17. Fixed, released and installed on mac-48g
+(`current` = `7a9fc8c`).
 
 ## Symptom
 
@@ -55,6 +55,27 @@ not to add ControlMaster for `gaterunner-N` lane tools.
   `SSH health probe: signal: killed` (the production error). The patched
   selector reported both healthy in 15.9 s. Without the delay it answers in
   2.1 s.
+
+## Release and install (2026-11-17)
+
+- Source `7a9fc8cdc248f0a968e9428d9326a3daf3d8bb94` (guarded single commit,
+  local, not pushed). Sealed bundle sha256 `e3b509e2…2a9b60`, shipped with
+  `remote-verify.sh --repo session-pressure --candidate-dir`.
+- runner-3 job `5d32f875-ce3c-4321-85dd-a022e1e26858`: bundle verified,
+  clean clone at the revision, `go test` of `runnerfleet`, `cmd/gaterunner-fleet`
+  and `scripts/release` passed, six darwin/arm64 binaries built (CGO,
+  `pressure-darwin-clang`), exit 0. The job waited about 10 minutes in the
+  queue behind the load burst. Export: `/srv/build/exports/fleetprobe-7a9fc8c/out`.
+  A first request (`749de19a`) failed in setup because the runner has no
+  `session-pressure` clone; `--candidate-dir` needs none.
+- `session-pressure-release install --expected-current cd39a44…` promoted
+  `7a9fc8c`. The resident helper was not restarted.
+- Installed checks: `gaterunner-fleet status` healthy for both hosts in 2.3 s;
+  with the 14 s fake-ssh delay healthy in 16.3 s; `select` with a fresh key
+  and the delay bound runner-3 in 15.7 s (binding key `probe-check-*`).
+- `session pressure status` still reports `monitor_healthy: false`. That is the
+  resident's own RSS and idle-duty budget over its 64-sample window, which
+  this CLI change does not touch.
 
 ## Open
 
