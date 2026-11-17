@@ -253,6 +253,25 @@ does not change; memory grows by 16 bytes a process.
 mac-16g guard RSS already ran 29.1..29.5 MB before this change; its
 rolling-p95 budget check passes. It has the least headroom of the two.
 
+### Install (2026-11-17 13:55Z)
+
+c186238 passed `go vet ./...`, `go test ./...`, darwin vet and the release
+build on runner-3 (job c1b05ad8), and the darwin packages locally. Installed
+with `session-pressure-release install --expected-current` on mac-16g (from
+ff27be4) and mac-48g (from 6744a73), then `monitor install` and
+`policy memory-levels calibrated`. On mac-48g the data-dir
+`memory-levels.json` (the 13:22Z override) moved to
+`memory-levels.json.folded-into-c186238-20261117T1400Z`, so the embedded
+anchors apply. `policy memory-levels show` on both: source embedded,
+footprint bands on.
+
+First samples after install:
+
+| Host | Level | Cause | Free | Agent footprint | Guard RSS |
+|---|---|---|---|---|---|
+| mac-16g | red | tree footprint 11298 MB >= red 9728 MB | 52% | 11565 MB | 18.5 MB |
+| mac-48g | red | host CPU 99.6% (memory rungs normal) | 44% | 28960 MB | 24.1 MB |
+
 ## Open
 
 - Recheck both footprint ladders after a week of history. The heartbeats now
