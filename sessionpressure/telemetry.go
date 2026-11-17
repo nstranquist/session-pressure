@@ -518,8 +518,10 @@ func (store *TelemetryStore) Prune(retentionDays int) error {
 			if parseErr != nil || !day.Before(cutoffDay) {
 				continue
 			}
-			if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-				return removeErr
+			// History is never deleted: the aged day file moves to a
+			// verified gzip archive beside it (<name>.jsonl.gz).
+			if _, archiveErr := jsonl.ArchiveFile(path); archiveErr != nil && !errors.Is(archiveErr, os.ErrNotExist) {
+				return archiveErr
 			}
 		}
 	}
@@ -550,11 +552,17 @@ func (store *TelemetryStore) pruneLegacyActions(cutoff time.Time) error {
 	if scanErr != nil {
 		return scanErr
 	}
+	// Keep a verified archive of the whole legacy file before any rows leave it.
 	if retained.Len() == 0 {
-		err := os.Remove(path)
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
+		if _, err := jsonl.ArchiveFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
+		return nil
+	}
+	if info, statErr := os.Stat(path); statErr == nil && int64(retained.Len()) == info.Size() {
+		return nil
+	}
+	if _, err := jsonl.ArchiveCopy(path, store.Now()); err != nil {
 		return err
 	}
 	return atomicWrite(path, retained.Bytes(), 0o600)

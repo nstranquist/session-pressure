@@ -510,8 +510,9 @@ func (store *DiskWriteStore) Prune(retentionDays int) error {
 		if parseErr != nil || !day.Before(cutoffDay) {
 			continue
 		}
-		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			return removeErr
+		// History is never deleted: archive the aged day file (verified gzip).
+		if _, archiveErr := jsonl.ArchiveFile(path); archiveErr != nil && !errors.Is(archiveErr, os.ErrNotExist) {
+			return archiveErr
 		}
 	}
 	return nil

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/nstranquist/session-pressure/internal/filelock"
+	"github.com/nstranquist/session-pressure/internal/jsonl"
 	"golang.org/x/sys/unix"
 )
 
@@ -474,7 +475,9 @@ func pruneCommandStreams(dir string, cutoff time.Time) error {
 		if err != nil || !day.Before(cutoff.UTC().Truncate(24*time.Hour)) {
 			continue
 		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		// History is never deleted: the aged shard moves to a verified gzip
+		// archive beside it. ndev telemetry prune may move it on to its archive.
+		if _, err := jsonl.ArchiveFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("command telemetry retention failed: %w", err)
 		}
 	}

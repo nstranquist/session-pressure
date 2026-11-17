@@ -164,7 +164,7 @@ func TestWriterRefusesSymlinkAndCountsFailure(t *testing.T) {
 		t.Fatalf("%+v", h)
 	}
 }
-func TestRetentionOnlyRemovesOwnedExpiredStreams(t *testing.T) {
+func TestRetentionArchivesOnlyOwnedExpiredStreams(t *testing.T) {
 	dir := t.TempDir()
 	old := "events-2020-01-01-s01.jsonl"
 	foreign := "events-2020-01-01-sXX.jsonl"
@@ -175,7 +175,11 @@ func TestRetentionOnlyRemovesOwnedExpiredStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, old)); !os.IsNotExist(err) {
-		t.Fatal("old stream retained")
+		t.Fatal("old stream not moved out of the live set")
+	}
+	// History rule: the aged stream is archived, never deleted.
+	if _, err := os.Stat(filepath.Join(dir, old+".gz")); err != nil {
+		t.Fatalf("old stream not archived: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, foreign)); err != nil {
 		t.Fatal("foreign stream removed")

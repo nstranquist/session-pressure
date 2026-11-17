@@ -190,6 +190,10 @@ func TestWorkEventIndexReimportsReplacedShardAndForgetsPruned(t *testing.T) {
 	if err := store.Prune(14); err != nil {
 		t.Fatal(err)
 	}
+	// History rule: the aged shard is archived beside the live set.
+	if archived, _ := filepath.Glob(filepath.Join(store.Dir, "work-events-*.jsonl.gz")); len(archived) != 1 {
+		t.Fatalf("archived work-event shards=%v, want 1", archived)
+	}
 	db, err := store.workEventIndex()
 	if err != nil {
 		t.Fatal(err)

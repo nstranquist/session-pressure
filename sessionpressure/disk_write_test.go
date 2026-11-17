@@ -751,6 +751,10 @@ func TestDiskWriteHistoryPrunesOnlyExpiredOwnedShards(t *testing.T) {
 	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
 		t.Fatalf("expired owned shard still exists: %v", err)
 	}
+	// History rule: the aged shard is archived (verified gzip), never deleted.
+	if _, err := os.Stat(oldPath + ".gz"); err != nil {
+		t.Fatalf("expired owned shard not archived: %v", err)
+	}
 	for _, path := range []string{currentPath, unrelated} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("prune touched retained path %s: %v", path, err)

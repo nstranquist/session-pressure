@@ -1175,12 +1175,13 @@ func (store *WorkEventStore) Prune(retentionDays int) error {
 		dateText := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "work-events-"), ".jsonl")
 		day, parseErr := time.ParseInLocation("20060102", dateText, time.Local)
 		if parseErr == nil && day.Before(cutoffDay) {
-			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			// History is never deleted: archive the aged day file (verified gzip).
+			if _, err := jsonl.ArchiveFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 		}
 	}
-	// Best effort: the next sync drops rows of removed shards anyway.
+	// Best effort: the index is derived from live shards; archived shards keep the rows.
 	_ = store.pruneWorkEventIndex()
 	return nil
 }

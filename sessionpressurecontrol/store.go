@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nstranquist/session-pressure/internal/jsonl"
 	"github.com/nstranquist/session-pressure/pkg/sessionpressurecontrol"
 )
 
@@ -125,9 +126,12 @@ func (s *previewStore) appendAudit(record sessionpressurecontrol.AuditRecord) er
 	}
 	path := filepath.Join(s.root, "audit.jsonl")
 	if info, statErr := os.Stat(path); statErr == nil && info.Size() > 4<<20 {
-		archive := path + ".1"
-		_ = os.Remove(archive)
-		if err := os.Rename(path, archive); err != nil {
+		// Rotation never deletes: the old generation moves to a verified
+		// gzip archive (audit.jsonl.<UTC>.gz) beside the live file.
+		// A peer that rotated first (ErrNotExist) or a generation that could
+		// not be compressed yet (kept on disk, retried next rotation) still
+		// leaves a fresh live file to append to.
+		if _, err := jsonl.RotateArchive(path, s.now()); err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, jsonl.ErrRotatedNotArchived) {
 			return fmt.Errorf("rotate audit: %w", err)
 		}
 	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {

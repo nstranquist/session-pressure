@@ -1493,6 +1493,10 @@ func TestActionTelemetryRotatesAccountsAndPrunesWithSnapshots(t *testing.T) {
 	if _, err := os.Stat(store.actionDayPath(old)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("old action shard was not pruned: %v", err)
 	}
+	// History rule: the aged day file is archived, never deleted.
+	if _, err := os.Stat(store.actionDayPath(old) + ".gz"); err != nil {
+		t.Fatalf("old action shard not archived: %v", err)
+	}
 	if _, err := os.Stat(store.actionDayPath(recent)); err != nil {
 		t.Fatalf("recent action shard was pruned: %v", err)
 	}
