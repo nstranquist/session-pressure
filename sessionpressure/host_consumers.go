@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const maxProjectedHostConsumers = 16
@@ -73,6 +74,35 @@ func buildHostConsumersWithCatalog(processes []Process, trees []AgentTree, catal
 // privacySafeExecutable normalizes one already-isolated executable basename.
 // It is safe for native comm values, including names containing spaces.
 func privacySafeExecutable(value string) string {
+	// Almost every process name is already safe. Return it as is, with no
+	// rune slice or string copy; the scans call this once per process on
+	// every tick.
+	if privacySafeExecutableClean(value) {
+		return value
+	}
+	return privacySafeExecutableSanitize(value)
+}
+
+// privacySafeExecutableClean reports whether the sanitizer would return
+// value unchanged: 1 to 64 bytes of ASCII letters, digits and "._+-()[]",
+// with no path separator, space or underscore to trim, and not ".".
+func privacySafeExecutableClean(value string) bool {
+	if value == "" || len(value) > 64 || value == "." {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		c := value[index]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '.' || c == '+' || c == '-' || c == '(' || c == ')' || c == '[' || c == ']':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func privacySafeExecutableSanitize(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "unknown"
@@ -82,7 +112,7 @@ func privacySafeExecutable(value string) string {
 	if name == "" || name == "." || name == string(filepath.Separator) {
 		return "unknown"
 	}
-	runes := make([]rune, 0, min(len([]rune(name)), 64))
+	runes := make([]rune, 0, min(utf8.RuneCountInString(name), 64))
 	for _, r := range name {
 		if len(runes) >= 64 {
 			break

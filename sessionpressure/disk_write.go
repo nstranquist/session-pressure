@@ -301,12 +301,17 @@ type DiskWriteObserver struct {
 	processWindowValid    bool
 	pendingSwapBytes      uint64
 
-	previousDevice     diskDeviceCounter
-	previousSwap       swapIOCounter
-	previousProcesses  map[diskProcessKey]diskProcessCounter
-	previousAt         time.Time
-	volumePoints       []diskVolumePoint
-	writerPoints       []diskWriterPoint
+	previousDevice    diskDeviceCounter
+	previousSwap      swapIOCounter
+	previousProcesses map[diskProcessKey]diskProcessCounter
+	previousAt        time.Time
+	volumePoints      []diskVolumePoint
+	writerPoints      []diskWriterPoint
+	// writerGeneration changes whenever writerPoints gain or lose a point.
+	// Writers move only on a process pass, about once a minute, so the
+	// per-executable totals are rebuilt then and reused on the other ticks.
+	writerGeneration   uint64
+	writerCache        diskWriterAggregateCache
 	baselines          map[string]*diskHistogram
 	executableModels   map[string]*diskHistogram
 	executableBytes    map[string]uint64
@@ -893,6 +898,7 @@ func (observer *DiskWriteObserver) processPassLocked(at time.Time, elapsed time.
 		return nil
 	}
 	observer.writerPoints = append(observer.writerPoints, diskWriterPoint{At: at, Duration: duration, Deltas: deltas})
+	observer.writerGeneration++
 	return deltas
 }
 
@@ -902,13 +908,24 @@ func (observer *DiskWriteObserver) prunePointsLocked(at time.Time) {
 	for first < len(observer.volumePoints) && observer.volumePoints[first].At.Before(volumeCutoff) {
 		first++
 	}
-	observer.volumePoints = append([]diskVolumePoint(nil), observer.volumePoints[first:]...)
+	// Shift in place: the 24-hour volume slice holds about 5,760 points, and a
+	// fresh copy on every tick was pure garbage for the collector.
+	if first > 0 {
+		kept := copy(observer.volumePoints, observer.volumePoints[first:])
+		clear(observer.volumePoints[kept:])
+		observer.volumePoints = observer.volumePoints[:kept]
+	}
 	writerCutoff := at.Add(-diskWriteWindow)
 	first = 0
 	for first < len(observer.writerPoints) && observer.writerPoints[first].At.Before(writerCutoff) {
 		first++
 	}
-	observer.writerPoints = append([]diskWriterPoint(nil), observer.writerPoints[first:]...)
+	if first > 0 {
+		kept := copy(observer.writerPoints, observer.writerPoints[first:])
+		clear(observer.writerPoints[kept:])
+		observer.writerPoints = observer.writerPoints[:kept]
+		observer.writerGeneration++
+	}
 }
 
 func (observer *DiskWriteObserver) windowBytesLocked(cutoff time.Time, scoredOnly bool) uint64 {
@@ -971,22 +988,42 @@ func (observer *DiskWriteObserver) windowCoveredLocked(at time.Time) bool {
 	return false
 }
 
-func (observer *DiskWriteObserver) aggregateWritersLocked(latestDuration time.Duration) ([]DiskWriter, uint64, int) {
-	type aggregate struct {
-		bytes, current    uint64
-		processes, agents map[diskProcessKey]struct{}
-		pid               int
-		start             uint64
-		largest           uint64
+// diskWriterAggregate is one executable's totals over writerPoints.
+type diskWriterAggregate struct {
+	executable               string
+	bytes, current, largest  uint64
+	processCount, agentCount int
+	pid                      int
+	start                    uint64
+}
+
+type diskWriterAggregateCache struct {
+	valid      bool
+	generation uint64
+	// items are sorted by bytes (descending), then executable.
+	items []diskWriterAggregate
+	total uint64
+}
+
+// writerAggregatesLocked returns the per-executable totals for the current
+// writerPoints, rebuilt only when a point was added or pruned.
+func (observer *DiskWriteObserver) writerAggregatesLocked() ([]diskWriterAggregate, uint64) {
+	cache := &observer.writerCache
+	if cache.valid && cache.generation == observer.writerGeneration {
+		return cache.items, cache.total
 	}
-	byExecutable := make(map[string]*aggregate)
+	type building struct {
+		diskWriterAggregate
+		processes, agents map[diskProcessKey]struct{}
+	}
+	byExecutable := make(map[string]*building)
 	writerTotal := uint64(0)
 	for pointIndex, point := range observer.writerPoints {
 		latest := pointIndex == len(observer.writerPoints)-1
 		for _, delta := range point.Deltas {
 			item := byExecutable[delta.Executable]
 			if item == nil {
-				item = &aggregate{processes: make(map[diskProcessKey]struct{}), agents: make(map[diskProcessKey]struct{})}
+				item = &building{diskWriterAggregate: diskWriterAggregate{executable: delta.Executable}, processes: make(map[diskProcessKey]struct{}), agents: make(map[diskProcessKey]struct{})}
 				byExecutable[delta.Executable] = item
 			}
 			item.bytes = saturatingAddUint64(item.bytes, delta.Bytes)
@@ -1003,16 +1040,40 @@ func (observer *DiskWriteObserver) aggregateWritersLocked(latestDuration time.Du
 			writerTotal = saturatingAddUint64(writerTotal, delta.Bytes)
 		}
 	}
-	writers := make([]DiskWriter, 0, len(byExecutable))
-	for executable, item := range byExecutable {
+	items := cache.items[:0]
+	for _, item := range byExecutable {
+		item.processCount, item.agentCount = len(item.processes), len(item.agents)
+		items = append(items, item.diskWriterAggregate)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].bytes != items[j].bytes {
+			return items[i].bytes > items[j].bytes
+		}
+		return items[i].executable < items[j].executable
+	})
+	*cache = diskWriterAggregateCache{valid: true, generation: observer.writerGeneration, items: items, total: writerTotal}
+	return items, writerTotal
+}
+
+// aggregateWritersLocked projects the cached totals into writers. The work
+// class and the per-executable baseline change between passes, so they are
+// applied on every tick.
+func (observer *DiskWriteObserver) aggregateWritersLocked(latestDuration time.Duration) ([]DiskWriter, uint64, int) {
+	items, writerTotal := observer.writerAggregatesLocked()
+	available := len(items)
+	if len(items) > diskWriteMaxWriters {
+		items = items[:diskWriteMaxWriters]
+	}
+	writers := make([]DiskWriter, 0, len(items))
+	for _, item := range items {
 		writer := DiskWriter{DiskWriterSummary: DiskWriterSummary{
-			Executable: executable, Category: hostConsumerCategory(executable), ProcessCount: len(item.processes),
-			AgentProcessCount: len(item.agents), WindowBytes: item.bytes,
+			Executable: item.executable, Category: hostConsumerCategory(item.executable), ProcessCount: item.processCount,
+			AgentProcessCount: item.agentCount, WindowBytes: item.bytes,
 		}, PID: item.pid, ProcessStartID: item.start, WorkClass: observer.context}
-		if len(item.agents) > 0 {
+		if item.agentCount > 0 {
 			writer.OwnerKind = "agent"
 		}
-		if executable == diskWriteSwapExecutable {
+		if item.executable == diskWriteSwapExecutable {
 			writer.Category = "system"
 			writer.OwnerKind = "kernel"
 			writer.PID, writer.ProcessStartID = 0, 0
@@ -1020,22 +1081,12 @@ func (observer *DiskWriteObserver) aggregateWritersLocked(latestDuration time.Du
 		if latestDuration > 0 {
 			writer.BytesPerSecond = float64(item.current) / latestDuration.Seconds()
 		}
-		if model := observer.executableModels[executable]; model != nil {
+		if model := observer.executableModels[item.executable]; model != nil {
 			if p99 := model.p99(); p99 > 0 {
 				writer.BaselineRatio = roundRatio(float64(item.bytes) / float64(p99))
 			}
 		}
 		writers = append(writers, writer)
-	}
-	sort.Slice(writers, func(i, j int) bool {
-		if writers[i].WindowBytes != writers[j].WindowBytes {
-			return writers[i].WindowBytes > writers[j].WindowBytes
-		}
-		return writers[i].Executable < writers[j].Executable
-	})
-	available := len(writers)
-	if available > diskWriteMaxWriters {
-		writers = writers[:diskWriteMaxWriters]
 	}
 	return writers, writerTotal, available
 }

@@ -105,6 +105,15 @@ var darwinNativeProcessScan struct {
 	args darwinProcessArgsReader
 }
 
+// darwinRusageReadable reports whether proc_pid_rusage can succeed for a
+// kinfo_proc row. The kernel allows it only for the caller's own effective
+// uid unless the caller is root, so a foreign row would cost one failed
+// syscall and give nothing. On this Mac that was 211 of 949 rows per scan,
+// and the scans run on every resident tick. euid is os.Geteuid().
+func darwinRusageReadable(row *unix.KinfoProc, euid uint32) bool {
+	return euid == 0 || row.Eproc.Ucred.Uid == euid
+}
+
 func loadDarwinLibproc() error {
 	darwinLibproc.once.Do(func() {
 		handle, err := purego.Dlopen("/usr/lib/libproc.dylib", purego.RTLD_LAZY|purego.RTLD_LOCAL)
@@ -152,6 +161,7 @@ func nativeProcesses(ctx context.Context) ([]Process, string, error) {
 	processes := make([]Process, 0, len(rows))
 	argsReader := &darwinNativeProcessScan.args
 	identityCatalog := ActiveAgentIdentityCatalog()
+	euid := uint32(os.Geteuid())
 	for index := range rows {
 		if index%64 == 0 {
 			select {
@@ -160,7 +170,7 @@ func nativeProcesses(ctx context.Context) ([]Process, string, error) {
 			default:
 			}
 		}
-		row := rows[index]
+		row := &rows[index]
 		pid := int(row.Proc.P_pid)
 		if pid <= 0 {
 			continue
@@ -180,7 +190,7 @@ func nativeProcesses(ctx context.Context) ([]Process, string, error) {
 		var usage darwinRusageInfoV2
 		diskWriteValid := false
 		diskWriteBytes := uint64(0)
-		if darwinLibproc.pidRusageV2(int32(pid), darwinRusageInfoVersion2, &usage) == 0 {
+		if darwinRusageReadable(row, euid) && darwinLibproc.pidRusageV2(int32(pid), darwinRusageInfoVersion2, &usage) == 0 {
 			rssKB = int64(usage.ResidentSize / 1024)
 			// Same rusage call: the footprint costs no extra syscall.
 			footprintKB = int64(usage.PhysicalFootprint / 1024)

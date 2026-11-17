@@ -88,7 +88,9 @@ var (
 	agentIdentityMu       sync.RWMutex
 	agentIdentityCached   *AgentIdentityCatalog
 	agentIdentityCacheKey string
-	agentIdentityCacheAt  time.Time
+	agentIdentityCacheDir string
+	// agentIdentityCacheAt is when the overlay fingerprint was last checked.
+	agentIdentityCacheAt time.Time
 )
 
 // DefaultAgentIdentityRules is the shipped catalog. Version numbers are never
@@ -205,15 +207,31 @@ func ActiveAgentIdentityCatalog() *AgentIdentityCatalog {
 	return loadAgentIdentityCatalogCached(dir)
 }
 
+// agentIdentityCheckInterval bounds how often the overlay is stat'ed. The
+// catalog is read once per process on every scan (about 1,000 lookups a
+// tick), so the stat, the key string and the five-second recompile were a
+// steady share of the resident's idle CPU. An overlay edit still takes
+// effect within this interval; an unchanged overlay never recompiles.
+const agentIdentityCheckInterval = 5 * time.Second
+
 func loadAgentIdentityCatalogCached(dir string) *AgentIdentityCatalog {
-	key, mtime := agentIdentityCacheFingerprint(dir)
 	agentIdentityMu.RLock()
-	if agentIdentityCached != nil && agentIdentityCacheKey == key && time.Since(agentIdentityCacheAt) < 5*time.Second {
+	if agentIdentityCached != nil && agentIdentityCacheDir == dir && time.Since(agentIdentityCacheAt) < agentIdentityCheckInterval {
 		catalog := agentIdentityCached
 		agentIdentityMu.RUnlock()
 		return catalog
 	}
 	agentIdentityMu.RUnlock()
+
+	key, mtime := agentIdentityCacheFingerprint(dir)
+	agentIdentityMu.Lock()
+	if agentIdentityCached != nil && agentIdentityCacheDir == dir && agentIdentityCacheKey == key {
+		agentIdentityCacheAt = time.Now()
+		catalog := agentIdentityCached
+		agentIdentityMu.Unlock()
+		return catalog
+	}
+	agentIdentityMu.Unlock()
 
 	catalog := CompileAgentIdentityCatalog(DefaultAgentIdentityRules())
 	if dir != "" {
@@ -237,6 +255,7 @@ func loadAgentIdentityCatalogCached(dir string) *AgentIdentityCatalog {
 	agentIdentityMu.Lock()
 	agentIdentityCached = catalog
 	agentIdentityCacheKey = key
+	agentIdentityCacheDir = dir
 	agentIdentityCacheAt = time.Now()
 	agentIdentityMu.Unlock()
 	return catalog
@@ -247,6 +266,7 @@ func ResetAgentIdentityCatalogCache() {
 	agentIdentityMu.Lock()
 	agentIdentityCached = nil
 	agentIdentityCacheKey = ""
+	agentIdentityCacheDir = ""
 	agentIdentityCacheAt = time.Time{}
 	agentIdentityMu.Unlock()
 }

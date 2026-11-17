@@ -489,3 +489,51 @@ func TestDefaultCatalogIncludesKimiCodeInstall(t *testing.T) {
 		t.Fatalf("kimi-code install path not recognized: %q %v", agent, ok)
 	}
 }
+
+// The catalog checks the overlay at most once per interval and recompiles
+// only when the overlay changed.
+func TestAgentIdentityCatalogChecksOverlayOnIntervalAndReusesUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	path := AgentIdentityOverlayPath(dir)
+	write := func(basename string) {
+		t.Helper()
+		raw, _ := json.Marshal(AgentIdentityOverlay{SchemaVersion: agentIdentitySchemaVersion, Rules: []AgentIdentityRule{{Agent: "kimi", ExactBasenames: []string{basename}}}})
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expire := func() {
+		agentIdentityMu.Lock()
+		agentIdentityCacheAt = agentIdentityCacheAt.Add(-agentIdentityCheckInterval)
+		agentIdentityMu.Unlock()
+	}
+	t.Cleanup(ResetAgentIdentityCatalogCache)
+	write("kimi-cli")
+	ResetAgentIdentityCatalogCache()
+	first := loadAgentIdentityCatalogCached(dir)
+	if _, _, ok := first.MatchExactBasename("kimi-cli"); !ok {
+		t.Fatal("overlay not loaded")
+	}
+	if loadAgentIdentityCatalogCached(dir) != first {
+		t.Fatal("a second lookup inside the interval recompiled the catalog")
+	}
+	expire()
+	if loadAgentIdentityCatalogCached(dir) != first {
+		t.Fatal("an unchanged overlay recompiled the catalog")
+	}
+	write("kimi-cli-two")
+	if loadAgentIdentityCatalogCached(dir) != first {
+		t.Fatal("the overlay was stat'ed inside the check interval")
+	}
+	expire()
+	changed := loadAgentIdentityCatalogCached(dir)
+	if changed == first {
+		t.Fatal("a changed overlay was not reloaded after the interval")
+	}
+	if _, _, ok := changed.MatchExactBasename("kimi-cli-two"); !ok {
+		t.Fatal("reloaded catalog lacks the new overlay rule")
+	}
+	if other := loadAgentIdentityCatalogCached(t.TempDir()); other == changed {
+		t.Fatal("a different data dir reused the cached catalog")
+	}
+}

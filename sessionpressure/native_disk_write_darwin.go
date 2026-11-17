@@ -5,6 +5,7 @@ package sessionpressure
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -230,6 +231,7 @@ func nativeDiskProcessCounters(ctx context.Context) (diskProcessSnapshot, error)
 	}
 	result := diskProcessSnapshot{TotalPIDCount: len(rows), Counters: make([]diskProcessCounter, 0, len(rows))}
 	catalog := ActiveAgentIdentityCatalog()
+	euid := uint32(os.Geteuid())
 	for index := range rows {
 		if index%64 == 0 {
 			select {
@@ -239,7 +241,7 @@ func nativeDiskProcessCounters(ctx context.Context) (diskProcessSnapshot, error)
 			}
 		}
 		pid := int(rows[index].Proc.P_pid)
-		if pid <= 0 {
+		if pid <= 0 || !darwinRusageReadable(&rows[index], euid) {
 			continue
 		}
 		var usage darwinRusageInfoV2

@@ -128,3 +128,49 @@ func TestDiskWriteProcessPassDefaultsToEveryTick(t *testing.T) {
 		t.Fatalf("passes = %d, want 4", harness.passes)
 	}
 }
+
+// The cached writer totals match a fresh rebuild on every tick, across
+// passes, skipped ticks, prunes and a work-class change.
+func TestDiskWriteWriterCacheMatchesFreshAggregation(t *testing.T) {
+	harness := newPassHarness(t)
+	// Several writers that come and go, one agent-owned, so the cache sees
+	// executables enter and leave the window.
+	calls := uint64(0)
+	harness.observer.processSource = func(context.Context) (diskProcessSnapshot, error) {
+		harness.passes++
+		calls++
+		counters := []diskProcessCounter{
+			{PID: 7, StartID: 9, Executable: "sqlite3", BytesWritten: harness.process},
+			{PID: 8, StartID: 10, Executable: "claude", BytesWritten: calls * 3_000, AgentOwned: true},
+		}
+		if calls%4 != 0 {
+			counters = append(counters, diskProcessCounter{PID: 100 + int(calls/4), StartID: 1, Executable: "go", BytesWritten: calls * 500})
+		}
+		if calls < 6 {
+			counters = append(counters, diskProcessCounter{PID: 50, StartID: 2, Executable: "mds_stores", BytesWritten: calls * 10_000})
+		}
+		return diskProcessSnapshot{TotalPIDCount: 5, AccessibleCount: len(counters), Counters: counters}, nil
+	}
+	for step := 0; step <= 100; step++ { // 25 minutes, so the 15-minute window prunes
+		if step == 40 {
+			harness.observer.SetContext("build")
+		}
+		harness.tick(time.Duration(step) * 15 * time.Second)
+		harness.observer.mu.Lock()
+		cached, cachedTotal, cachedAvailable := harness.observer.aggregateWritersLocked(15 * time.Second)
+		harness.observer.writerCache.valid = false
+		fresh, freshTotal, freshAvailable := harness.observer.aggregateWritersLocked(15 * time.Second)
+		harness.observer.mu.Unlock()
+		if cachedTotal != freshTotal || cachedAvailable != freshAvailable || len(cached) != len(fresh) {
+			t.Fatalf("step %d: cached (%d, %d, %d writers) != fresh (%d, %d, %d writers)", step, cachedTotal, cachedAvailable, len(cached), freshTotal, freshAvailable, len(fresh))
+		}
+		for index := range cached {
+			if cached[index] != fresh[index] {
+				t.Fatalf("step %d writer %d: cached %+v != fresh %+v", step, index, cached[index], fresh[index])
+			}
+		}
+	}
+	if harness.passes < 20 {
+		t.Fatalf("passes = %d, want the minute cadence over 25 minutes", harness.passes)
+	}
+}

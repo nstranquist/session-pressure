@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -88,6 +89,49 @@ type Sampler struct {
 	swapIOMu                 sync.Mutex
 	swapIOLast               swapIOCounter
 	swapIOLastAt             time.Time
+	projectionMu             sync.Mutex
+	projection               inventoryProjection
+}
+
+// inventoryProjection is the trees, host consumers and memory families built
+// from one enriched process list. They depend only on the processes and the
+// identity catalog. The resident samples every 15 seconds but refreshes the
+// inventory every few minutes, so most samples saw the same list and
+// rebuilt the same projection (WORK-1315).
+type inventoryProjection struct {
+	processes []Process
+	catalog   *AgentIdentityCatalog
+	trees     []AgentTree
+	consumers []HostConsumer
+	families  []MemoryFamily
+}
+
+// projectInventory returns the projection for processes, reused when the
+// resident's enriched list and catalog are unchanged. The returned slices
+// are shared with later samples: callers read them and must clone before
+// they write (Sample clones the top trees it enriches).
+func (sampler *Sampler) projectInventory(processes []Process, catalog *AgentIdentityCatalog) ([]AgentTree, []HostConsumer, []MemoryFamily) {
+	reuse := sampler.role == "resident"
+	if reuse {
+		sampler.projectionMu.Lock()
+		defer sampler.projectionMu.Unlock()
+		cached := &sampler.projection
+		if cached.processes != nil && cached.catalog == catalog && slices.Equal(cached.processes, processes) {
+			return slices.Clip(cached.trees), slices.Clip(cached.consumers), slices.Clip(cached.families)
+		}
+	}
+	trees := buildAgentTreesWithCatalog(processes, catalog)
+	consumers := buildHostConsumersWithCatalog(processes, trees, catalog)
+	families, familyByPID := classifyMemoryFamiliesWithCatalog(processes, trees, catalog)
+	annotateTreeLSP(trees, processes, familyByPID)
+	if reuse {
+		sampler.projection = inventoryProjection{
+			processes: append(make([]Process, 0, len(processes)), processes...),
+			catalog:   catalog, trees: trees, consumers: consumers, families: families,
+		}
+		return slices.Clip(trees), slices.Clip(consumers), slices.Clip(families)
+	}
+	return trees, consumers, families
 }
 
 type hostCPUTicks struct {
@@ -336,16 +380,11 @@ func (sampler *Sampler) Sample(ctx context.Context, policy Policy) (Snapshot, er
 	phases["inventory"] = phase(&mark)
 	processes = enrichSampleProcesses(ctx, processes, sampler.sessionStateDir, inventoryFresh, sampler.role)
 	phases["identity"] = phase(&mark)
-	catalog := ActiveAgentIdentityCatalog()
-	allTrees := buildAgentTreesWithCatalog(processes, catalog)
-	topHostConsumers := buildHostConsumersWithCatalog(processes, allTrees, catalog)
-	memoryFamilies, familyByPID := classifyMemoryFamiliesWithCatalog(processes, allTrees, catalog)
-	annotateTreeLSP(allTrees, processes, familyByPID)
+	allTrees, topHostConsumers, memoryFamilies := sampler.projectInventory(processes, ActiveAgentIdentityCatalog())
 	sampler.recordInventoryPressure(allTrees)
-	topTrees := allTrees
-	if len(topTrees) > maxProjectedAgentTrees {
-		topTrees = topTrees[:maxProjectedAgentTrees]
-	}
+	// Semantic state comes from hook files that change between samples, so
+	// it is read every sample, on a copy: allTrees may be a shared projection.
+	topTrees := slices.Clone(allTrees[:min(len(allTrees), maxProjectedAgentTrees)])
 	enrichSemanticStates(topTrees, sampler.sessionStateDir)
 	phases["trees"] = phase(&mark)
 	storage := sampler.sampleStorage(policy, LevelNormal)

@@ -39,7 +39,11 @@ var browserArgsMemo = struct {
 }{results: make(map[browserArgsKey]browserArgsResult)}
 
 func automatedBrowserProcesses(ctx context.Context) ([]browserProcess, error) {
-	rows, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	// Only this user's browsers are controlled. KERN_PROC_UID matches the
+	// same effective uid the loop checks, and the kernel copies out only
+	// those rows instead of the whole process table.
+	uid := os.Getuid()
+	rows, err := unix.SysctlKinfoProcSlice("kern.proc.uid", uid)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +51,6 @@ func automatedBrowserProcesses(ctx context.Context) ([]browserProcess, error) {
 	defer browserArgsMemo.Unlock()
 	previous := browserArgsMemo.results
 	current := make(map[browserArgsKey]browserArgsResult, len(previous))
-	uid := os.Getuid()
 	var roots []browserProcess
 	var argsReader darwinProcessArgsReader
 	for index := range rows {
@@ -56,7 +59,7 @@ func automatedBrowserProcesses(ctx context.Context) ([]browserProcess, error) {
 				return nil, err
 			}
 		}
-		row := rows[index]
+		row := &rows[index]
 		pid := int(row.Proc.P_pid)
 		if pid <= 1 || int(row.Eproc.Ucred.Uid) != uid {
 			continue
