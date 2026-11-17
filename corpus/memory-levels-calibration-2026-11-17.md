@@ -1,7 +1,8 @@
 # Memory levels calibration (2026-11-17)
 
-Owner: claude/305356a5 (WORK-1057). Status: 2026-11-17, implemented and
-verified on runner-3. Install state is in "Release and install" below.
+Owner: claude/305356a5 (WORK-1057). Status: 2026-11-17, implemented,
+verified on runner-3, and installed on mac-48g and
+mac-16g (`c4d3b9c`).
 
 ## Symptom
 
@@ -129,9 +130,43 @@ Tests in `sessionpressure/memory_levels_test.go`:
 
 runner-3: see "Release and install".
 
-## Release and install
+## Release and install (2026-11-17)
 
-Pending at the time of writing; updated below when done.
+- Commits (guarded single commits, local, not pushed): `f96fd9f` (memory
+  levels) and `c4d3b9c` (48 GiB guard budget 36 to 44 MB, measured on the M4
+  just before install).
+- runner-3 job `6e0ba7aa` (candidate tree of `f96fd9f`): `go vet ./...`,
+  `go test ./...` and a darwin/arm64 `go vet` of `sessionpressure` and
+  `sessionpressurecmd` passed, exit 0. Darwin-only `sessionpressure` tests
+  passed locally.
+- runner-3 job `2db96138`: sealed bundle of `refs/heads/main` at
+  `c4d3b9c` verified and cloned clean, `go test` of `./sessionpressure/`,
+  `./sessionpressurecmd/` and `./internal/helpermain/` passed, six darwin/arm64
+  binaries built with CGO (`pressure-darwin-clang`). Export
+  `/srv/build/exports/memory-levels-c4d3b9c/out`, helper sha256 in its
+  `release.json`. (Job `907f3b44` built `f96fd9f`; superseded, not installed.)
+- mac-48g: `session-pressure-release install --expected-current
+  7a9fc8c…` promoted `c4d3b9c`; `session-pressure monitor install` restarted
+  the resident (`source c4d3b9c21c7c`); `policy memory-levels calibrated`.
+  Backup `policy.json.bak-20261117-before-memory-levels`.
+- mac-16g: same, with `--expected-current 7020ea2…`. Its thresholds
+  and guard budget are byte-identical before and after (`jq -S .thresholds`
+  diff is empty; `max_self_rss_mb` 30). Backup as on the M4.
+
+Installed checks:
+
+| Host | Before | After |
+|---|---|---|
+| mac-48g | 10:47:14Z red, `claude tree 994 RSS sum 18289 MB >= red 15360 MB`, free 76%, swap 0 | 10:50:55Z normal, agent RSS 20051 MB, free 77%, swap 0 |
+| mac-16g | 10:29:02Z red, `claude tree 749 RSS sum 7008 MB >= red 5120 MB`, free 68% | 10:51:38Z red, `claude tree 749 RSS sum 6703 MB >= red 5120 MB`, free 65% |
+
+- The fleet plane (`nicos-delivery-plane state --endpoint
+  http://runner-3:7790`) cleared `host.memory:mac:mac-48g` at
+  10:51:26Z, and no `host.*` finding for either Mac is active.
+- The M4 resident's first sample after restart failed only its CPU budget
+  (`current sample CPU 52.2 ms > budget 50.0 ms`); the self-RSS check passed
+  (23.7 MB of 44 MB). The next sample (10:52:26Z) was normal with
+  `monitor_healthy: true` and no budget reason (self RSS 25.5 MB of 44 MB).
 
 ## Open
 
