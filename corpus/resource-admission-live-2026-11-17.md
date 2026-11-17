@@ -142,3 +142,13 @@ The rule was "apply it if a replay shows it does not lengthen runs".
   grandchild forked before it keeps nice 0 (existing race, also for nice 5).
   The 24 h report should compare runtimes of niced runs with the same class
   unthrottled.
+- Landed 850bdd6 (code, delivery c25bfb20) and c13f379 (docs, delivery
+  18e378d5). Built from a clean clone at c13f379 and installed at 14:58Z with
+  `--expected-current 669bc82...`, then `monitor install` (resident reporting
+  after 1 s). Eleven leases were running at install. Their processes keep
+  the old binary, and the next `work run` reads the new one.
+- Live proof at 14:59Z, host CPU headroom -1.8 cores: three
+  `work run --class express-test -- sh -c 'ps -o nice= -p $$'` runs. The
+  first was `admit:level:red_lane` and printed nice 5. The next two were
+  `throttle:cpu:cpu_saturated`, printed nice 10 and recorded
+  `throttle_cpu_nice: 10` with rule v3.
