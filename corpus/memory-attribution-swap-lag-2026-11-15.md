@@ -222,6 +222,13 @@ between thrash episodes (at swap >= 12288 MB, the warning line) and at least
 under 20% when both hold. If swap never reaches the warning line, the
 release stays off because it has nothing to do on 48 GB.
 
+Update, same day: Nico chose to enable it now ("enable what we need now
+dont worry about 2 weeks"). `swap_lag_release_minutes: 15` is set in the M4
+`policy.json` (backup `policy.json.bak-20261117-pre-swaplag`).
+`session-pressure --json status` and `doctor` load it without error. The
+weekly task now only measures and records, and asks Nico only if the M4 data
+prefers another window.
+
 Tests rerun 2026-11-17 on the M4: `go test ./sessionpressure/ -run
 'SwapLag|SwapThrash|Famil|TreeReason|NodeEntry|ClassifyNode|Gopls|Doctor|EvaluateUses'`
 ok.
@@ -229,7 +236,7 @@ ok.
 ## Open
 
 - [x] Nico approved `swap_lag_release_minutes: 15` (2026-11-15, in chat).
-- [ ] M4: enable the window after the re-measure has data (see "M4 re-measure").
+- [x] M4: enabled at 15 minutes on 2026-11-17 (Nico, in chat), without waiting for M4 data.
       Set in `~/.nicos-dev/session-pressure/policy.json` (backup
       `policy.json.bak-20261115-pre-swaplag`). The installed resident ignores
       the field until the new release is installed.
