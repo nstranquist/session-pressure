@@ -24,6 +24,7 @@ const capacityStoreName = "runner-capacity.sqlite"
 
 const (
 	capacityStoreRetention = 35 * 24 * time.Hour
+	capacityOffloadSlack   = 24 * time.Hour
 	netSampleMinInterval   = 30 * time.Second
 	netSeriesMaxGap        = 15 * time.Minute
 	netSeriesMaxPoints     = 720
@@ -47,7 +48,12 @@ CREATE TABLE IF NOT EXISTS probe_samples(
   PRIMARY KEY(host, at_ms)
 ) WITHOUT ROWID;`
 
-type capacityStore struct{ db *sql.DB }
+type capacityStore struct {
+	db *sql.DB
+	// archiveDir holds the verified monthly offload archives. Rows leave
+	// net_samples only after they are copied there and checked.
+	archiveDir string
+}
 
 func openCapacityStore(dir string) (*capacityStore, error) {
 	if dir == "" {
@@ -74,7 +80,7 @@ func openCapacityStore(dir string) (*capacityStore, error) {
 		db.Close()
 		return nil, err
 	}
-	return &capacityStore{db: db}, nil
+	return &capacityStore{db: db, archiveDir: defaultCapacityArchiveDir(dir)}, nil
 }
 
 func (s *capacityStore) Close() error { return s.db.Close() }
@@ -159,13 +165,25 @@ func downsample(points []NetPoint, limit int) []NetPoint {
 	return out
 }
 
+// prune keeps the live tables small without losing history: rows older
+// than capacityStoreRetention move to the verified monthly archive
+// (offload). A table moves only when some row is a day past the cutoff, so
+// each batch holds about a day of samples instead of one row per read.
 func (s *capacityStore) prune(now time.Time) error {
 	cutoff := now.Add(-capacityStoreRetention)
-	if _, err := s.db.Exec(`DELETE FROM net_samples WHERE at < ?`, cutoff.Unix()); err != nil {
-		return err
+	for _, table := range capacityOffloadTables {
+		var overdue int
+		if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM `+table.name+` WHERE `+table.at+` < ?)`, table.cutoff(cutoff.Add(-capacityOffloadSlack))).Scan(&overdue); err != nil {
+			return err
+		}
+		if overdue == 0 {
+			continue
+		}
+		if _, err := s.offload(table, now, cutoff); err != nil {
+			return fmt.Errorf("%s: %w", table.name, err)
+		}
 	}
-	_, err := s.db.Exec(`DELETE FROM probe_samples WHERE at_ms < ?`, cutoff.UnixMilli())
-	return err
+	return nil
 }
 
 // ProbeSample is one fleet health probe as seen from this Mac. The runner's

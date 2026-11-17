@@ -2,6 +2,7 @@ package gaterunner
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -199,11 +200,78 @@ func TestCapacityStoreSeriesHandlesRebootsGapsAndThrottle(t *testing.T) {
 	if len(pts) != 2 || pts[0].RxBps != 1000 || pts[0].TxBps != 100 || pts[1].RxBps != 100 || coverage != 120 {
 		t.Fatalf("series=%+v coverage=%d", pts, coverage)
 	}
+	archiveDir := t.TempDir()
+	s.archiveDir = archiveDir
+	// Not a day past the cutoff yet: no batch, nothing moves.
 	if err := s.prune(base.Add(capacityStoreRetention + 2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if pts, _, _ := s.series("h", "eth0", base.Add(-time.Hour)); len(pts) != 2 {
+		t.Fatalf("early prune moved points: %d left", len(pts))
+	}
+	now := base.Add(capacityStoreRetention + 26*time.Hour)
+	if err := s.prune(now); err != nil {
 		t.Fatal(err)
 	}
 	if pts, _, _ := s.series("h", "eth0", base.Add(-time.Hour)); len(pts) != 0 {
 		t.Fatalf("prune kept %d points", len(pts))
+	}
+	assertCapacityOffloaded(t, s, filepath.Join(archiveDir, now.UTC().Format("2006-01")+".sqlite"), 5)
+}
+
+// History rule: aged net_samples move to a verified archive with a receipt.
+// They are never deleted without a copy.
+func assertCapacityOffloaded(t *testing.T, s *capacityStore, archive string, want int64) {
+	t.Helper()
+	var live int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM net_samples`).Scan(&live); err != nil || live != 0 {
+		t.Fatalf("live rows=%d err=%v", live, err)
+	}
+	var rows int64
+	var path, check string
+	if err := s.db.QueryRow(`SELECT rows, archive, integrity FROM retention_offload_receipts WHERE tbl = 'net_samples'`).Scan(&rows, &path, &check); err != nil {
+		t.Fatal(err)
+	}
+	if rows != want || path != archive || check != "ok" {
+		t.Fatalf("receipt rows=%d archive=%s check=%s", rows, path, check)
+	}
+	db, err := sql.Open("sqlite", "file:"+archive+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var got int64
+	if err := db.QueryRow(`SELECT COUNT(*) FROM net_samples WHERE rx >= 0`).Scan(&got); err != nil || got != want {
+		t.Fatalf("archive rows=%d err=%v", got, err)
+	}
+}
+
+func TestCapacityOffloadFailureDeletesNothing(t *testing.T) {
+	s, err := openCapacityStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.archiveDir = filepath.Join(blocker, "archive") // MkdirAll fails
+	base := time.Unix(1794700000, 0).UTC()
+	if err := s.record("h", base, &NetworkUse{Interface: "eth0", RxBytesSinceBoot: 1, bootID: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO probe_samples(host, at_ms, outcome, attempts, probe_ms) VALUES('h', ?, 'ok', 1, 5)`, base.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.prune(base.Add(capacityStoreRetention + 48*time.Hour)); err == nil {
+		t.Fatal("offload into an unusable archive must fail")
+	}
+	for _, table := range []string{"net_samples", "probe_samples"} {
+		var live int64
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&live); err != nil || live != 1 {
+			t.Fatalf("failed offload deleted %s rows: live=%d err=%v", table, live, err)
+		}
 	}
 }
 

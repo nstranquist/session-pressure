@@ -1,6 +1,7 @@
 package gaterunner
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
@@ -56,12 +57,13 @@ func TestRecordProbesKeepsTimingAndOutcome(t *testing.T) {
 func TestProbeHistoryPrunedWithNetSamples(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now().UTC()
-	old := now.Add(-capacityStoreRetention - time.Hour)
+	// A day past the retention: due for the archive (rows move about once a day).
+	old := now.Add(-capacityStoreRetention - capacityOffloadSlack - time.Hour)
 	host := runnerfleet.Host{Name: "runner-3"}
 	if err := RecordProbes(dir, []runnerfleet.Observation{{Host: host, ObservedAt: old, Healthy: true, ProbeMS: 1, ProbeAttempts: 1}}); err != nil {
 		t.Fatal(err)
 	}
-	// The next write prunes rows past the retention.
+	// The next write moves rows past the retention to the verified archive.
 	if err := RecordProbes(dir, []runnerfleet.Observation{{Host: host, ObservedAt: now, Healthy: true, ProbeMS: 2, ProbeAttempts: 1}}); err != nil {
 		t.Fatal(err)
 	}
@@ -73,5 +75,23 @@ func TestProbeHistoryPrunedWithNetSamples(t *testing.T) {
 	got, err := s.probeSamples("runner-3", old.Add(-time.Hour))
 	if err != nil || len(got) != 1 || got[0].ProbeMS != 2 {
 		t.Fatalf("after prune = %+v err=%v", got, err)
+	}
+	// History rule: the old probe is in the archive, with a receipt.
+	var rows int64
+	var archive, check string
+	if err := s.db.QueryRow(`SELECT rows, archive, integrity FROM retention_offload_receipts WHERE tbl = 'probe_samples'`).Scan(&rows, &archive, &check); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 || check != "ok" {
+		t.Fatalf("probe receipt rows=%d check=%s", rows, check)
+	}
+	db, err := sql.Open("sqlite", "file:"+archive+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var probeMS int64
+	if err := db.QueryRow(`SELECT probe_ms FROM probe_samples WHERE host = 'runner-3' AND at_ms = ?`, old.UnixMilli()).Scan(&probeMS); err != nil || probeMS != 1 {
+		t.Fatalf("archived probe_ms=%d err=%v", probeMS, err)
 	}
 }
