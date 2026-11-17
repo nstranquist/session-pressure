@@ -70,3 +70,24 @@ free) and 11-16 (26 GiB free):
 - Live inventory from source, 2026-11-16: `binary-revisions` 19.28 GiB
   (342 candidates, 19 protected), `go-build-orphans` 1.93 GiB (6),
   `turso-backups` 1.13 GiB (1).
+
+## Correction (2026-11-17): Linux CI red since this change
+
+The `go test ./sessionpressurecmd/` proof above was macOS only. On Linux CI
+four storage tests failed (`TestStorageApplyRequiresGoBuildHotnessEvidence`,
+`TestStorageApplyUsesCurrentGoBuildHotnessEvidence`,
+`TestStoragePlanIncludesTypedOperatorProvidersAndGoHotness`,
+`TestStorageApplyGoBuildCacheRequiresFullWipe`). Runs `44003158818` (`cd39a44`)
+and `44034472936` (`3df4d95`) failed; `5a6f9bd`, before this change, was green.
+
+Cause: `resolveGoCaches` reads the real `go env GOCACHE` through
+`storageGoEnv`. The tests seed `$HOME/Library/Caches/go-build`, but on Linux
+`go env` returns `$HOME/.cache/go-build`, so the provider saw no cache. A Mac
+with `GOCACHE` set elsewhere fails the same way (reproduced with
+`GOCACHE=<tmp>`). `withStorageProviderFakes` now stubs `storageGoEnv`, so the
+cache resolves from the test HOME. The retention tests already did this.
+
+Proof: with `GOCACHE=<tmp>` the storage tests pass on macOS; the full package
+passes with `-race` on macOS; runner-3 (linux/amd64) job `63575a18`
+passes `go test -race ./sessionpressurecmd`, and job `bacf54ab` passes the
+full Ubuntu CI steps (`make race`, `make build`, build without cgo).

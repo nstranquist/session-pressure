@@ -45,6 +45,11 @@ func withStorageProviderFakes(t *testing.T) {
 	originalUVPrune := storageRunUVCachePrune
 	originalSimulatorReclaim := storageRunSimulatorReclaim
 	originalDevRootInspect := storageDevRootInspect
+	originalGoEnv := storageGoEnv
+	// Resolve the Go cache from the test HOME, not the host's `go env`. On
+	// Linux (CI) `go env GOCACHE` is $HOME/.cache/go-build, and a developer
+	// may set GOCACHE or GOCACHEPROG; tests seed $HOME/Library/Caches/go-build.
+	storageGoEnv = func() (string, string, error) { return "", "", nil }
 	storageDevRootInspect = func(_ context.Context, root string, measure bool) (storageDevRootEvidence, error) {
 		return storageDevRootEvidence{SchemaVersion: devRootEvidenceSchema, Root: root, Measured: measure, Entries: []storageDevRootEntry{}}, nil
 	}
@@ -98,6 +103,7 @@ func withStorageProviderFakes(t *testing.T) {
 		storageRunUVCachePrune = originalUVPrune
 		storageRunSimulatorReclaim = originalSimulatorReclaim
 		storageDevRootInspect = originalDevRootInspect
+		storageGoEnv = originalGoEnv
 	})
 }
 
