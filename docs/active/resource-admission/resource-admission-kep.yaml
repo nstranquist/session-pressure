@@ -16,6 +16,7 @@ implementation-refs:
   - sessionpressure/policy.go
   - sessionpressure/work_stall.go
   - sessionpressure/work_throttle.go
+  - sessionpressure/work_headroom.go
   - sessionpressure/work_resource_replay.go
 acceptance-criteria:
   - work_limits.admission defaults to resource; capacity, warning_capacity, swap_thrash_capacity and fixed weights do not decide a start under it.
@@ -25,4 +26,5 @@ acceptance-criteria:
   - Work events carry resource_decision, resource_rule and throttle_background_io; WorkStatus and doctor carry admission.
   - ReadResourceHeadroom and DecideResourceAdmission are exported for the commit-delivery worker.
   - A live throttle step lowers CPU priority to nice 10 (not a core cap) unless its dimension is io, and records throttle_cpu_nice.
+  - Memory headroom pools the charge of ramping leases (sum of medians plus spread at correlation 0.25); leases without a median are charged their peak.
 verification: []

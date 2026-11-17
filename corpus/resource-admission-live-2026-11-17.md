@@ -64,11 +64,9 @@ memory deferrals and 0 swap-thrash episodes, while free memory was at p50
 1. The CPU parallelism limit is a recorded decision, not a live throttle.
    Closed by the CPU follow-up below: CPU shortage lowers CPU priority
    instead.
-2. The memory model charges a ramping lease its full p90 peak for 3 min.
-   With many starts this holds work that would fit (13:36Z: 25.3 GB charged,
-   2.2 GB measured). The lock check uses the same model. Remaining: charge
-   ramping leases max(measured tree RSS, a fraction of the p90) once
-   per-lease RSS is sampled.
+2. The memory model charged a ramping lease its full p90 peak for 3 min,
+   summed over leases (13:36Z: 25.3 GB charged, 2.2 GB measured). Closed by
+   the pooled charge below. Per-lease measured RSS is still not used.
 3. FIFO head-of-line: a large head that does not fit memory holds smaller
    waiters behind it.
 4. The relieve step holds; it does not restart a family.
@@ -152,3 +150,36 @@ The rule was "apply it if a replay shows it does not lengthen runs".
   first was `admit:level:red_lane` and printed nice 5. The next two were
   `throttle:cpu:cpu_saturated`, printed nice 10 and recorded
   `throttle_cpu_nice: 10` with rule v3.
+
+## Pooled memory charge (WORK-1125, deviation 2, 2026-11-17)
+
+- Cause: each ramping lease was charged its own high percentile (p90 of its
+  check, else p95 of its workload or class: test p95 near 5 GB against a
+  median of 498 MB), and the charges were summed. Ten ramping leases rarely
+  all reach their tail at once. Measured RSS was the smaller error: the
+  resident's lease attribution was stale or unattributed when read
+  (`leased_rss_known: false`).
+- Replay (`work evaluate`, new `memory_charge` score): 761 starts with two
+  or more ramping leases, charge against the sum of the peaks those leases
+  measured (an upper bound on their use at once).
+
+  | Model | Undercharged | Worst | Charge/realized p50 | Median excess |
+  | --- | --- | --- | --- | --- |
+  | Sum of peaks (v4) | 5.5% | 2.8 GB | 2.24 | 4.3 GB |
+  | Pooled, rho 0 | 13.8% | 5.6 GB | 1.55 | 1.8 GB |
+  | Pooled, rho 0.10 | 9.7% | 3.8 GB | 1.64 | 2.1 GB |
+  | Pooled, rho 0.25 | 8.1% | 3.2 GB | 1.79 | 2.6 GB |
+  | Pooled, rho 0.50 | 6.7% | 3.1 GB | 1.97 | 3.1 GB |
+
+- Chosen: rho 0.25 (headroom rule v5). Undercharge stays under the 10% a
+  single p90 prediction allows, and the worst case stays inside the 6 GB
+  reserve. The replay ladder held 92 of 3,035 starts on v5, against 133 of
+  2,889 on v4 shortly before (overlapping windows, not the same starts).
+- Leases carry `predicted_median_mb`. A lease without one (older helper) is
+  charged its peak. The lock fit and the stall guard use the same pooled
+  charge.
+- Tests: `memory_charge_pooled_test.go`,
+  `TestReplayResourceHeadroomScoresTheMemoryCharge`. Full `go vet ./...`
+  and `go test ./...` on the Linux gate runner.
+- Risk: rho is fitted on one day of data. The `memory_charge` score stays in
+  `work evaluate` so the 24 h report can check it again.

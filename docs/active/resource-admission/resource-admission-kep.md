@@ -77,6 +77,18 @@ coordinator's admission limits unbounded under resource admission.
 
 ## Decision Log
 
+- 2026-11-17 (later): ramping leases are charged together, not as a sum of
+  their peaks (memory headroom rule v5). Charge = sum of medians + the
+  combined spread (peak minus median) at correlation 0.25. Replay of 761
+  starts with two or more ramping leases, against the sum of the peaks those
+  leases measured: the sum of peaks undercharged 5.5% (worst 2.8 GB) with a
+  median excess of 4.3 GB; pooled at 0.25 undercharged 8.1% (worst 3.2 GB,
+  inside the 6 GB reserve) with a median excess of 2.6 GB; pooled at 0
+  undercharged 13.8% (worst 5.6 GB). 0.25 keeps undercharge under the 10% a
+  single p90 prediction allows. Per-lease measured RSS was not used: the
+  resident's lease attribution was stale or unattributed in the samples read
+  (`leased_rss_known: false`), and current RSS was 2.2 GB of a 25.3 GB charge
+  at 13:36Z, so double counting was the smaller error.
 - 2026-11-17 (later): CPU shortage lowers CPU priority, not parallelism. The
   48 h replay scored v3's core limit against the busy cores the same runs
   measured: `cpu_saturated` (limit 1) slowed 9 of 94 measured runs, adding at
@@ -110,6 +122,10 @@ All additive. Readers that ignore unknown fields are unaffected.
   `queue_resource`. Rows with `shadow_resource_rule` v1 and v2 stay valid.
 - `WorkStatus.admission`, `WorkWaiterStatus.predicted_peak_mb`, waiter
   record `predicted_peak_mb`, doctor `work.admission`.
+- Lease record and status: `predicted_median_mb`. Headroom view:
+  `lease_peak_sum_mb` beside the pooled `lease_predicted_mb`; rule
+  `mac-headroom-tree-p90-scope-p95-ramp-pooled-v5` (v4 rows stay valid).
+  `work evaluate`: `memory_charge` and `cpu_throttle` scores.
 - Go API: `ReadResourceHeadroom(ctx, dir, coordinator, now)`,
   `DecideResourceAdmission(headroom, request)`, `ErrWorkResource`,
   `WorkBlockerResource`.
@@ -131,7 +147,9 @@ gate holds only queue and relieve, live throttle is background I/O and CPU
 priority with no core cap, older guards
 stand down, event vocabulary and v2 rows, exported ladder, doctor wording,
 stall guard. `work_resource_headroom_test.go`: v3 ladder rows and p50
-predictor. `work_resource_replay_test.go`: the CPU-throttle score. Full `go vet ./...` and `go test ./...` on the Linux gate runner.
+predictor. `work_resource_replay_test.go`: the CPU-throttle and
+memory-charge scores. `memory_charge_pooled_test.go`: pooled charge, leases
+without a median, v4 rows, the median on the lease record. Full `go vet ./...` and `go test ./...` on the Linux gate runner.
 
 ## Rollout / Validation / Failure Modes
 
@@ -151,6 +169,7 @@ predictor. `work_resource_replay_test.go`: the CPU-throttle score. Full `go vet 
 - [x] Gate-runner tests
 - [x] Land (669bc82), install, live proof (2026-11-17 14:18Z)
 - [x] CPU priority instead of a core cap, from the 48 h replay (2026-11-17)
+- [x] Pooled memory charge for ramping leases (headroom v5, 2026-11-17)
 - [ ] 24 h report (2026-11-18)
 
 ## Milestones
