@@ -44,9 +44,13 @@ func cmdSessionPressureGaterunner(g *Flags, args []string) int {
 	}
 	args = filtered
 	ctx = gaterunner.WithFleet(ctx, policy.Fleet)
-	ctx, err = gaterunner.WithTarget(ctx, policy.Host, policy.User)
-	if err != nil {
-		return sessionPressureError(err.Error(), 1)
+	// No configured host: local-only reads still work, and any runner read
+	// fails with no_target (set "host" in remote-work.json or pass --host).
+	if policy.Host != "" {
+		ctx, err = gaterunner.WithTarget(ctx, policy.Host, policy.User)
+		if err != nil {
+			return sessionPressureError(err.Error(), 1)
+		}
 	}
 	switch args[0] {
 	case "inspect":

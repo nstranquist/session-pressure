@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "note": "Memory levels for session pressure. Each anchor is a host shape measured from its own monitor history. A host between two anchors gets values interpolated on physical memory. Outside the anchors, MB values scale with memory and percent values stay at the nearest anchor. A host entry overrides single values for one host. A copy in the data directory (memory-levels.json) replaces this file. Calibration record: corpus/memory-levels-calibration-2026-11-17.md.",
+  "anchors": [
+    {
+      "name": "16gib-laptop",
+      "memory_gib": 16,
+      "evidence": "mac-16g (16 GiB, M1 Pro) 2026-11-03..17, 2811 samples: free p1 30%, min 25%; agent RSS sum p50 2236 MB, p95 4413 MB, max 7593 MB; swap p95 10845 MB. These are the tuned values that protect this host. Keep them.",
+      "free_percent": {
+        "warning": 25,
+        "red": 15,
+        "critical": 8
+      },
+      "swap_mb": {
+        "warning": 4096,
+        "red": 8192,
+        "critical": 12288
+      },
+      "tree_mb": {
+        "warning": 3072,
+        "red": 5120,
+        "critical": 7168
+      },
+      "agent_total_mb": {
+        "warning": 8192,
+        "red": 11264,
+        "critical": 13312
+      },
+      "rss_escalation_free_percent": 100,
+      "guard_max_self_rss_mb": 30
+    },
+    {
+      "name": "48gib-workstation",
+      "memory_gib": 48,
+      "evidence": "mac-48g (48 GiB, M4 Pro) 2026-11-17 04:10..10:25Z, 72 samples: free p5 68%, min 46%; swap 0 in every sample; claude tree RSS sum p50 13814 MB, p95 18294 MB, max 21746 MB at 90% free. Summed RSS double counts shared pages across about 1000 processes, so the RSS rungs only reach red or critical when the kernel free level agrees (50% or lower). Guard self RSS on the M4 (76 samples to 10:47Z, about 1000 processes in the inventory): p50 34.0 MB, p95 37.1 MB, p99 40.0 MB, max 40.0 MB; the budget is about 1.1x p99.",
+      "free_percent": {
+        "warning": 25,
+        "red": 15,
+        "critical": 8
+      },
+      "swap_mb": {
+        "warning": 12288,
+        "red": 24576,
+        "critical": 36864
+      },
+      "tree_mb": {
+        "warning": 20480,
+        "red": 26624,
+        "critical": 32768
+      },
+      "agent_total_mb": {
+        "warning": 36864,
+        "red": 45056,
+        "critical": 53248
+      },
+      "rss_escalation_free_percent": 50,
+      "guard_max_self_rss_mb": 44
+    }
+  ],
+  "hosts": {
+    "example-macbook-pro": {
+      "reason": "example override: this host runs heavy local builds, so warn earlier",
+      "free_percent": {
+        "warning": 40,
+        "red": 30,
+        "critical": 20
+      }
+    }
+  }
+}

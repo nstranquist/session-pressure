@@ -8,7 +8,15 @@ import (
 
 func TestRemoteEndpointPolicyCompatibilityAndPersistence(t *testing.T) {
 	dir := t.TempDir()
+	// Enabled remote work needs an operator-configured host: there is no
+	// built-in runner endpoint.
 	if err := os.WriteFile(filepath.Join(dir, "remote-work.json"), []byte(`{"enabled":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RemoteWorkConfig(dir); err == nil {
+		t.Fatal("enabled remote work without a host was accepted")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "remote-work.json"), []byte(`{"enabled":true,"host":"runner-3","darwin_compiler_sha256":{"runner-3":"d2f4a6fc1a2d831e28cff057bd02190b5e37ef24c4b9ab3344b3f3a42ff04ec8"}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	old, err := RemoteWorkConfig(dir)

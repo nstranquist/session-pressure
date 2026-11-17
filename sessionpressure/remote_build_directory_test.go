@@ -127,7 +127,7 @@ func TestRemoteBuildDirectoryOnEnrolledRunner(t *testing.T) {
 		t.Fatal("NDEV_TEST_DARWIN_OUTPUTS must be absolute")
 	}
 	job := t.TempDir()
-	preflight, err := remoteBuildPreflight(remoteProfileDarwinCgo, host, job)
+	preflight, err := remoteBuildPreflight(remoteProfileDarwinCgo, host, enrolledPins(t, host), job)
 	if err != nil {
 		t.Fatal(err)
 	}

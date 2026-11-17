@@ -72,21 +72,17 @@ func remoteBuildEnvironment(profile, job string) string {
 // runs. A mismatch is a runner fault, not a build failure, so it exits with
 // the policy-denied code and the refusal contract on stderr; callers such as
 // commit delivery then hold instead of blaming the change.
-func remoteBuildPreflight(profile, host, job string) (string, error) {
+func remoteBuildPreflight(profile, host string, pins map[string]string, job string) (string, error) {
 	if profile != remoteProfileDarwinCgo {
 		return "", nil
 	}
-	// The enrolled runners have independently reviewed compiler wrappers. Runner
-	// 3 additionally handles Go's two-argument DWARF tool lookup. Bind the pin
-	// to the already selected endpoint; never borrow another host's profile.
-	var digest string
-	switch strings.ToLower(strings.TrimSpace(host)) {
-	case "runner-2", "gr2", "192.0.2.2":
-		digest = "7e85456e9acd3ebddb0289d28078291562534a8bcb3de5ac7e3105406dc81d73"
-	case "runner-3", "gr3", "192.0.2.3":
-		digest = "d2f4a6fc1a2d831e28cff057bd02190b5e37ef24c4b9ab3344b3f3a42ff04ec8"
-	default:
-		return "", fmt.Errorf("runner %q has no reviewed Darwin compiler pin", host)
+	// Each enrolled runner has an independently reviewed compiler wrapper.
+	// Bind the pin to the already selected endpoint (remote-work.json
+	// darwin_compiler_sha256); never borrow another host's pin.
+	endpoint := strings.ToLower(strings.TrimSpace(host))
+	digest := pins[endpoint]
+	if endpoint == "" || digest == "" {
+		return "", fmt.Errorf("runner %q has no reviewed Darwin compiler pin in remote-work.json", host)
 	}
 	return remoteToolchainPreflight(remoteDarwinCC, digest, remoteDarwinSDK, remoteDarwinStrip, remoteDarwinTools(job)), nil
 }

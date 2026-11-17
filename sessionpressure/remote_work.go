@@ -33,6 +33,12 @@ type RemoteWorkPolicy struct {
 	// when its measured local time beats the measured remote time (work queue
 	// v2 slice 4, work_placer.go). Explicit remote placement is unaffected.
 	Placer bool `json:"placer,omitempty"`
+	// DarwinCompilerSHA256 pins the reviewed Darwin cross-compiler wrapper
+	// per runner endpoint (host name, alias or address, lower case). A
+	// Darwin cgo build runs only on an endpoint listed here. Hosts and pins
+	// live in this operator file, never in the source tree; see
+	// config/remote-work.example.json.
+	DarwinCompilerSHA256 map[string]string `json:"darwin_compiler_sha256,omitempty"`
 }
 
 func SetRemoteWork(dir string, enabled bool) error {
@@ -46,6 +52,9 @@ func SetRemoteWork(dir string, enabled bool) error {
 
 func ConfigureRemoteWork(dir string, enabled bool, host, user string) error {
 	policy := RemoteWorkPolicy{Enabled: enabled, Host: host, User: user}
+	if old, err := RemoteWorkConfig(dir); err == nil {
+		policy.DarwinCompilerSHA256 = old.DarwinCompilerSHA256
+	}
 	return SaveRemoteWorkPolicy(dir, policy)
 }
 
@@ -71,13 +80,21 @@ func (p *RemoteWorkPolicy) validate() error {
 	if p.Fleet != "" && !filepath.IsAbs(p.Fleet) {
 		return errors.New("remote fleet inventory path must be absolute")
 	}
-	if p.Host == "" {
-		// runner-2 was retired on 2026-11-10 and must not be contacted.
-		// runner-3 is the active runner; runner-1 is reserve only.
-		p.Host = "runner-3"
-	}
 	if p.User == "" {
 		p.User = "builder"
+	}
+	for endpoint, digest := range p.DarwinCompilerSHA256 {
+		if endpoint == "" || endpoint != strings.ToLower(strings.TrimSpace(endpoint)) || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(digest) {
+			return fmt.Errorf("remote-work.json darwin_compiler_sha256: entry %q needs a lower-case endpoint and a 64-hex sha256", endpoint)
+		}
+	}
+	if p.Host == "" {
+		// The runner endpoint is operator configuration, not a source
+		// default. Disabled remote work needs no endpoint.
+		if p.Enabled && p.Fleet == "" {
+			return errors.New("remote work is enabled but remote-work.json has neither host nor fleet; copy config/remote-work.example.json")
+		}
+		return nil
 	}
 	if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*$`).MatchString(p.Host) || !regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_-]*$`).MatchString(p.User) {
 		return errors.New("invalid remote runner host or user")
@@ -565,7 +582,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		recordControlEvent(dir, event)
 	}()
 	remote := "/srv/build/candidates/pressure-" + job
-	preflight, err := remoteBuildPreflight(profile, policy.Host, remote)
+	preflight, err := remoteBuildPreflight(profile, policy.Host, policy.DarwinCompilerSHA256, remote)
 	if err != nil {
 		return reject(err.Error())
 	}

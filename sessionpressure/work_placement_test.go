@@ -60,7 +60,7 @@ func TestRequiredRemotePlacementNeverEntersLocalAdmission(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := SetRemoteWork(dir, tc.enabled); err != nil {
+			if err := ConfigureRemoteWork(dir, tc.enabled, "runner-3", "builder"); err != nil {
 				t.Fatal(err)
 			}
 			code, err := RunWorkCommand(&WorkCoordinator{Dir: dir}, WorkRunOptions{
@@ -80,7 +80,7 @@ func TestRequiredRemotePlacementNeverEntersLocalAdmission(t *testing.T) {
 // is enabled and the command would be rejected there (GOFLAGS -modfile).
 func TestLocalPlacementSkipsRemoteRouting(t *testing.T) {
 	dir := t.TempDir()
-	if err := SetRemoteWork(dir, true); err != nil {
+	if err := ConfigureRemoteWork(dir, true, "runner-3", "builder"); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GOFLAGS", "-modfile=/var/folders/T/ndev-producer-mod-1/producer.mod")

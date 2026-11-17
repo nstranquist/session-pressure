@@ -378,9 +378,13 @@ func (b *boundedCapture) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 func runSSH(parent context.Context, remote string, limit int) ([]byte, error) {
+	target := runnerTarget(parent)
+	if target == "" {
+		return nil, &SSHFailure{Kind: "no_target", Err: errors.New("no runner endpoint bound; configure one")}
+	}
 	ctx, cancel := context.WithTimeout(parent, 12*time.Second)
 	defer cancel()
-	cmd := processtree.CommandContext(ctx, "/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=3", "-o", "ServerAliveCountMax=2", runnerTarget(ctx), remote)
+	cmd := processtree.CommandContext(ctx, "/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=3", "-o", "ServerAliveCountMax=2", target, remote)
 	out := &boundedCapture{limit: limit}
 	stderr := &boundedCapture{limit: 4096}
 	cmd.Stdout = out
@@ -443,7 +447,9 @@ func runnerTarget(ctx context.Context) string {
 	if target, ok := ctx.Value(targetKey{}).(string); ok {
 		return target
 	}
-	return "builder@runner-1"
+	// No built-in endpoint: callers bind one with WithTarget from operator
+	// configuration (remote-work.json or the fleet inventory).
+	return ""
 }
 func ParseJob(line string) (Job, bool) {
 	head, command, _ := strings.Cut(line, " cmd=")

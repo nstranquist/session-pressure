@@ -40,26 +40,32 @@ func TestRemoteBuildProfileMatchesTheMacCgoSetting(t *testing.T) {
 		t.Error("only the cgo build profile adds environment and a toolchain preflight")
 	}
 	for _, profile := range []string{remoteProfileLinuxNative, remoteProfileDarwinNoCgo} {
-		if preflight, err := remoteBuildPreflight(profile, "unreviewed-host", "/j"); err != nil || preflight != "" {
+		if preflight, err := remoteBuildPreflight(profile, "unreviewed-host", nil, "/j"); err != nil || preflight != "" {
 			t.Errorf("%s preflight = %q, %v; want none", profile, preflight, err)
 		}
 	}
 }
 
 func TestRemoteBuildPreflightBindsCompilerPinToHost(t *testing.T) {
+	pins := map[string]string{
+		"runner-2":  "7e85456e9acd3ebddb0289d28078291562534a8bcb3de5ac7e3105406dc81d73",
+		"192.0.2.2": "7e85456e9acd3ebddb0289d28078291562534a8bcb3de5ac7e3105406dc81d73",
+		"runner-3":  "d2f4a6fc1a2d831e28cff057bd02190b5e37ef24c4b9ab3344b3f3a42ff04ec8",
+		"192.0.2.3": "d2f4a6fc1a2d831e28cff057bd02190b5e37ef24c4b9ab3344b3f3a42ff04ec8",
+	}
 	for _, tc := range []struct{ host, digest string }{
 		{"runner-2", "7e85456e9acd3ebddb0289d28078291562534a8bcb3de5ac7e3105406dc81d73"},
 		{"192.0.2.2", "7e85456e9acd3ebddb0289d28078291562534a8bcb3de5ac7e3105406dc81d73"},
 		{"runner-3", "d2f4a6fc1a2d831e28cff057bd02190b5e37ef24c4b9ab3344b3f3a42ff04ec8"},
 		{"192.0.2.3", "d2f4a6fc1a2d831e28cff057bd02190b5e37ef24c4b9ab3344b3f3a42ff04ec8"},
 	} {
-		preflight, err := remoteBuildPreflight(remoteProfileDarwinCgo, tc.host, "/j")
+		preflight, err := remoteBuildPreflight(remoteProfileDarwinCgo, tc.host, pins, "/j")
 		if err != nil || !strings.Contains(preflight, shellQuote(tc.digest)) {
 			t.Errorf("%s preflight = %q, %v; want host's reviewed pin", tc.host, preflight, err)
 		}
 	}
 	for _, host := range []string{"", "runner-1", "runner-4"} {
-		if preflight, err := remoteBuildPreflight(remoteProfileDarwinCgo, host, "/j"); err == nil || preflight != "" {
+		if preflight, err := remoteBuildPreflight(remoteProfileDarwinCgo, host, pins, "/j"); err == nil || preflight != "" {
 			t.Errorf("unreviewed host %q preflight = %q, %v; want refusal", host, preflight, err)
 		}
 	}
@@ -77,7 +83,7 @@ func TestRemoteBuildPreflightOnEnrolledRunner(t *testing.T) {
 		t.Fatal("NDEV_TEST_DARWIN_ARTIFACT must be absolute")
 	}
 	job := t.TempDir()
-	preflight, err := remoteBuildPreflight(remoteProfileDarwinCgo, host, job)
+	preflight, err := remoteBuildPreflight(remoteProfileDarwinCgo, host, enrolledPins(t, host), job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,4 +148,15 @@ func TestRemoteToolchainPreflightRefusesWithTheContract(t *testing.T) {
 			t.Errorf("%s: exit %d, output %q; want refusal exit %d with the contract", name, code, out, workExitPolicyDenied)
 		}
 	}
+}
+
+// enrolledPins reads the reviewed pin for an opt-in enrolled-runner test from
+// NDEV_TEST_DARWIN_CC_SHA256 (the value in that host's remote-work.json).
+func enrolledPins(t *testing.T, host string) map[string]string {
+	t.Helper()
+	digest := os.Getenv("NDEV_TEST_DARWIN_CC_SHA256")
+	if digest == "" {
+		t.Fatal("NDEV_TEST_DARWIN_CC_SHA256 must name the enrolled runner's reviewed compiler pin")
+	}
+	return map[string]string{strings.ToLower(host): digest}
 }

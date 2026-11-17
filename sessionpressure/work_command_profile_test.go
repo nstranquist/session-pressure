@@ -14,7 +14,7 @@ func TestEnvWrappedGoNeverEntersLocalAdmission(t *testing.T) {
 		t.Skip("remote routing is a Mac admission policy")
 	}
 	dir := t.TempDir()
-	if err := SetRemoteWork(dir, true); err != nil {
+	if err := ConfigureRemoteWork(dir, true, "runner-3", "builder"); err != nil {
 		t.Fatal(err)
 	}
 	for _, argv := range [][]string{

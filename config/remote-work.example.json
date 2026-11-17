@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "host": "runner-3",
+  "user": "builder",
+  "fleet": "/Users/user/.nicos-dev/gaterunner-fleet/v1/fleet.json",
+  "node": true,
+  "placer": true,
+  "darwin_compiler_sha256": {
+    "runner-3": "0000000000000000000000000000000000000000000000000000000000000000",
+    "192.0.2.3": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}
