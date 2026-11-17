@@ -1,7 +1,7 @@
 # Browser control: resident CPU cost and enforcement gate
 
 Owner: claude, session e45120b4.
-Status: browser-control saving installed 2026-11-17; idle budget still exceeded, see Correction. Work: WORK-1141 (follow-up of WORK-1065).
+Status: idle budget met 2026-11-17 (guard idle duty 0.194% against 0.25%, RSS peak 33 MB against 44 MB, installed 6c67fc0). Work: WORK-1141 (follow-up of WORK-1065).
 
 ## Problem
 
@@ -197,10 +197,33 @@ same count (523). The rule logic does not change. A hash collision could
 hide a changed lease or digest only with a probability of about 2^-64 per
 pair.
 
+## Result (2026-11-17 20:53Z, installed 6c67fc0)
+
+| Revision | Profile duty (600s) | Guard idle duty | RSS peak |
+| --- | --- | --- | --- |
+| e5be021 (before) | 0.32% | 0.30% | 47 MB |
+| 5e3346e (disk fix with state trigger) | 0.53% (busy window) | 0.65% | 47 MB |
+| 56f36b8 / d35eade | 0.25% | 0.232% | 51 to 54 MB |
+| 6c67fc0 | 0.21% | 0.194% | 33 MB |
+
+The host was busy in every window (host CPU 40 to 99%, disk state high), so
+these are upper bounds for an idle host. The guard figure is its own
+64-sample window at level normal, read after startup and the profile had
+left the window. Readings at 20:35Z, 20:44Z and 20:53Z: 0.261%, 0.228%,
+0.194%.
+
+In the 6c67fc0 profile the disk-write per-process pass takes 0.13s in 600s,
+about 10 passes at 13 ms (it was about 40 passes).
+
 ## Open
 
-- Measure live duty and RSS after the compact validator is installed,
-  against 0.25% and 44 MB.
+- The pressure sample is the largest cost (0.24s in 600s), then the disk
+  observer (0.21s, of which `aggregateWritersLocked` re-sums every writer
+  point on every 15s tick, 0.05s) and browser enforcement (0.16s).
+- `pid_rusage` on other users' processes always fails (277 pids) and can be
+  skipped by uid.
+- The control record is written on every sample while browsers are blocked.
+  That is pressure-time cost, not idle cost.
 - The control record is written on every sample while browsers are blocked
   (`LastSample` advances). That is pressure-time cost, not idle cost.
 - The pressure sample itself is now the largest cost.
