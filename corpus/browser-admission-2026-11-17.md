@@ -55,6 +55,17 @@ On the M4 at 23 GB headroom this is about 79 headless-shell or 24 CFT
 sessions before memory refuses; the weighted work capacity (browser weight 3
 of 12) and the browser control bound CPU first.
 
+## Resident enforcement had a third cap of one
+
+The first live proof (2026-11-17, 14:48Z) admitted three browser leases at
+once, then lost the CSP sweep's session. The resident
+`EnforceBrowserControl` spared only the first automation browser younger
+than 120 s on an unpaused host and sent SIGTERM to every other one
+(`browser_stopped` at 14:48:24Z, pids 45163 and 43573). Now it stops a
+browser only when the control is paused or the browser is past
+`max_runtime_seconds`. The count is left to memory admission
+(`browserControlStops`, `browser_control_enforce_test.go`).
+
 ## Code
 
 - `sessionpressure/browser_admission.go`: cost model, ledger, decision,

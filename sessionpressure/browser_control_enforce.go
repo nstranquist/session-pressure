@@ -20,6 +20,24 @@ func automatedBrowserRoot(command string) bool {
 	return automated && chrome
 }
 
+// browserControlMaxRuntime is the control's finite browser lifetime.
+func browserControlMaxRuntime(state BrowserControl) time.Duration {
+	if state.MaxRuntimeSeconds > 0 {
+		return time.Duration(state.MaxRuntimeSeconds) * time.Second
+	}
+	return 120 * time.Second
+}
+
+// browserControlStops decides whether the resident stops one automation
+// browser. A pause stops every browser, and no browser outlives the finite
+// lifetime. There is no count limit: memory admission (browser_admission.go,
+// WORK-1114) decides how many run. Before 2026-11-17 an unpaused host spared
+// only the first young browser and stopped every other one, a fixed cap of
+// one that killed a CSP sweep's session when a screenshot ran beside it.
+func browserControlStops(blocked bool, age, maxRuntime time.Duration) bool {
+	return blocked || age >= maxRuntime
+}
+
 // EnforceBrowserControl is authorized by the host-wide opt-in. Only automation
 // roots owned by this UID are eligible. A kernel start identity is checked
 // again before signaling; personal browser sessions have no automation flag.
@@ -34,15 +52,14 @@ func EnforceBrowserControl(ctx context.Context, dir string) error {
 	if err != nil {
 		return err
 	}
-	slotOccupied := false
+	maxRuntime := browserControlMaxRuntime(state)
 	for _, root := range roots {
 		pid, started := root.PID, root.StartedAt
 		identity, uid, err := processGuardIdentity(pid)
 		if err != nil || uid != os.Getuid() || (root.StartIdentity != "" && identity != root.StartIdentity) {
 			continue
 		}
-		if !state.Blocked && time.Since(started) < 120*time.Second && !slotOccupied {
-			slotOccupied = true
+		if !browserControlStops(state.Blocked, time.Since(started), maxRuntime) {
 			continue
 		}
 		again, againUID, err := processGuardIdentity(pid)
