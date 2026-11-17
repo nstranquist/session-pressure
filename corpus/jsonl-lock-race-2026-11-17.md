@@ -126,6 +126,14 @@ Evidence, same job, old (52f8f41 `filelock`) and new alternating:
 The Linux gain is small (about 5%) but in the same direction for every
 measure. The Mac gain is large. The change is kept.
 
+Installed 2026-11-17 at about 19:52Z: a Darwin bundle cross-built from clean
+d35eade on the Linux gate runner, promoted with `make
+promote-session-pressure` (expected-current 56f36b8, which already held the
+WORK-1225 and WORK-1252 fixes). Doctor and artifact status: CLI, front door
+and helper all report d35eade. After the restart, work events, work-control
+events and monitor telemetry kept appending complete JSON lines, and the new
+code left no temp sidecars.
+
 ## Open
 
 - Waiters poll with backoff (1 ms up to 50 ms) and have no cross-process
