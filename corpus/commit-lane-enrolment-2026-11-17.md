@@ -111,3 +111,5 @@ Filled in below by the enrolment delivery and the rejection test.
   this record and the test sentinel fix. Gates: capture hook and `go vet`
   (Mac), `go test` in `internal/helpermain` (Mac, 49 s) and `swift test`
   (Mac). A policy change runs every check, also the path-scoped ones.
+- 5b3daae (delivery 340c7abc): adds the Linux `go-tests` and `go-vet`
+  required checks. Gated by the committed policy of 7a31940.
