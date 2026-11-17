@@ -17,14 +17,17 @@ func TestBrowserControlStopsHasNoCountLimit(t *testing.T) {
 	// Three young browsers on an unpaused host all keep running: a CSP
 	// sweep's session, a screenshot and another agent's smoke run.
 	for _, age := range []time.Duration{time.Second, 4 * time.Second, 21 * time.Second} {
-		if browserControlStops(false, age, limit) {
+		if browserControlStops(false, age, limit, false) {
 			t.Fatalf("young browser (%s) stopped on an unpaused host", age)
 		}
 	}
-	if !browserControlStops(false, 121*time.Second, limit) {
+	if !browserControlStops(false, 121*time.Second, limit, false) {
 		t.Fatal("browser past its finite lifetime kept running")
 	}
-	if !browserControlStops(true, time.Second, limit) {
+	if browserControlStops(false, 9*time.Minute, limit, true) {
+		t.Fatal("idle-leased managed session stopped at the fixed lifetime")
+	}
+	if !browserControlStops(true, time.Second, limit, true) {
 		t.Fatal("operator pause did not stop a young browser")
 	}
 }

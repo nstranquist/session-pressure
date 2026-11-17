@@ -8,4 +8,7 @@ type browserProcess struct {
 	PID           int
 	StartedAt     time.Time
 	StartIdentity string
+	// UserDataDir is the root's --user-data-dir. It locates a snapref session
+	// record and is never logged.
+	UserDataDir string
 }

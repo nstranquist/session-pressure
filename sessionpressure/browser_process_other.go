@@ -29,7 +29,13 @@ func automatedBrowserProcesses(ctx context.Context) ([]browserProcess, error) {
 		if err != nil {
 			continue
 		}
-		roots = append(roots, browserProcess{PID: pid, StartedAt: started})
+		userDataDir := ""
+		for _, field := range fields[6:] {
+			if dir, ok := strings.CutPrefix(field, "--user-data-dir="); ok {
+				userDataDir = dir
+			}
+		}
+		roots = append(roots, browserProcess{PID: pid, StartedAt: started, UserDataDir: userDataDir})
 	}
 	return roots, nil
 }

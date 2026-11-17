@@ -78,6 +78,20 @@ through it), while running browser work finishes within its lifetime. The
 operator's pause (`browser pause`, mode `paused`) still stops running work in
 both the work-run poll and the resident.
 
+## Idle-leased sessions outlive the fixed lifetime (WORK-1170)
+
+The resident stopped every automation browser older than 120 s, so a
+detached `ndev browser open --idle-timeout 10m` session died at 2 minutes
+while in use (`browser_stopped` age 121 at 14:15:41Z). snapref launches each
+managed browser with `--user-data-dir=<root>/profiles/<name>`, so the
+resident reads only that argument and opens `<root>/sessions/<name>.json`.
+It skips the fixed lifetime while the record names the same PID and process
+start, the policy is `idle`, and the lease (last activity plus idle timeout,
+plus one minute for the watchdog's poll) is unexpired. Keep-alive,
+unmanaged and expired sessions still stop at 120 s, so a dead watchdog cannot
+leave a browser running. The operator's pause still stops all of them
+(`browser_managed_session.go`).
+
 ## Code
 
 - `sessionpressure/browser_admission.go`: cost model, ledger, decision,

@@ -41,14 +41,15 @@ func automatedBrowserProcesses(ctx context.Context) ([]browserProcess, error) {
 		if err != nil {
 			continue // Processes can exit while inventory is read.
 		}
-		automated, err := automatedBrowserKernelArgs(argsReader.buffer)
+		automated, userDataDir, err := browserKernelArgs(argsReader.buffer)
 		if err != nil || !automated {
 			continue
 		}
 		start := row.Proc.P_starttime
 		roots = append(roots, browserProcess{PID: pid,
 			StartedAt:     time.Unix(int64(start.Sec), int64(start.Usec)*1000),
-			StartIdentity: fmt.Sprintf("darwin:%d:%d", start.Sec, start.Usec)})
+			StartIdentity: fmt.Sprintf("darwin:%d:%d", start.Sec, start.Usec),
+			UserDataDir:   userDataDir})
 	}
 	return roots, nil
 }
