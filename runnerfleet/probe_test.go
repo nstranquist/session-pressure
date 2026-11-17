@@ -2,6 +2,7 @@ package runnerfleet
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os/exec"
 	"strconv"
@@ -217,5 +218,122 @@ func TestProbeRecordsSSHTimeAndAttempts(t *testing.T) {
 	bad.Name = "bad host;"
 	if o := Probe(context.Background(), bad); o.ProbeAttempts != 0 || o.ProbeMS != 0 {
 		t.Fatalf("no ssh ran, so no timing: attempts=%d ms=%d", o.ProbeAttempts, o.ProbeMS)
+	}
+}
+
+func withSlowAfter(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := probeSlowAfter
+	probeSlowAfter = d
+	t.Cleanup(func() { probeSlowAfter = old })
+}
+
+// A prompt answer reports transport ok with the SSH time.
+func TestProbeTransportOK(t *testing.T) {
+	withProbe(t, &fakeProbe{results: []func(context.Context) ([]byte, error){ok}})
+	o := Probe(context.Background(), probeHost())
+	if !o.Healthy || o.Transport != TransportOK || o.ProbeMS < 1 {
+		t.Fatalf("observation = %+v", o)
+	}
+	body, _ := json.Marshal(o)
+	if !strings.Contains(string(body), `"transport":"ok"`) || !strings.Contains(string(body), `"probe_ms":`) {
+		t.Fatalf("JSON lacks transport or probe_ms: %s", body)
+	}
+}
+
+// A late answer keeps the scheduler's health answer and reports slow. It is
+// not marked unhealthy, and an unhealthy scheduler stays unhealthy.
+func TestProbeTransportSlowKeepsSchedulerHealth(t *testing.T) {
+	withSlowAfter(t, 40*time.Millisecond)
+	late := func(answer []byte) func(context.Context) ([]byte, error) {
+		return func(context.Context) ([]byte, error) { time.Sleep(60 * time.Millisecond); return answer, nil }
+	}
+	withProbe(t, &fakeProbe{results: []func(context.Context) ([]byte, error){late(healthyAnswer())}})
+	o := Probe(context.Background(), probeHost())
+	if !o.Healthy || o.Error != "" || o.Transport != TransportSlow || o.ProbeMS < 60 {
+		t.Fatalf("late healthy answer: %+v", o)
+	}
+
+	sick := []byte(strings.Replace(string(healthyAnswer()), `"healthy":true`, `"healthy":false`, 1))
+	withProbe(t, &fakeProbe{results: []func(context.Context) ([]byte, error){late(sick)}})
+	o = Probe(context.Background(), probeHost())
+	if o.Healthy || o.Transport != TransportSlow || !strings.Contains(o.Error, "unhealthy scheduler") {
+		t.Fatalf("late unhealthy answer: %+v", o)
+	}
+
+	// An answer that needed the retry after an ssh failure is slow too.
+	withSlowAfter(t, time.Hour)
+	transport := exitError(t, sshTransportFailure)
+	withProbe(t, &fakeProbe{results: []func(context.Context) ([]byte, error){
+		func(context.Context) ([]byte, error) { return nil, transport }, ok}})
+	if o := Probe(context.Background(), probeHost()); !o.Healthy || o.Transport != TransportSlow || o.ProbeAttempts != 2 {
+		t.Fatalf("retried answer: %+v", o)
+	}
+}
+
+// No answer (budget spent, or ssh's own failure on every attempt) reports
+// unreachable. A remote command failure is the host's answer, not unreachable.
+func TestProbeTransportUnreachable(t *testing.T) {
+	withProbe(t, &fakeProbe{results: []func(context.Context) ([]byte, error){
+		func(ctx context.Context) ([]byte, error) { <-ctx.Done(); return nil, errors.New("signal: killed") }}})
+	ctx, cancel := context.WithTimeout(context.Background(), probeCallerMargin+100*time.Millisecond)
+	defer cancel()
+	o := Probe(ctx, probeHost())
+	if o.Healthy || o.Transport != TransportUnreachable || o.ProbeMS < 50 || !strings.Contains(o.Error, "no answer within") {
+		t.Fatalf("timed-out probe: %+v", o)
+	}
+
+	transport := exitError(t, sshTransportFailure)
+	withProbe(t, &fakeProbe{results: []func(context.Context) ([]byte, error){
+		func(context.Context) ([]byte, error) { return nil, transport }}})
+	if o := Probe(context.Background(), probeHost()); o.Transport != TransportUnreachable || o.ProbeAttempts != probeMaxAttempts {
+		t.Fatalf("ssh failure on every attempt: %+v", o)
+	}
+
+	withProbe(t, &fakeProbe{results: []func(context.Context) ([]byte, error){
+		func(context.Context) ([]byte, error) { return nil, &exec.Error{Name: "ssh", Err: exec.ErrNotFound} }}})
+	if o := Probe(context.Background(), probeHost()); o.Transport != TransportUnreachable {
+		t.Fatalf("ssh did not start: %+v", o)
+	}
+
+	remote := exitError(t, 1)
+	withProbe(t, &fakeProbe{results: []func(context.Context) ([]byte, error){
+		func(context.Context) ([]byte, error) { return nil, remote }}})
+	if o := Probe(context.Background(), probeHost()); o.Healthy || o.Transport != TransportOK {
+		t.Fatalf("remote failure is an answer: %+v", o)
+	}
+
+	bad := probeHost()
+	bad.Name = "bad host;"
+	if o := Probe(context.Background(), bad); o.Transport != "" {
+		t.Fatalf("no probe ran, so no transport state: %+v", o)
+	}
+}
+
+// Selection refuses an unreachable host and names the transport reason; a
+// slow but healthy host stays selectable.
+func TestAssignRefusesUnreachableTransport(t *testing.T) {
+	path, _ := fixture(t)
+	probe := func(_ context.Context, h Host) Observation {
+		return Observation{Host: h, Transport: TransportUnreachable, ProbeMS: 25000,
+			Error: "SSH health probe: no answer within 25.0s: signal: killed (1 attempt(s), 25.0s)"}
+	}
+	_, err := Assign(context.Background(), path, req("unreachable"), probe)
+	if err == nil || !strings.Contains(err.Error(), "runner-2: transport unreachable after 25000ms") ||
+		!strings.Contains(err.Error(), "runner-3: transport unreachable") || !strings.Contains(err.Error(), "request remains unassigned") {
+		t.Fatalf("err = %v", err)
+	}
+
+	slow := func(_ context.Context, h Host) Observation {
+		o := healthy(context.Background(), h)
+		o.Transport, o.ProbeMS = TransportSlow, 9000
+		if h.Name == "runner-2" {
+			o.Healthy, o.Transport, o.Error = false, TransportUnreachable, "no answer"
+		}
+		return o
+	}
+	b, err := Assign(context.Background(), path, req("slow-ok"), slow)
+	if err != nil || b.Host.Name != "runner-3" {
+		t.Fatalf("slow healthy host must stay selectable: %+v %v", b, err)
 	}
 }

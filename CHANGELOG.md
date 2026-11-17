@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Fleet probe reports transport apart from health (WORK-1100).** Each
+  `gaterunner-fleet` observation has `transport`: `ok`, `slow` or
+  `unreachable`, beside `probe_ms`. A late answer (5 s or more, or only on
+  the retry) keeps the scheduler's own health answer and reports `slow`; it
+  is not marked unhealthy. A probe with no answer (budget spent, ssh exit
+  255 on every attempt, or ssh did not start) reports `unreachable`, and
+  `select` refuses that host with `transport unreachable after Nms`. A
+  remote command failure is the host's answer, not unreachable. The probe
+  budget is unchanged.
+
 - **Resource-headroom admission, shadow only (WORK-1065, a candidate under
   WORK-3).** Work events now record what admission from live headroom and
   measured cost would decide: `shadow_resource_decision` as

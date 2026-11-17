@@ -93,3 +93,55 @@ not CPU. The full diagnosis is in nicos-commit-delivery
 login with data, every probe's SSH time now goes to `probe_samples` in
 `runner-capacity.sqlite` (host, time, outcome, attempts, `probe_ms`). The
 runner records PSI stall shares in `host_samples` at the same time.
+
+## Transport state (WORK-1100, 2026-11-17)
+
+Decision source: muse-workspace `corpus/runner-candidate-delta-transport.md`,
+"Probe decision: transport state apart from health". nicos-ops
+`docs/gaterunner-fleet.md` asks for transport state apart from health.
+
+- `Observation.transport` is `ok`, `slow` or `unreachable`. `probe_ms` (from
+  7f3ebf0) is the elapsed SSH time beside it.
+- `slow`: the host answered, but at 5 s or more, or only on the retry after
+  an ssh failure. `healthy` stays the scheduler's own answer, so a slow but
+  healthy runner stays selectable.
+- `unreachable`: no answer. The budget ran out, ssh exited 255 on every
+  attempt, or ssh did not start. `select` refuses the host with
+  `<host>: transport unreachable after <N>ms: <error>`, and `status` fails
+  with `active runner <host> is unreachable (transport, <N>ms)`.
+- A remote command failure (exit status other than 255) is the host's
+  answer. Its transport is `ok` or `slow`, and health comes from that answer.
+- Not changed: the probe budget, the retry and `ConnectTimeout`. A longer
+  timeout would hide congestion that WORK-1042 and WORK-1058 removed at the
+  source.
+
+### Slow threshold: 5 s
+
+Probe history (`probe_samples` in `runner-capacity.sqlite`, 12:18Z to 12:22Z,
+72 probes, all healthy). The samples came from the new build. runner-3 had
+load average 13.6 on 12 cores and CPU PSI `some avg60` 31 percent at the
+time.
+
+| host | n | min | median | p95 | max |
+| --- | --- | --- | --- | --- | --- |
+| runner-3 | 36 | 1583 ms | about 1612 ms | about 2400 ms | 4050 ms |
+| runner-1 | 36 | 1675 ms | about 1705 ms | about 2020 ms | 2097 ms |
+
+Reasons for 5 s:
+
+- It is above all normal jitter seen, including the 4.05 s outlier on a
+  loaded but healthy host. A 3 s threshold would flag about 1 in 36 routine
+  probes, so `slow` would be noise.
+- It is below the 8 s pathological login from the morning incident, so that
+  case reports `slow`.
+- An answer at 5 s still leaves about 18 s of the 25 s selector budget.
+
+Revisit when `probe_samples` holds a few days of data: compare the p99 to
+5 s, and join slow probes to the runner's `host_samples` PSI shares.
+
+Proof: `go test -race ./runnerfleet ./cmd/gaterunner-fleet ./internal/gaterunner`
+passes. New tests: `TestProbeTransportOK`,
+`TestProbeTransportSlowKeepsSchedulerHealth`, `TestProbeTransportUnreachable`
+and `TestAssignRefusesUnreachableTransport`. The live `gaterunner-fleet status`
+from the source build showed `"transport":"ok"` for runner-3 and
+runner-1 at 1.6 to 4.1 s.

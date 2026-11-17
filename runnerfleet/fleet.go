@@ -150,6 +150,35 @@ type Observation struct {
 	// when no ssh ran (invalid endpoint, cancelled before the probe).
 	ProbeMS       int64 `json:"probe_ms,omitempty"`
 	ProbeAttempts int   `json:"probe_attempts,omitempty"`
+	// Transport is the SSH path's state, kept apart from Healthy: "ok", "slow"
+	// (the host answered, but late or only on the retry; Healthy is still the
+	// scheduler's own answer) or "unreachable" (no answer, so no health
+	// information). Empty when no probe ran (invalid endpoint).
+	Transport string `json:"transport,omitempty"`
+}
+
+// Transport states of an Observation.
+const (
+	TransportOK          = "ok"
+	TransportSlow        = "slow"
+	TransportUnreachable = "unreachable"
+)
+
+// probeSlowAfter is the SSH time from which an answer counts as slow. Probe
+// history on 2026-11-17 (72 healthy probes, runner-3 at load 13.6 on 12
+// cores): median 1.6 to 1.7 s, 95th percentile about 2.4 s, maximum 4.05 s.
+// The one pathological login measured earlier took 8 s. 5 s sits above the
+// normal jitter and below that case. Slow is a report, not a refusal: it
+// never changes Healthy or the probe budget. Evidence and reasoning:
+// corpus/fleet-probe-under-load-2026-11-17.md, "Transport state".
+var probeSlowAfter = 5 * time.Second
+
+// transportOf classifies an answered probe by its SSH time and attempts.
+func transportOf(elapsed time.Duration, attempts int) string {
+	if elapsed >= probeSlowAfter || attempts > 1 {
+		return TransportSlow
+	}
+	return TransportOK
 }
 
 // ProbeFunc permits deterministic selection tests without a live SSH daemon.
@@ -208,8 +237,19 @@ func retryableProbeError(err error) bool {
 	return errors.As(err, &exit) && exit.ExitCode() == sshTransportFailure
 }
 
+// noAnswerError marks a probe that got no answer from the host: the budget
+// ran out, the last attempt ended in an ssh transport failure (exit 255), or
+// ssh did not start. Its message is the wrapped error's.
+type noAnswerError struct{ err error }
+
+func (e noAnswerError) Error() string { return e.err.Error() }
+func (e noAnswerError) Unwrap() error { return e.err }
+
+func hostGaveNoAnswer(err error) bool { return errors.As(err, new(noAnswerError)) }
+
 // queryHost runs probeCommand until it answers, fails definitively, or the
-// budget cannot hold another attempt.
+// budget cannot hold another attempt. The error is a noAnswerError when the
+// host never answered; a remote command failure is an answer.
 func queryHost(ctx context.Context, h Host) ([]byte, int, error) {
 	start := time.Now()
 	end := probeBudgetEnd(ctx, start)
@@ -231,8 +271,11 @@ func queryHost(ctx context.Context, h Host) ([]byte, int, error) {
 		case <-time.After(probeRetryPause):
 		}
 	}
-	if pctx.Err() == context.DeadlineExceeded {
+	if pctx.Err() != nil {
 		err = fmt.Errorf("no answer within %.1fs: %w", time.Since(start).Seconds(), err)
+	}
+	if pctx.Err() != nil || retryableProbeError(err) || errors.As(err, new(*exec.Error)) {
+		err = noAnswerError{err}
 	}
 	return nil, attempts, fmt.Errorf("SSH health probe: %w (%d attempt(s), %.1fs)", err, attempts, time.Since(start).Seconds())
 }
@@ -249,7 +292,13 @@ func Probe(ctx context.Context, h Host) (o Observation) {
 	}
 	start := time.Now()
 	raw, attempts, err := queryHost(ctx, h)
-	o.ProbeMS, o.ProbeAttempts = max(time.Since(start).Milliseconds(), 1), attempts
+	elapsed := time.Since(start)
+	o.ProbeMS, o.ProbeAttempts = max(elapsed.Milliseconds(), 1), attempts
+	if hostGaveNoAnswer(err) {
+		o.Transport = TransportUnreachable
+	} else {
+		o.Transport = transportOf(elapsed, attempts)
+	}
 	if err != nil {
 		o.Error = err.Error()
 		return
@@ -333,7 +382,7 @@ func Observe(ctx context.Context, c Config, probe ProbeFunc) []Observation {
 				defer func() { <-sem }()
 				observations[i] = probe(ctx, h)
 			case <-ctx.Done():
-				observations[i] = Observation{Host: h, Error: ctx.Err().Error()}
+				observations[i] = Observation{Host: h, Error: ctx.Err().Error(), Transport: TransportUnreachable, ObservedAt: time.Now().UTC()}
 			}
 		}(i, h)
 	}
@@ -429,8 +478,12 @@ func Assign(ctx context.Context, path string, r Request, probe ProbeFunc) (Bindi
 	reasons := []string{}
 	for i, o := range observations {
 		h := eligible.Hosts[i]
+		if o.Transport == TransportUnreachable {
+			reasons = append(reasons, fmt.Sprintf("%s: transport unreachable after %dms: %s", h.Name, o.ProbeMS, o.Error))
+			continue
+		}
 		if !o.Healthy || o.Drained {
-			reasons = append(reasons, h.Name+": "+o.Error+fmt.Sprintf(" drained=%t", o.Drained))
+			reasons = append(reasons, h.Name+": "+o.Error+fmt.Sprintf(" drained=%t transport=%s", o.Drained, o.Transport))
 			continue
 		}
 		sum := sha256.Sum256([]byte(r.Key + "\x00" + h.Name))

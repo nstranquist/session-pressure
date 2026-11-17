@@ -92,7 +92,13 @@ func run(args []string) error {
 		if err = json.NewEncoder(os.Stdout).Encode(map[string]any{"config": c, "config_digest": d, "observations": observations}); err != nil {
 			return err
 		}
+		// Each observation carries transport (ok, slow, unreachable) and
+		// probe_ms apart from healthy. Stdout stays one JSON document:
+		// gaterunner-upgrade records the combined output as fleet-status.json.
 		for _, o := range observations {
+			if o.Host.State == "active" && o.Transport == runnerfleet.TransportUnreachable {
+				return fmt.Errorf("active runner %s is unreachable (transport, %dms): %s", o.Host.Name, o.ProbeMS, o.Error)
+			}
 			if o.Host.State == "active" && (!o.Healthy || o.Drained) {
 				return fmt.Errorf("active runner %s is unavailable: %s", o.Host.Name, o.Error)
 			}
