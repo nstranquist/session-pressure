@@ -202,3 +202,20 @@ func TestWaitForBrowserAdmissionReturnsControlErrors(t *testing.T) {
 		t.Fatalf("control error = %v", err)
 	}
 }
+
+func TestBrowserMemoryHeadroomIgnoresShadowLeasePredictions(t *testing.T) {
+	now := time.Now()
+	// The M4 on 2026-11-17: 45% of 48 GB free while 13 leases, most of them
+	// thin clients of remote gaterunner jobs, predicted 18.5 GB in flight.
+	snapshot := Snapshot{Timestamp: now.Add(-5 * time.Second), PhysicalMemoryMB: 49_152, FreePercent: 45}
+	headroom := browserMemoryHeadroom(snapshot, true, now)
+	if !headroom.SampleFresh || headroom.InflightMB != 0 || headroom.HeadroomMB != headroom.AvailableMB-headroom.ReserveMB || headroom.HeadroomMB < 15_000 {
+		t.Fatalf("headroom = %+v, want available minus reserve with no lease charge", headroom)
+	}
+	if decision := decideBrowserCapacity(headroom, nil, BrowserRuntimeChromeForTesting, browserChromeForTestingSessionMB); !decision.Admit {
+		t.Fatalf("CFT session refused with %d MB headroom: %+v", headroom.HeadroomMB, decision)
+	}
+	if got := browserMemoryHeadroom(Snapshot{}, false, now); got.SampleFresh {
+		t.Fatalf("no sample reported fresh: %+v", got)
+	}
+}

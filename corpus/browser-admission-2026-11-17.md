@@ -22,9 +22,13 @@ memory headroom and the measured per-session cost of the runtime:
 
     slots = active + floor((headroom - charged) / session cost)
 
-- `headroom` is the shared memory-headroom view (`work_headroom.go`):
-  available memory minus the reserve (physical / 8) minus in-flight lease
-  predictions.
+- `headroom` is sampled available memory minus the reserve (physical / 8).
+  It does not subtract the work queue's in-flight lease predictions. That
+  rule is still a shadow (WORK-1065) and admits no other class. Its
+  predictions also charge a lease whose child only drives a remote
+  gaterunner job with its local p90. The first live check on the M4
+  (13:50Z) read -2552 MB with 22 GB available and refused a browser shot.
+  Switch to the shared figure when the lease rule enforces.
 - `session cost` = max(runtime cost, the command's own measured peak).
   Runtime costs come from the snapref runtime-cost benchmark (nicos-tools
   `packages/snapref/cmd/snapref-runtime-cost`, receipt

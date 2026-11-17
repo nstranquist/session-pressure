@@ -227,19 +227,25 @@ type browserAdmitter struct {
 }
 
 func newBrowserAdmitter(coordinator *WorkCoordinator, runtime string, predictedMB int64) *browserAdmitter {
-	history := readPeakRSSHistory(coordinator.Dir, time.Now())
 	return &browserAdmitter{
 		dir: coordinator.Dir, coordinator: coordinator, runtime: NormalizeBrowserRuntime(runtime),
 		cost: browserSessionCostMB(runtime, predictedMB), pid: os.Getpid(), now: time.Now, alive: browserProcessAlive,
-		headroom: func(ctx context.Context, now time.Time) (MemoryHeadroom, error) {
-			status, err := coordinator.StatusSnapshot(ctx)
-			if err != nil {
-				return MemoryHeadroom{}, err
-			}
+		headroom: func(_ context.Context, now time.Time) (MemoryHeadroom, error) {
 			snapshot, ok := NewTelemetryStore(coordinator.Dir).ReadLatest()
-			return computeHeadroom(snapshot, ok, status.Leases, history, now), nil
+			return browserMemoryHeadroom(snapshot, ok, now), nil
 		},
 	}
+}
+
+// browserMemoryHeadroom is sampled available memory minus the reserve. It
+// leaves out the work queue's in-flight lease predictions: that rule is still
+// a shadow (WORK-1065) and no other class is admitted by it. Its predictions
+// also charge a lease whose child only drives a remote gaterunner job with its
+// local p90, so on 2026-11-17 it read -2552 MB with 22 GB available and would
+// have refused every browser. The ledger still charges browsers the sample
+// cannot see yet. Switch to the shared figure when the lease rule enforces.
+func browserMemoryHeadroom(snapshot Snapshot, haveSample bool, now time.Time) MemoryHeadroom {
+	return computeHeadroom(snapshot, haveSample, nil, peakRSSHistory{}, now)
 }
 
 // browserAdmission is one admitted command's ledger row.
