@@ -183,3 +183,14 @@ The rule was "apply it if a replay shows it does not lengthen runs".
   and `go test ./...` on the Linux gate runner.
 - Risk: rho is fitted on one day of data. The `memory_charge` score stays in
   `work evaluate` so the 24 h report can check it again.
+- Landed ec3a2f3 (delivery 8700a5d1). Built from a clean clone at 6809ddc
+  and installed at 15:59Z over 9a2e9b2 (another agent's install), then
+  `monitor install` (resident reporting after 2.5 s).
+- Live proof 16:00Z: `work headroom` reports rule v5. Leases queued by
+  processes on the old binary carry no median and are charged their peak.
+  The first two leases from the new binary carried `predicted_median_mb`
+  (express-test 2,066/329, test 5,254/4,921), and the charge was 11,640 MB
+  against a peak sum of 11,861 MB with five leases ramping. Three
+  `--class test -- sh -c 'sleep 40'` runs waited on memory, each predicted at
+  the class p95 of 6,133 MB against 2.7 GB of headroom. The candidate is
+  still charged its own peak; only running leases are pooled.
