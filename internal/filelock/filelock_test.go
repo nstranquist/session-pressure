@@ -389,6 +389,86 @@ func TestReclaimGuardExcludesConcurrentReclaimers(t *testing.T) {
 	}
 }
 
+// forcePublish sets the publish path for one test: nil forces the hard link.
+func forcePublish(t testing.TB, rename func(from, to string) error) {
+	t.Helper()
+	saved := exclusiveRename
+	exclusiveRename = rename
+	exclusiveRenameUnsupported.Store(false)
+	t.Cleanup(func() {
+		exclusiveRename = saved
+		exclusiveRenameUnsupported.Store(false)
+	})
+}
+
+// tempSidecars lists leftover private temp files next to lockFile.
+func tempSidecars(t *testing.T, lockFile string) []string {
+	t.Helper()
+	matches, err := filepath.Glob(lockFile + ".tmp-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return matches
+}
+
+// Each publish path makes exactly one winner, leaves no temp file, and keeps
+// the sidecar format.
+func TestPublishPathsAreExclusiveAndClean(t *testing.T) {
+	paths := map[string]func(from, to string) error{"hard-link": nil}
+	if platformExclusiveRename != nil {
+		paths["exclusive-rename"] = platformExclusiveRename
+	}
+	for name, rename := range paths {
+		t.Run(name, func(t *testing.T) {
+			forcePublish(t, rename)
+			lockFile := filepath.Join(t.TempDir(), "nested", "data.lock")
+			owner, err := tryCreateLock(lockFile)
+			if err != nil || owner == nil {
+				t.Fatalf("first create: owner=%+v err=%v", owner, err)
+			}
+			if loser, err := tryCreateLock(lockFile); err != nil || loser != nil {
+				t.Fatalf("second create must lose: owner=%+v err=%v", loser, err)
+			}
+			if got := readLockInfo(lockFile); got == nil || got.Token != owner.Token || got.PID != owner.PID {
+				t.Fatalf("published sidecar is not the winner's record: %+v", got)
+			}
+			if left := tempSidecars(t, lockFile); len(left) != 0 {
+				t.Fatalf("temp sidecars left behind: %v", left)
+			}
+			if exclusiveRenameUnsupported.Load() {
+				t.Fatal("a supported rename was recorded as unsupported")
+			}
+		})
+	}
+}
+
+// A file system without an exclusive rename falls back to the hard link,
+// and later attempts skip the rename.
+func TestUnsupportedExclusiveRenameFallsBackToLink(t *testing.T) {
+	calls := 0
+	forcePublish(t, func(from, to string) error {
+		calls++
+		return &os.LinkError{Op: "renameat2", Old: from, New: to, Err: syscall.EINVAL}
+	})
+	lockFile := filepath.Join(t.TempDir(), "data.lock")
+	owner, err := tryCreateLock(lockFile)
+	if err != nil || owner == nil {
+		t.Fatalf("fallback create: owner=%+v err=%v", owner, err)
+	}
+	if got := readLockInfo(lockFile); got == nil || got.Token != owner.Token {
+		t.Fatalf("fallback sidecar is not the winner's record: %+v", got)
+	}
+	if loser, err := tryCreateLock(lockFile); err != nil || loser != nil {
+		t.Fatalf("fallback second create must lose: owner=%+v err=%v", loser, err)
+	}
+	if calls != 1 {
+		t.Fatalf("rename tried %d times, want 1 before the fallback is remembered", calls)
+	}
+	if left := tempSidecars(t, lockFile); len(left) != 0 {
+		t.Fatalf("temp sidecars left behind: %v", left)
+	}
+}
+
 func TestTryCreateLockPublishesCompleteOwnershipAtomically(t *testing.T) {
 	dir := t.TempDir()
 	lockFile := filepath.Join(dir, "data.lock")

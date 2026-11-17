@@ -116,7 +116,8 @@ dir := t.TempDir()
 <!-- HUMAN-SLAB:START -->
 - Ownership must be complete before the sidecar becomes visible. Writers build
   and close a private same-directory file (no fsync since d4d6151), then
-  publish it with an atomic hard link; do not replace this with
+  publish it with an exclusive rename (WORK-1259), or an atomic hard link
+  where the file system has none; do not replace this with
   create-then-write O_EXCL because a competitor can mistake the empty
   initialization window for a stale lock.
 - Fresh malformed sidecars receive a fail-closed 30-second n-1 compatibility grace. Older

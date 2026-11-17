@@ -36,3 +36,33 @@ func BenchmarkShortLockHandoff(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkUncontendedAcquire measures one acquire and release with no
+// competitor, for each publish path, in the same binary and run.
+func BenchmarkUncontendedAcquire(b *testing.B) {
+	paths := []struct {
+		name   string
+		rename func(from, to string) error
+	}{{"hard-link", nil}}
+	if platformExclusiveRename != nil {
+		paths = append(paths, struct {
+			name   string
+			rename func(from, to string) error
+		}{"exclusive-rename", platformExclusiveRename})
+	}
+	for _, path := range paths {
+		b.Run(path.name, func(b *testing.B) {
+			forcePublish(b, path.rename)
+			target := filepath.Join(b.TempDir(), "uncontended")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				unlock, err := Acquire(target, time.Second)
+				if err != nil {
+					b.Fatal(err)
+				}
+				unlock()
+			}
+		})
+	}
+}

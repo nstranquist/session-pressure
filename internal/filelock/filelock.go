@@ -8,7 +8,9 @@
 // Design:
 //
 //   - Cross-process safety: ownership JSON is written and closed privately,
-//     then a same-directory hard link atomically publishes path + ".lock".
+//     then one atomic call publishes path + ".lock": an exclusive rename
+//     (renameat2 RENAME_NOREPLACE, renamex_np RENAME_EXCL) where the file
+//     system supports it, else a same-directory hard link.
 //     Readers therefore never observe a half-initialized new sidecar.
 //   - In-process safety: a per-key channel queue serializes goroutines in the
 //     same process before they race the OS lock. Without this, two goroutines
@@ -38,6 +40,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -244,14 +247,22 @@ func reclaimStale(lockFile string) bool {
 	return true
 }
 
-// tryCreateLock builds and closes the ownership record privately, then uses a
-// same-directory hard link as the O_EXCL publication point. A competing reader
-// can therefore see either no sidecar or a complete sidecar, never the empty
-// initialization window that allowed two live processes to enter together.
+// exclusiveRename publishes the finished sidecar in one call when the
+// platform and file system support it. Tests and benchmarks set it to nil
+// to force the hard-link path.
+var exclusiveRename = platformExclusiveRename
+
+// exclusiveRenameUnsupported records that the file system refused the
+// exclusive rename, so later attempts go straight to the hard link.
+var exclusiveRenameUnsupported atomic.Bool
+
+// tryCreateLock builds and closes the ownership record privately, then
+// publishes it atomically: an exclusive rename where supported, else a
+// same-directory hard link. Both fail when the sidecar exists, so they are
+// the O_EXCL point. A competing reader can therefore see either no sidecar or
+// a complete sidecar, never the empty initialization window that allowed two
+// live processes to enter together.
 func tryCreateLock(lockFile string) (*info, error) {
-	if err := os.MkdirAll(filepath.Dir(lockFile), 0o755); err != nil {
-		return nil, err
-	}
 	var tokenBytes [16]byte
 	if _, err := rand.Read(tokenBytes[:]); err != nil {
 		return nil, fmt.Errorf("generate ownership token: %w", err)
@@ -267,29 +278,54 @@ func tryCreateLock(lockFile string) (*info, error) {
 	}
 	tmp := fmt.Sprintf("%s.tmp-%d-%s", lockFile, owner.PID, owner.Token)
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if errors.Is(err, os.ErrNotExist) {
+		// Create the directory only when it is missing, not on every attempt.
+		if err := os.MkdirAll(filepath.Dir(lockFile), 0o755); err != nil {
+			return nil, err
+		}
+		f, err = os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	}
 	if err != nil {
 		return nil, err
 	}
-	closed := false
+	closed, tmpGone := false, false
 	defer func() {
 		if !closed {
 			_ = f.Close()
 		}
-		_ = os.Remove(tmp)
+		if !tmpGone {
+			_ = os.Remove(tmp)
+		}
 	}()
 	if _, err := f.Write(payload); err != nil {
 		return nil, err
 	}
 	// This record synchronizes live processes; it is not durable application
-	// state. Write and close make the complete payload visible before Link.
-	// Sync would force an extra disk flush for every lock attempt, including
-	// losing contenders. After a host restart its owner is gone and the
-	// existing dead-owner recovery applies. Data durability belongs to the
-	// protected writer, whose syncs remain unchanged.
+	// state. Write and close make the complete payload visible before the
+	// publish. Sync would force an extra disk flush for every lock attempt,
+	// including losing contenders. After a host restart its owner is gone and
+	// the existing dead-owner recovery applies. Data durability belongs to
+	// the protected writer, whose syncs remain unchanged.
 	if err := f.Close(); err != nil {
 		return nil, err
 	}
 	closed = true
+	if rename := exclusiveRename; rename != nil && !exclusiveRenameUnsupported.Load() {
+		err := rename(tmp, lockFile)
+		switch {
+		case err == nil:
+			tmpGone = true
+			return owner, nil
+		case errors.Is(err, os.ErrExist):
+			return nil, nil
+		case errors.Is(err, syscall.EINVAL), errors.Is(err, syscall.ENOSYS),
+			errors.Is(err, syscall.ENOTSUP), errors.Is(err, syscall.EOPNOTSUPP):
+			// The file system has no exclusive rename; use the hard link.
+			exclusiveRenameUnsupported.Store(true)
+		default:
+			return nil, fmt.Errorf("publish initialized lock sidecar: %w", err)
+		}
+	}
 	if err := os.Link(tmp, lockFile); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return nil, nil

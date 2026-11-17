@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **File lock: cheaper uncontended acquire (WORK-1259).** The lock sidecar
+  is published with an exclusive rename (`renameat2` RENAME_NOREPLACE on
+  Linux, `renamex_np` RENAME_EXCL on Darwin), with the hard link as the
+  fallback, and the directory is created only when missing. Uncontended
+  acquire on the Mac went from about 0.78 ms to 0.36 ms; on Linux JSONL
+  append went from 95 us to 89 us. See `corpus/jsonl-lock-race-2026-11-17.md`.
 - **JSONL appends: no overlap between processes (WORK-1252).**
   `internal/jsonl` took its lock from `internal/lockfile`, which removed a
   sidecar it judged stale without a second check, preempted live owners

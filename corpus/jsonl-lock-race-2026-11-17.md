@@ -91,10 +91,46 @@ instead of `lockfile.ErrLocked`. No caller tested for `ErrLocked`.
 - Mac numbers (old 0.54 to 1.88 ms uncontended) were too noisy on a busy
   desktop host to compare.
 
+## Exclusive-rename publish (WORK-1259, 2026-11-17)
+
+Done. `filelock` now publishes the finished sidecar with an exclusive
+rename: `renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)` on
+Darwin (`internal/filelock/publish_*.go`). This drops the temp-file unlink
+of the hard-link path. The hard link stays as the fallback when the file
+system returns EINVAL, ENOSYS or ENOTSUP. The fallback is remembered for the
+process, and other OSes use the link only. The create also calls
+`MkdirAll` only when the open finds the directory missing, which drops one
+stat per attempt. The sidecar format is unchanged.
+
+Evidence, same job, old (52f8f41 `filelock`) and new alternating:
+
+- Linux gate runner (job 20261117T192912Z-3155407):
+  - `BenchmarkAppendLine` median 95.3 us old, 89.3 us new (5 rounds each;
+    old 88 to 101, new 86 to 98).
+  - `BenchmarkUncontendedAcquire` in one binary: hard link 73.1 us, rename
+    69.7 us (medians of 5).
+  - `BenchmarkShortLockHandoff`: equal (3.71 ms both).
+  - jsonl stress 16 x 100, 200 us hold, -count=30: 30/30, 0 overlaps.
+    filelock cross-process test x500 under 6 busy loops: 500/500.
+- Mac (M4, a working desktop host, so wide spread):
+  - `BenchmarkUncontendedAcquire`: hard link 0.74 to 0.81 ms, rename 0.26
+    to 0.71 ms (medians 0.78 and 0.36).
+  - `BenchmarkAppendLine` median 4.09 ms old, 1.52 ms new; handoff 8.3 ms
+    old, 7.3 ms new. Both spread widely with desktop load.
+  - filelock cross-process test x500: 500/500. jsonl stress: 0 overlaps in
+    every run. In 42 new-code runs, 2 failed when a helper's 5 s lock wait
+    ran out under 16-way contention on the loaded Mac. The old code fails
+    the same way more often (2 of 12 runs against 0 of 12 new in the same
+    back-to-back comparison).
+
+The Linux gain is small (about 5%) but in the same direction for every
+measure. The Mac gain is large. The change is kept.
+
 ## Open
 
-- The +21 us uncontended cost could drop with an exclusive rename
-  (`renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)` on
-  Darwin) in place of link plus unlink, with a link fallback for file
-  systems that refuse it. That is a `filelock` change for every caller and
-  needs its own Linux and Darwin proof.
+- Waiters poll with backoff (1 ms up to 50 ms) and have no cross-process
+  queue. Under heavy contention on a loaded Mac a waiter can starve past its
+  5 s wait (seen only in the 16-process stress, old and new code). Real
+  callers do not run 16-way on one file. If they ever do, a kernel-queued
+  wait (blocking flock on the reclaim guard or a wait file) would give FIFO
+  handoff.
