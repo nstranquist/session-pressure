@@ -133,9 +133,12 @@ CPU, 0.32%. The largest costs:
 The disk-write observer runs on its own 15s ticker, apart from the browser
 cadence, and was the largest single cost. Fix: the device and swap counters
 stay on every tick, and the per-process attribution pass runs once a minute
-(`diskWriteProcessPassInterval`). The pass also runs on every tick while the
-state is unusual or high, when one tick writes 128 MiB or more, after a
-device error, and on the first tick. The pass writer point covers the whole
+(`diskWriteProcessPassInterval`). The pass also runs on a tick that writes a
+whole burst (1 GiB), after a device error, and on the first tick. The disk
+state is not a trigger: since the baseline learned, every hour on this Mac
+has ended `high` (about 180 GB written an hour), so a state trigger put the
+pass back on every tick. The first install (e196c04) had that trigger and
+measured no saving. The pass writer point covers the whole
 span since the previous pass, so no bytes are lost, and swap bytes from the
 skipped ticks go into it. A gap on any tick since the previous pass rebases the
 process counters. Callers other than the resident `Run` loop (the live report,
@@ -146,9 +149,43 @@ Cost: writer rates and names can be up to a minute old while writes are quiet.
 The 15-minute window and the burst check use the device counter and do not
 change.
 
+## Second profile and two more fixes (2026-11-17 19:10Z)
+
+A second 600s profile, of 5e3346e (disk fix with the state trigger), read
+0.53%. The host was busy in that window (level warning, host CPU 92%, disk
+state high), so the sample cadence was higher than when the host is idle. The costs:
+
+| Cost | CPU in 600s |
+| --- | --- |
+| Pressure sample | 0.71s |
+| Browser enforcement | 0.62s (process scan 0.36s, control record write while blocked 0.26s) |
+| Disk-write observer | 0.51s (the state trigger kept the pass on every tick) |
+| GC mark | 0.35s |
+| Wrapper-interrupt recount | 0.22s |
+
+Fixes in the same delivery as the corrected disk-write trigger:
+
+- Browser scan (`browser_process_darwin.go`): the result of the argv read is
+  kept per process (pid, kernel start time, command name) until the process
+  exits, and `os.Getuid` is read once per scan, not once per row. A benchmark
+  on the live process table went from about 3.4 ms to 1.4 ms per scan.
+- Wrapper-interrupt count (`workevent_interrupts.go`): the resident keeps the
+  parse state and reads only complete lines appended since the previous
+  heartbeat. It resets when the window's first day changes, when a shard is
+  replaced or shrinks, when the shard list changes other than by new names at
+  the end, and after any error. So its result is always the result of a fresh
+  pass. On a copy of the live shards (24 MB, 18,251 rows) fed in 20 steps,
+  every step matched a fresh pass and the final count matched the old code
+  (523). All 20 incremental counts took 108 to 147 ms in total. The old code
+  took 136 to 161 ms for each count. Event IDs are kept as 64-bit FNV hashes.
+
 ## Open
 
-- Measure live duty after the disk-write fix is installed, against 0.25%.
+- Measure live duty after this delivery is installed, at level normal,
+  against 0.25%.
+- The control record is written on every sample while browsers are blocked
+  (`LastSample` advances). That is pressure-time cost, not idle cost.
+- The pressure sample itself is now the largest cost.
 - `automatedBrowserProcesses` still scans every process with arguments on each
   sample. Reusing the sampler's process list would remove that scan.
 - `attachWrapperInterruptToSummary` re-parses the day's work-event shards on

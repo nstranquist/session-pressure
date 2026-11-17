@@ -820,12 +820,15 @@ func (observer *DiskWriteObserver) Sample(ctx context.Context, at time.Time) (Di
 	return cloneDiskWriteReport(report), transition, alert
 }
 
-// diskWriteProcessPassInterval is the resident's attribution cadence when
-// writes are quiet. Writers are still named on every tick while the state is
-// unusual or high, or when one tick writes diskWriteProcessPassBytes.
+// diskWriteProcessPassInterval is the resident's attribution cadence. Writer
+// totals cover the 15-minute window, so a pass a minute keeps them within one
+// minute of the device counter. The state is not a trigger: on a busy Mac it
+// stays high for hours, which would put the pass back on every tick. A tick
+// that writes a whole burst still takes a pass, so the burst alert names the
+// writer that caused it.
 const (
 	diskWriteProcessPassInterval = time.Minute
-	diskWriteProcessPassBytes    = diskWriteBurstBytes / 8
+	diskWriteProcessPassBytes    = diskWriteBurstBytes
 )
 
 func (observer *DiskWriteObserver) processPassDue(device diskDeviceCounter, at time.Time) bool {
@@ -839,10 +842,6 @@ func (observer *DiskWriteObserver) processPassDue(device diskDeviceCounter, at t
 	// whole tick late.
 	slack := time.Duration(max(1, observer.policy.SampleIntervalSeconds)) * time.Second / 2
 	if at.Add(slack).Sub(last) >= observer.processPassInterval {
-		return true
-	}
-	switch observer.lastReport.Summary.State {
-	case DiskWriteStateUnusual, DiskWriteStateHigh:
 		return true
 	}
 	previous := observer.previousDevice

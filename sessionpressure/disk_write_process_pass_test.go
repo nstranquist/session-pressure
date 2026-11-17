@@ -102,8 +102,8 @@ func TestDiskWriteProcessPassRebasesAcrossAGap(t *testing.T) {
 	}
 }
 
-// Heavy writes name the writers on every tick.
-func TestDiskWriteProcessPassRunsEveryTickWhenWritesAreHeavy(t *testing.T) {
+// A burst-size tick names its writers at once.
+func TestDiskWriteProcessPassRunsOnABurstTick(t *testing.T) {
 	harness := newPassHarness(t)
 	harness.tick(0)
 	harness.deviceStep = diskWriteProcessPassBytes
@@ -112,7 +112,7 @@ func TestDiskWriteProcessPassRunsEveryTickWhenWritesAreHeavy(t *testing.T) {
 	harness.tick(30 * time.Second)
 	harness.tick(45 * time.Second)
 	if harness.passes != before+2 {
-		t.Fatalf("heavy-write ticks took %d passes, want 2", harness.passes-before)
+		t.Fatalf("burst ticks took %d passes, want 2", harness.passes-before)
 	}
 }
 

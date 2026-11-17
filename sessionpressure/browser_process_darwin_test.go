@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -79,15 +80,38 @@ func TestNativeBrowserInventoryFindsOwnedSleepingExecutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, root := range roots {
-		if root.PID == child.Process.Pid {
-			if root.StartIdentity != identity {
-				t.Fatalf("birth mismatch: %q != %q", root.StartIdentity, identity)
+	found := func(roots []browserProcess) bool {
+		for _, root := range roots {
+			if root.PID == child.Process.Pid {
+				if root.StartIdentity != identity {
+					t.Fatalf("birth mismatch: %q != %q", root.StartIdentity, identity)
+				}
+				return true
 			}
-			return
+		}
+		return false
+	}
+	if !found(roots) {
+		t.Fatal("owned sleeping fixture missing from native browser roots")
+	}
+	// The second scan answers from the argv memo and still finds the root.
+	again, err := automatedBrowserProcesses(ctx)
+	if err != nil || !found(again) {
+		t.Fatalf("memoized scan lost the fixture root: %v", err)
+	}
+	// Once the process exits its memo entry goes with it.
+	_ = stdin.Close()
+	_ = child.Wait()
+	if _, err := automatedBrowserProcesses(ctx); err != nil {
+		t.Fatal(err)
+	}
+	browserArgsMemo.Lock()
+	defer browserArgsMemo.Unlock()
+	for key := range browserArgsMemo.results {
+		if key.pid == child.Process.Pid && fmt.Sprintf("darwin:%d:%d", key.start.Sec, key.start.Usec) == identity {
+			t.Fatalf("memo kept the exited fixture %+v", key)
 		}
 	}
-	t.Fatal("owned sleeping fixture missing from native browser roots")
 }
 
 func TestNativeBrowserInventoryReadsKernelLayoutWithoutLaunchingBrowser(t *testing.T) {

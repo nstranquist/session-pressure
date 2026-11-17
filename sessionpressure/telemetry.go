@@ -186,7 +186,7 @@ func attachWrapperInterruptToSummary(summary *TelemetrySnapshotSummary, store *T
 		now = time.Now().UTC()
 	}
 	since := now.Add(-wrapperInterruptTelemetryWindow)
-	interrupts, err := NewWorkEventStore(store.Dir).CountWrapperInterruptOperations(since, now)
+	interrupts, err := countResidentWrapperInterrupts(store.Dir, since, now)
 	if err != nil {
 		return
 	}

@@ -773,8 +773,10 @@ func finishWorkEventRead(rows []WorkEvent, filter WorkEventFilter) ([]WorkEvent,
 // CountWrapperInterruptOperations streams only the day shards intersecting the
 // requested window. The resident heartbeat needs one closed count, not the
 // complete WorkEvent corpus and every calibration aggregate. Keeping this path
-// streaming prevents 24-hour work history from becoming resident heap.
-func (store *WorkEventStore) CountWrapperInterruptOperations(since, generatedAt time.Time) (count int, resultErr error) {
+// streaming prevents 24-hour work history from becoming resident heap. This
+// is a one-shot count; the resident keeps a wrapperInterruptCounter instead,
+// which parses only the bytes appended since its previous count.
+func (store *WorkEventStore) CountWrapperInterruptOperations(since, generatedAt time.Time) (int, error) {
 	if store == nil || strings.TrimSpace(store.Dir) == "" {
 		return 0, errors.New("work event store directory is required")
 	}
@@ -784,84 +786,8 @@ func (store *WorkEventStore) CountWrapperInterruptOperations(since, generatedAt 
 	}
 	if generatedAt.IsZero() {
 		generatedAt = now().UTC()
-	} else {
-		generatedAt = generatedAt.UTC()
 	}
-	if since.IsZero() || since.After(generatedAt) {
-		return 0, errors.New("wrapper interrupt count requires a non-zero window start at or before generated_at")
-	}
-	since = since.UTC()
-	maximumTimestamp := generatedAt.Add(maximumWorkClockSkew)
-	startDay := since.In(time.Local).Format("20060102")
-	endDay := maximumTimestamp.In(time.Local).Format("20060102")
-
-	paths, err := filepath.Glob(filepath.Join(store.Dir, "work-events-*.jsonl"))
-	if err != nil {
-		return 0, err
-	}
-	sort.Strings(paths)
-	seenEventIDs := make(map[string]struct{})
-	interruptedOperations := make(map[string]struct{})
-	failedOperations := make(map[string]struct{})
-	lifecycle := newWorkEventLifecycleValidator()
-	for _, path := range paths {
-		base := filepath.Base(path)
-		day := strings.TrimSuffix(strings.TrimPrefix(base, "work-events-"), ".jsonl")
-		validDay := len(day) == len("20060102")
-		for _, r := range day {
-			if r < '0' || r > '9' {
-				validDay = false
-				break
-			}
-		}
-		if validDay && (day < startDay || day > endDay) {
-			continue
-		}
-		file, err := os.Open(path)
-		if err != nil {
-			return 0, err
-		}
-		scanner := bufio.NewScanner(file)
-		scanner.Buffer(make([]byte, 4096), 1<<20)
-		line := 0
-		for scanner.Scan() {
-			line++
-			var event WorkEvent
-			if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-				return 0, errors.Join(fmt.Errorf("decode %s line %d: %w", base, line, err), file.Close())
-			}
-			if err := event.Validate(); err != nil {
-				return 0, errors.Join(fmt.Errorf("validate %s line %d: %w", base, line, err), file.Close())
-			}
-			if event.Timestamp.After(maximumTimestamp) {
-				return 0, errors.Join(fmt.Errorf("work event %s timestamp %s is beyond allowed clock skew", event.EventID, event.Timestamp.Format(time.RFC3339Nano)), file.Close())
-			}
-			if _, duplicate := seenEventIDs[event.EventID]; duplicate {
-				return 0, errors.Join(fmt.Errorf("duplicate work event_id %s", event.EventID), file.Close())
-			}
-			seenEventIDs[event.EventID] = struct{}{}
-			if _, bad := failedOperations[event.OperationID]; bad {
-				continue
-			}
-			if err := lifecycle.add(event); err != nil {
-				// Tolerate a single unmodelled operation the same way the corpus
-				// reader does; the resident heartbeat must not lose its whole
-				// interrupt count to one bad lifecycle.
-				failedOperations[event.OperationID] = struct{}{}
-				delete(interruptedOperations, event.OperationID)
-				continue
-			}
-			if event.Timestamp.Before(since) || !IsWrapperInterruptEvent(event) {
-				continue
-			}
-			interruptedOperations[event.OperationID] = struct{}{}
-		}
-		resultErr = errors.Join(scanner.Err(), file.Close())
-		if resultErr != nil {
-			return 0, resultErr
-		}
-	}
-	return len(interruptedOperations), nil
+	return newWrapperInterruptCounter(store.Dir).count(since, generatedAt)
 }
 
 type workEventLifecycle struct {
