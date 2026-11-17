@@ -198,3 +198,21 @@ What this does and does not show:
   thrash or a critical level.
 - `work evaluate` exits 1 because the scheduler candidate's promotion gate is
   not ready. That is WORK-3's gate and is the same before this change.
+
+## Shadow install (2026-11-17, 13:06Z)
+
+Status: 2026-11-17, shadow live on the M4. 48-hour review due
+2026-11-19T13:10Z.
+
+- Installed a64443a, the main after the private-name history rewrite. It
+  holds 0.7.3, rule v2, WORK-1100 and the phys_footprint change. The fence was
+  `--expected-current ff27be449f`, the old-Mac footprint build that an old-Mac
+  session installed at 12:25Z.
+- Built from a clean clone of origin/main on the Mac (darwin/arm64, cgo).
+  The resident monitor was promoted with `session-pressure monitor install`.
+  The policy stays observe-only.
+- First live events with `shadow_resource_rule` `mac-resource-headroom-v2`:
+  13:09:46Z. Live admission did not change.
+- Review: `session-pressure --json work evaluate --since 48h`, the
+  `resource_headroom` block. Check the throttle share and any thrash or
+  critical level that follows a start.
