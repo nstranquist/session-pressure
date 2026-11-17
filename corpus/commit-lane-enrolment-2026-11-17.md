@@ -101,14 +101,20 @@ the active runner.
 
 The tests that failed under the worker on the Mac did not have wrong logic.
 They raced wall-clock budgets against host load. WORK-1157 removed the races
-with four rules. A new test in `sessionpressure` follows them
+with these rules. A new test in `sessionpressure` follows them
 (`sessionpressure/timing_seams_test.go`):
 
 - A test that asserts a wait-budget outcome ends the budget itself.
   `WorkRunStreams.WaitDeadline` is an optional seam (nil keeps
   `context.WithTimeout`). `manualDeadline` reports
   `context.DeadlineExceeded` at the stage that the test picks. The prestart
-  refusal stages (capacity, reacquire, before start) use it.
+  refusal stages (capacity, reacquire, before start) use it. A seam context
+  must cancel its children synchronously. The runner wraps the wait context
+  in `signal.NotifyContext`. A custom parent without `AfterFunc` is
+  cancelled through a goroutine, so the next stage can run before it sees the
+  spent budget. `manualDeadline` implements `AfterFunc` and a real
+  `Deadline`, and `TestManualDeadlineCancelsDerivedContextsSynchronously`
+  guards it.
 - A test that asserts success does not race its wait budget. It uses
   `testWaitNotUnderTest`.
 - A wait for an event that the test expects (a child PID, a queue entry, a
@@ -118,6 +124,14 @@ with four rules. A new test in `sessionpressure` follows them
   refresh). It does not time the call. Where a fallback poll could hide a
   missed wake, the test turns off the poll (`workCapacityRetryInterval` is a
   var for that).
+- Two callers that must overlap meet at a condition, not inside a sleep.
+  `expressSingleflightWaitHook` (nil in production) marks when a caller has
+  fixed its start time and reached the singleflight lock. The reuse fixture
+  blocks on a release file until both callers are there.
+- A test that needs a directory outside every repository uses
+  `tempDirOutsideRepository`. A commit-delivery candidate puts TMPDIR inside
+  its own git checkout, so `t.TempDir()` is not outside a repository there.
+  To reproduce, run the package with TMPDIR inside a `git init` directory.
 - CPU and unit checks compare two counters of the same quantity (libproc
   against getrusage), or wait for an amount of CPU, not for a time window.
 - Live-host budgets (native inventory and disk-scan latency, sampler
@@ -136,6 +150,18 @@ Evidence on the Mac, 2026-11-17, with the package test binary run directly:
 - After: 5 `-short` runs passed at 1-minute load 34, 60, 83, 130 and 134
   (90 to 148 s each). 1 full run with budgets passed at load 24 (124 s).
   The changed tests also passed under `-race`.
+- The first full verify of cc83db6 failed. The prestart reacquire stage
+  raced the async seam cancel. Two tests assumed a temp dir outside every
+  repository. With TMPDIR inside a `git init` directory, a local package run
+  showed two more: the remote source size test (same cause) and the reuse
+  singleflight test (100 ms overlap window, failed at load 65). Delivery
+  4932c07a fixed all of them. Then the prestart test passed 30 runs, the
+  changed tests passed 5 `-race` runs in that layout, and the `-short`
+  package passed in that layout in 109 s. It landed as d0e5bc5. Its worker
+  gate was the first to run `darwin-sessionpressure-tests`: passed in 57 s on
+  the Mac. The Linux `go test ./...` passed in 139 s on the Linux gate runner.
+  `delivery verify --full --ref d0e5bc5` passed all 5 policy checks in
+  268 s.
 
 ## Follow-ups
 
