@@ -202,9 +202,34 @@ shedding a tree frees its LSPs too.
   hand, so the rung is now real agent memory (`agent_host` 4057 MB). The
   calm run started at the restart (`swap_calm_start_used_mb` 8097).
 
+## M4 re-measure (2026-11-17)
+
+Nico's decision (relayed 2026-11-17): confirm the window on the M4 before it
+is on there. The 19% relapse figure above comes from the old 16 GB MacBook.
+
+M4 facts at 2026-11-17 ~11:00 UTC: Mac16,7, 48 GB, `swap_red_mb` 24576.
+`policy.json` has no `swap_lag_release_minutes`, so the release is off on
+this host. History starts 2026-11-17 04:05 UTC (about 7 hours). Swap used
+is 0 MB in every record, there are 0 swap-thrash transitions, and
+`go run ./scripts/swap-lag-history -red-mb 24576` reports 0 sticky swap
+records and 0 calm gaps for every window (5, 10, 15, 20, 30 min).
+
+Verdict: no evidence yet, for or against. The release cannot change any
+decision on this host while swap stays at 0. Needed: at least 30 calm gaps
+between thrash episodes (at swap >= 12288 MB, the warning line) and at least
+14 days of history. The scheduled task `swap-lag-window-m4-recheck` (Mondays
+09:05 local) re-runs the analysis and sets the shortest window with relapse
+under 20% when both hold. If swap never reaches the warning line, the
+release stays off because it has nothing to do on 48 GB.
+
+Tests rerun 2026-11-17 on the M4: `go test ./sessionpressure/ -run
+'SwapLag|SwapThrash|Famil|TreeReason|NodeEntry|ClassifyNode|Gopls|Doctor|EvaluateUses'`
+ok.
+
 ## Open
 
 - [x] Nico approved `swap_lag_release_minutes: 15` (2026-11-15, in chat).
+- [ ] M4: enable the window after the re-measure has data (see "M4 re-measure").
       Set in `~/.nicos-dev/session-pressure/policy.json` (backup
       `policy.json.bak-20261115-pre-swaplag`). The installed resident ignores
       the field until the new release is installed.
