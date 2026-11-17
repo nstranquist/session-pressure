@@ -91,3 +91,16 @@ Proof: with `GOCACHE=<tmp>` the storage tests pass on macOS; the full package
 passes with `-race` on macOS; runner-3 (linux/amd64) job `63575a18`
 passes `go test -race ./sessionpressurecmd`, and job `bacf54ab` passes the
 full Ubuntu CI steps (`make race`, `make build`, build without cgo).
+
+## Correction (2026-11-17): macOS soak CPU limit under -race
+
+Run `44034472936` also failed on `go macos-latest`:
+`TestResidentSampler64SampleCPUAndLatencySoak` reported `cpu_p95=51.849ms`
+against a fixed 50 ms limit. CI runs `make race`. The test already relaxed the
+duration limit under the race detector (300 → 750 ms) but not the CPU limit.
+Measured on mac-48g: `cpu_p95` 6.1–6.8 ms plain and 14.5–14.8 ms with
+`-race`, so the detector itself multiplies sampler CPU about 2.3x. The CPU limit
+now scales by the same 2.5x under `-race` (125 ms). The production limits
+(300 ms, 50 ms) are unchanged. `go test -race ./sessionpressure` passes on
+macOS. This is not a sampler regression: the same test passed in the
+`cd39a44` run.

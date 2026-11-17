@@ -405,11 +405,15 @@ func TestResidentSampler64SampleCPUAndLatencySoak(t *testing.T) {
 	if freshInventories != 1 {
 		t.Fatalf("healthy 64-sample soak refreshed process inventory %d times, want 1", freshInventories)
 	}
-	maxDurationMS := 300.0
+	// Production budgets. The race detector instruments every memory access,
+	// so it scales CPU as well as wall time (measured 2026-11-17 on an M4:
+	// cpu_p95 6.4ms plain, 14.6ms with -race; GitHub macos-latest reached
+	// 51.8ms with -race). Scale both limits by the same 2.5x under -race.
+	maxDurationMS, maxCPUMS := 300.0, 50.0
 	if raceDetectorEnabled {
-		maxDurationMS = 750
+		maxDurationMS, maxCPUMS = 750, 125
 	}
-	if latest.SampleDurationP95MS > maxDurationMS || latest.SampleCPUTimeP95MS > 50 || latest.GuardIdleCPUDutyPercent > policy.ResourceBudgets.MaxIdleCPUPercent {
+	if latest.SampleDurationP95MS > maxDurationMS || latest.SampleCPUTimeP95MS > maxCPUMS || latest.GuardIdleCPUDutyPercent > policy.ResourceBudgets.MaxIdleCPUPercent {
 		t.Fatalf("64-sample overhead budget failed: duration_p95=%.3fms cpu_p95=%.3fms idle_duty=%.4f%% rss_peak=%.3fMB",
 			latest.SampleDurationP95MS, latest.SampleCPUTimeP95MS, latest.GuardIdleCPUDutyPercent, latest.GuardRSSMaxMB)
 	}
