@@ -36,11 +36,22 @@ gate_delegation:
 verification:
   schema_version: nicos.commit-delivery.repository-verification.v1
   required:
-    # Bootstrap: the Linux go-tests and go-vet checks join in the next
-    # delivery. A delivery that adds the policy reads it from the worktree,
-    # and a worktree policy cannot delegate to the gate runner (remote_pass is
-    # honoured only from the committed policy), so a Linux check here would
-    # run on the Mac and fail VERIFY_CAPABILITY_UNAVAILABLE.
+    # Same argv as gate_delegation.remote_pass, so the active Linux gate runner
+    # runs them. They do not prove Darwin behavior.
+    - id: go-tests
+      adapter: go
+      command:
+        argv: [go, test, -count=1, -timeout, 10m, ./...]
+        directory: .
+        timeout_ms: 900000
+      platforms: [linux/amd64]
+    - id: go-vet
+      adapter: go
+      command:
+        argv: [go, vet, ./...]
+        directory: .
+        timeout_ms: 900000
+      platforms: [linux/amd64]
     # Darwin runtime tests of ./sessionpressure are not a lane gate. They
     # measure the live host (RSS budget, CPU soak, kernel inventory) or use
     # real-time deadlines, and under the worker's own load they failed three

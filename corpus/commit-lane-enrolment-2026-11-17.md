@@ -104,3 +104,10 @@ Filled in below by the enrolment delivery and the rejection test.
 - Capture `tier: admission` skips `go vet` at capture (the worker owns
   compiler checks). The policy leaves the tier unset so that capture vets the
   captured packages on the Mac.
+
+### Enrolment deliveries
+
+- 7a31940 (delivery 7f7dc973): policy without the Linux checks, the hook,
+  this record and the test sentinel fix. Gates: capture hook and `go vet`
+  (Mac), `go test` in `internal/helpermain` (Mac, 49 s) and `swift test`
+  (Mac). A policy change runs every check, also the path-scoped ones.
