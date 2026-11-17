@@ -33,8 +33,8 @@ too high (no guard at all: cap 1000 with `memory_admission` unset).
 
 ## Non-Goals
 
-- CPU parallelism limits applied live. CPU is recorded only (see Decision
-  Log).
+- CPU parallelism limits applied live. The limit stays recorded only; CPU
+  shortage lowers CPU priority instead (see Decision Log).
 - Restarting memory families (the relieve step holds; it does not act).
 - Red-level host blocking. It stays with `enforce_admission`, off on this Mac.
 
@@ -57,8 +57,11 @@ coordinator's admission limits unbounded under resource admission.
   memory-headroom guard and the warning derate stand down.
 - Live probe: the same ladder with `RemoteEligible = false`, so a hold never
   turns into a local start because the shadow would send it away.
-- Throttle: only `BackgroundIO` from a live `throttle` step is applied
-  (`taskpolicy -d throttle`). The caller's explicit throttle wins.
+- Throttle: a live `throttle` step applies `BackgroundIO`
+  (`taskpolicy -d throttle`) and, unless the dimension is `io`, a CPU
+  priority of nice 10 (`WorkThrottle.CPUNice`) instead of the lease default
+  nice 5. Its parallelism limit (`ThrottleCores`) is not applied. The
+  caller's explicit throttle wins.
 - Lock fit (`worklease.go`, `resourceFit`): when the selected waiter or a
   direct acquire would take its lease, its predicted peak is checked against
   headroom computed from the leases in the locked state. Refusal is
@@ -74,6 +77,15 @@ coordinator's admission limits unbounded under resource admission.
 
 ## Decision Log
 
+- 2026-11-17 (later): CPU shortage lowers CPU priority, not parallelism. The
+  48 h replay scored v3's core limit against the busy cores the same runs
+  measured: `cpu_saturated` (limit 1) slowed 9 of 94 measured runs, adding at
+  least 1.7% of their runtime; `partial_headroom` slowed 4 of 6, adding at
+  least 33%. A limit fixed at start cannot follow contention that changes by
+  the second. Nice 10 below the leases' nice 5 lets new CPU-short work use
+  every idle core and yield only when running work needs the core, so it
+  cannot slow a run on an idle host. The replay keeps the core-limit score
+  (`cpu_throttle`) as evidence.
 - 2026-11-17: CPU is not applied live. Measured busy cores of completed
   runs were 0.13 to 0.23 of the p90/p95 prediction (p50 of the ratio), and a
   parallelism limit is fixed for the life of a command while CPU contention
@@ -92,7 +104,8 @@ All additive. Readers that ignore unknown fields are unaffected.
 
 - Policy: `work_limits.admission` (string, `resource` | `weighted`).
 - Work event: `resource_decision` (closed vocabulary
-  `step:dimension:reason`), `resource_rule`, `throttle_background_io`. New
+  `step:dimension:reason`), `resource_rule`, `throttle_background_io`, `throttle_cpu_nice` (0 to 20).
+  New
   blocker `resource`. New reason `external_thrash`. New wait cause
   `queue_resource`. Rows with `shadow_resource_rule` v1 and v2 stay valid.
 - `WorkStatus.admission`, `WorkWaiterStatus.predicted_peak_mb`, waiter
@@ -114,10 +127,11 @@ next `work run`).
 
 `sessionpressure/resource_admission_live_test.go`: default and cap removal,
 coordinator past the configured cap, lock fit cases, blocker vocabulary,
-gate holds only queue and relieve, live throttle is I/O only, older guards
+gate holds only queue and relieve, live throttle is background I/O and CPU
+priority with no core cap, older guards
 stand down, event vocabulary and v2 rows, exported ladder, doctor wording,
 stall guard. `work_resource_headroom_test.go`: v3 ladder rows and p50
-predictor. Full `go vet ./...` and `go test ./...` on the Linux gate runner.
+predictor. `work_resource_replay_test.go`: the CPU-throttle score. Full `go vet ./...` and `go test ./...` on the Linux gate runner.
 
 ## Rollout / Validation / Failure Modes
 
@@ -136,6 +150,7 @@ predictor. Full `go vet ./...` and `go test ./...` on the Linux gate runner.
 - [x] Live gate, lock fit, events, status, doctor, stall guard
 - [x] Gate-runner tests
 - [x] Land (669bc82), install, live proof (2026-11-17 14:18Z)
+- [x] CPU priority instead of a core cap, from the 48 h replay (2026-11-17)
 - [ ] 24 h report (2026-11-18)
 
 ## Milestones
@@ -156,7 +171,8 @@ Pending the 24 h report.
 
 - Raise the cap again: rejected by Nico.
 - Keep the cap and add memory admission only: still caps an idle host.
-- Apply CPU throttles live now: rejected until the p50 predictor is measured.
+- Apply the v3 core limit live: rejected after the 48 h replay (it slows
+  13 of 100 measured runs). Nice 10 is applied instead.
 
 ## Open Questions
 
@@ -165,7 +181,6 @@ Pending the 24 h report.
 
 ## Deferred / Future Roadmap
 
-- Live CPU throttle after a p50 replay.
 - Live relieve step (restart a reclaimable family).
 
 ## Issues / Regrets

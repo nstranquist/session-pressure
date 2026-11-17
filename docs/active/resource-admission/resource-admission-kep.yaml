@@ -15,6 +15,8 @@ implementation-refs:
   - sessionpressure/worklease.go
   - sessionpressure/policy.go
   - sessionpressure/work_stall.go
+  - sessionpressure/work_throttle.go
+  - sessionpressure/work_resource_replay.go
 acceptance-criteria:
   - work_limits.admission defaults to resource; capacity, warning_capacity, swap_thrash_capacity and fixed weights do not decide a start under it.
   - Resource admission is live on an enabled policy with enforce_admission false; red-level host blocking stays off.
@@ -22,4 +24,5 @@ acceptance-criteria:
   - A memory fit check under the coordinator state lock closes the race between concurrent starts.
   - Work events carry resource_decision, resource_rule and throttle_background_io; WorkStatus and doctor carry admission.
   - ReadResourceHeadroom and DecideResourceAdmission are exported for the commit-delivery worker.
+  - A live throttle step lowers CPU priority to nice 10 (not a core cap) unless its dimension is io, and records throttle_cpu_nice.
 verification: []

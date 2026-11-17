@@ -38,8 +38,9 @@ memory deferrals and 0 swap-thrash episodes, while free memory was at p50
   host never waits on critical or thrash. Thrash the resident attributes to
   processes outside the coordinator throttles agent work to background I/O
   instead of queueing it.
-- Applied live: background disk I/O (`taskpolicy -d throttle`) from a
-  `throttle` step. Not applied live: CPU parallelism (see deviations).
+- Applied live from a `throttle` step: background disk I/O
+  (`taskpolicy -d throttle`), and since the CPU follow-up below a CPU
+  priority of nice 10. Not applied live: the CPU parallelism limit.
 - Stall guard: under resource admission a waiter is a stall only when it
   fits memory.
 - Events: `resource_decision`, `resource_rule`, `throttle_background_io`.
@@ -60,9 +61,9 @@ memory deferrals and 0 swap-thrash episodes, while free memory was at p50
 
 ## Deviations
 
-1. CPU is a recorded decision, not a live throttle. Reason above. Remaining:
-   replay v3 (p50) against completed runs and apply the throttle when the
-   replay shows it does not lengthen runs.
+1. The CPU parallelism limit is a recorded decision, not a live throttle.
+   Closed by the CPU follow-up below: CPU shortage lowers CPU priority
+   instead.
 2. The memory model charges a ramping lease its full p90 peak for 3 min.
    With many starts this holds work that would fit (13:36Z: 25.3 GB charged,
    2.2 GB measured). The lock check uses the same model. Remaining: charge
@@ -107,3 +108,37 @@ on the Linux gate runner (runner-3).
   wrapper interrupts), 152 reservation deferrals, 2 memory deferrals, 0
   swap-thrash, 0 resource deferrals. Compare `work report --since 24h` on
   2026-11-18 after 14:18Z.
+
+## CPU follow-up: priority, not a core cap (WORK-1065, 2026-11-17)
+
+Question: should the ladder's CPU throttle (v3, p50 predictor) apply live?
+The rule was "apply it if a replay shows it does not lengthen runs".
+
+- Replay: `work evaluate --since 48h` now scores each throttle decision's
+  core limit against the busy cores (command CPU time / runtime) that the
+  same run measured unthrottled (`cpu_throttle`, runs of 5 s or longer).
+  This is a lower bound: the average hides bursts above it.
+- 48 h, 2,294 evaluated starts. v3 throttles 420 (v2 throttled 664 of
+  1,551). By reason:
+  - `cpu:cpu_saturated` (limit 1): 371 decisions, 94 measured, 9 slowed,
+    busy/limit p50 0.25 and p95 1.92, at least 122.9 s added to 7,271 s
+    (1.7%).
+  - `cpu:partial_headroom`: 7 decisions, 6 measured, 4 slowed, busy/limit
+    p50 1.13, at least 32 s added to 96.5 s (33%).
+  - `io:disk_write_high`: 42 decisions, 20 measured, 0 slowed.
+- Verdict: the core limit lengthens runs (13 of 100 measured CPU-throttled
+  runs), so it fails the rule and stays a recorded value.
+- Applied instead: a live `throttle` step whose dimension is not `io` starts
+  the command at nice 10, below the lease default nice 5 and the interactive
+  host at nice 0. A nice value is no cap: the run uses every idle core and
+  yields only to work that needs the core. It cannot slow a run on an idle
+  host, and it keeps work already running ahead of new CPU-short work.
+- Events: `throttle_cpu_nice` (0 to 20) on the run's events.
+- Tests: `TestLiveResourceThrottleAppliesIOAndCPUPriorityNotACoreCap`,
+  `TestWorkThrottleNiceKeepsTheLeaseDefault`,
+  `TestReplayResourceHeadroomScoresTheCPUThrottle`. Full `go vet ./...` and
+  `go test ./...` on the Linux gate runner (runner-3).
+- Remaining: `Setpriority` runs right after the child starts, so a
+  grandchild forked before it keeps nice 0 (existing race, also for nice 5).
+  The 24 h report should compare runtimes of niced runs with the same class
+  unthrottled.
