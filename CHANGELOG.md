@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.7.3 — 2026-11-17
+
+### Memory levels per host, fleet probe under load, resource-headroom shadow
+
 - **Fleet probe reports transport apart from health (WORK-1100).** Each
   `gaterunner-fleet` observation has `transport`: `ok`, `slow` or
   `unreachable`, beside `probe_ms`. A late answer (5 s or more, or only on
