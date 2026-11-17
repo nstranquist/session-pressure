@@ -79,7 +79,34 @@ the active runner.
 
 ## Proof
 
-Filled in below by the enrolment delivery and the rejection test.
+- Hetzner gate: delivery 0e2de841 landed as 1af316d, the first delivery
+  gated by the full committed policy. `go test -count=1 -timeout 10m ./...`
+  (65 s) and `go vet ./...` (24 s) ran remotely on linux/amd64 on the active
+  runner (jobs 43cc660a, d8764b0a). The path-scoped Mac checks reported
+  `skipped_out_of_scope`.
+- Rejection: a capture of a Markdown file that names a runner host failed
+  before a delivery existed: `CAPTURE_CHECK_FAILED`, gate `public-names`,
+  path `corpus/public-check-probe.md (rule 1)`, capture d100c9d6, "no
+  delivery was created". The first probe attempt was malformed (the shell
+  dropped the host number), so it held no private name, was accepted
+  (138ac4e6) and was superseded before it could land. Build such probes
+  from parts and check them with the pattern file before the capture.
+- Publication: `delivery verify --full` passed for 1af316d and 86049a8 (about
+  140 s each, darwin, Linux commands authorized by `remote_pass`).
+  `delivery remote publish` pushed e336428..86049a8 at 14:23:39Z (receipt
+  20261117T142339.363380000Z-86049a8a35a1, gitleaks 8.30.1, 0 findings).
+  A scan of the same range with the private pattern file found no match in
+  added lines, file names or commit messages.
+
+## Follow-ups
+
+- Make the real-time `sessionpressure` tests independent of host load
+  (`work_prestart_refusal_test.go` reacquire stage, `worknested_test.go:135`),
+  then restore a Darwin runtime check for `./sessionpressure`.
+- Add a Rust adapter or a check for `apps/pressure-ui`.
+- Capture `go vet` of `sessionpressure` took 18.7 s of the 30 s capture
+  budget on a loaded Mac. Watch it, because a capture over budget gives no
+  verdict.
 
 ### Bootstrap findings
 
