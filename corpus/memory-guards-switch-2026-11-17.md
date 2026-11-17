@@ -1,6 +1,6 @@
 # Memory guards get their own switch (2026-11-17)
 
-Status: 2026-11-17, code landed, helper install and live switch below.
+Status: 2026-11-17, landed (f7a7495), installed (e336428), live switch on.
 Owner: claude/5e967f73-34c6-46d6-b36f-b097ff336e18. Work: WORK-1125.
 Follows [work capacity raised to 20](work-capacity-20-2026-11-17.md).
 
@@ -43,3 +43,25 @@ the only guard on local work, so the cap could not safely go past 20.
 `sessionpressure/memory_guards_switch_test.go`: switch table, persisted
 observe policy, swap-thrash deferral under the switch, fail-open rules,
 doctor wording. Full `go vet ./...` and `go test ./...` on the Linux gate runner (runner-3).
+
+## Install and live switch
+
+- Landed f7a7495 through the commit lane (delivery 6d34597d). It was held
+  once for an environment cause: `remote_build_profile_test.go` matched
+  "ran" inside the home path. The fix landed separately (7a31940).
+- Built from a clean clone of local main e336428 (includes origin
+  c186238, the footprint-band release that was installed) with
+  `go run ./scripts/release build`. Installed at 14:14Z with
+  `session-pressure-release install --expected-current c186238...` when no
+  lease was in flight, then `monitor install` (resident reporting after 1 s).
+- Live policy: backup `policy.json.bak-20261117-before-memory-enforce`, then
+  `work_limits.memory_admission = "enforce"`. `enforce_admission` stays
+  false, `capacity` stays 1000 (set by another agent at 13:31Z). Nico's
+  approval came relayed through the parent session.
+- Proof at 14:14Z: `doctor` shows `memory_admission_enforced: true`,
+  `swap_thrash_enforced: true`. `work headroom`: `memory_admission: enforce`,
+  level normal, available 24,084 MB, reserve 6,144 MB, 5 ramping leases
+  charged 19,298 MB, headroom -1,358 MB, swap used 2,663 MB, no thrash. A
+  new start beside running leases waits until ramps expire (at most 3 min).
+- This is the bridge until [resource admission](resource-admission-live-2026-11-17.md)
+  is installed; under it the ladder owns memory and swap.

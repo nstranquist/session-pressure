@@ -13,8 +13,8 @@ weights stay in the policy only as telemetry and a data-format contract.
 
 - 2026-11-17: memory-guard switch landed (delivery 6d34597d, WORK-1125).
 - 2026-11-17: rule v3, live gate, lock fit check, event and status fields,
-  exports, stall guard. Tests on the Linux gate runner. Install and 24 h
-  proof: see `corpus/resource-admission-live-2026-11-17.md`.
+  exports, stall guard. Landed 669bc82, installed and live 14:18Z. 24 h
+  proof owed: see `corpus/resource-admission-live-2026-11-17.md`.
 
 ## Motivation
 
@@ -135,7 +135,8 @@ predictor. Full `go vet ./...` and `go test ./...` on the Linux gate runner.
 - [x] Rule v3 ladder and exports
 - [x] Live gate, lock fit, events, status, doctor, stall guard
 - [x] Gate-runner tests
-- [ ] Land, install, live proof, 24 h report
+- [x] Land (669bc82), install, live proof (2026-11-17 14:18Z)
+- [ ] 24 h report (2026-11-18)
 
 ## Milestones
 

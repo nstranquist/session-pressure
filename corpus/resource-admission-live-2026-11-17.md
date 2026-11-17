@@ -1,6 +1,6 @@
 # Resource admission goes live, unit cap removed (2026-11-17)
 
-Status: 2026-11-17, code and tests written, landing and install below.
+Status: 2026-11-17, landed (669bc82), installed and live at 14:18Z. 24 h report owed 2026-11-18.
 Owner: claude/5e967f73-34c6-46d6-b36f-b097ff336e18 (takes over WORK-1065
 from claude/bb3c2dab under WORK-3, owner codex). Work: WORK-1125, WORK-1065.
 Contract: [KEP](../docs/active/resource-admission/resource-admission-kep.md).
@@ -81,4 +81,29 @@ on the Linux gate runner (runner-3).
 
 ## Install and live proof
 
-Pending.
+- Tests: full `go vet ./...` and `go test ./...` on the Linux gate runner,
+  24 packages ok (job abc34d5a). The lane verified it again before landing.
+- Landed 669bc82 (delivery ea47432c). The first capture (fcab16c6) was
+  stacked on the memory-guard delivery and paused with PATH_CONFLICT,
+  because it rewrites the parent's two functions in `policy.go`. Captured
+  again on top of the landed parent with `--replace`.
+- Built from a clean clone at 669bc82, installed at 14:18Z with
+  `--expected-current e3364280...` when no lease was in flight, then
+  `monitor install` (resident reporting after 0.8 s).
+- Live policy: backup `policy.json.bak-20261117-before-resource-admission`,
+  then `work_limits.admission = "resource"` (a file without the key loads as
+  resource anyway; the explicit value documents it). `enforce_admission`
+  stays false. `memory_admission = enforce` stays and is unused under
+  resource admission.
+- Proof at 14:18Z: `work status` prints `admission=resource
+  capacity=1048576`. `doctor`: `work.admission: resource`. `work headroom`:
+  level normal, available 26,050 MB, reserve 6,144 MB, headroom 19,829 MB,
+  swap used 2,623 MB, no thrash. A dogfood `work run --class express-test`
+  recorded `resource_decision: admit:none:fits` and
+  `resource_rule: mac-resource-headroom-v3` on acquired, started and
+  completed events.
+- 24 h baseline at install (mostly before the change, cap 12 to 1000):
+  2,087+ operations, 152 long waits, 23 wait timeouts, 539 cancelled (516
+  wrapper interrupts), 152 reservation deferrals, 2 memory deferrals, 0
+  swap-thrash, 0 resource deferrals. Compare `work report --since 24h` on
+  2026-11-18 after 14:18Z.
