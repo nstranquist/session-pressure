@@ -54,7 +54,12 @@ Subcommands:
   policy show                      Show the effective policy
   policy profile show|apply NAME   Named balanced / throughput / interactive / observe work styles
                                    apply flags: --multi-agent (earlier soft-launch warnings), --with-auto-shed, --dry-run
-  policy init [--force]            Write the tuned observe-only default policy
+  policy init [--force]            Write the tuned observe-only default policy (calibrated memory levels)
+  policy memory-levels [show]      Show this host's memory levels from memory-levels.json and their source
+  policy memory-levels calibrated|manual
+                                   Take memory levels from memory-levels.json, or keep policy.json's own
+  policy memory-levels check [FILE]
+                                   Validate a memory-levels.json (default: the data-dir copy, else embedded)
   policy migrate                   Persist filled work defaults and former storage defaults; preserve enforcement
   policy override-beyond-capacity on|off  Let a work override admit past the weighted cap (never past host-pressure gates)
   policy enable [--with-auto-shed] Block growing work at red; automatic relief requires explicit opt-in
@@ -890,6 +895,11 @@ func cmdSessionPressurePolicy(g *Flags, args []string) int {
 		sub = args[0]
 		args = args[1:]
 	}
+	if sub == "memory-levels" {
+		// Before the runtime load: check and show must work while a bad
+		// memory-levels.json makes the calibrated policy fail to load.
+		return cmdSessionPressureMemoryLevels(g, args)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	runtime, err := loadPressureRuntime(ctx)
@@ -926,6 +936,12 @@ func cmdSessionPressurePolicy(g *Flags, args []string) int {
 			return sessionPressureError(err.Error(), 1)
 		}
 		runtime.policy = sessionpressure.DefaultPolicy(physicalMB)
+		runtime.policy.MemoryLevels = sessionpressure.MemoryLevelsCalibrated
+		if levels, err := sessionpressure.ResolveHostMemoryLevels(runtime.dir, physicalMB); err != nil {
+			return sessionPressureError(err.Error(), 1)
+		} else {
+			levels.Apply(&runtime.policy)
+		}
 		if err := sessionpressure.SavePolicy(runtime.path, runtime.policy); err != nil {
 			return sessionPressureError(err.Error(), 1)
 		}

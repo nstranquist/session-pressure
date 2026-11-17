@@ -51,6 +51,17 @@
   columns to see whether a slow login was CPU, IO, memory or network. A
   failed history write only warns and never changes a selection.
 
+- **Memory levels come from `memory-levels.json`.** The free, swap, tree and
+  agent-total rungs and the resident's self-RSS budget are calibrated per host
+  shape in a JSON config (embedded default, or a replacement in the data
+  directory) with measured anchors for the 16 GiB laptop and the 48 GiB
+  workstation, interpolation on `hw.memsize`, and per-host overrides. Large
+  hosts hold the RSS-sum rungs at warning while kernel free memory is above
+  `rss_escalation_free_percent`, so a 48 GiB Mac at 90% free is no longer red.
+  The 16 GiB ladder is unchanged. `policy.json` opts in with
+  `memory_levels: calibrated`; new verbs `policy memory-levels
+  show|check|calibrated|manual`.
+
 - **Fleet health probe survives a loaded runner.** `gaterunner-fleet` no
   longer caps the SSH health probe at 12 seconds. It uses the caller's
   remaining time minus a 2-second margin (about 25 seconds under the

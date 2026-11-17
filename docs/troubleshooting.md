@@ -4,6 +4,18 @@
 
 That is a live pressure reading. It does not mean the install failed. Use `session-pressure --json status --live` and `session-pressure --json work status`.
 
+A tree or agent RSS reason with "held at warning" is a calibrated large host:
+the RSS sum passed red, but kernel free memory is still high. Run
+`session-pressure policy memory-levels show` to see the levels, their source
+and the rule (anchor, interpolation or host override) for this host.
+
+## Policy load fails with `memory levels:`
+
+The calibrated policy could not resolve `memory-levels.json`. The error names
+the file and the field. Run `session-pressure policy memory-levels check` to
+see it again, then fix or remove the data-directory copy. The embedded copy is
+used when no data-directory copy exists.
+
 ## Compatibility wrapper exits 127
 
 `ndev session pressure` execs the product CLI. Install `session-pressure` or `ndev-pressure` on `PATH`.

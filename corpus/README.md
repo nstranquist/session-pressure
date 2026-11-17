@@ -40,3 +40,4 @@ product decisions have all been reconstructed.
 - [Storage retention providers, storage watch, tm-exclude plan](storage-retention-watch-2026-11-16.md): S2 ST6/ST7/ST3: binary-revisions, turso-backups, go-build-orphans, resolved Go caches, disk/TM/X10/quota alerts, Time Machine exclusion plan.
 
 - [Resource-headroom admission, shadow candidate](resource-headroom-shadow-2026-11-17.md): WORK-1065 under WORK-3; CPU, disk-write and ladder beside the memory shadow, opt-in throttle, host-sample replay in `work evaluate`, seven-day numbers and open deviations.
+- [Memory levels calibration](memory-levels-calibration-2026-11-17.md): WORK-1057 memory levels in `memory-levels.json`, anchors from monitor history on the 16 GiB and 48 GiB Macs, RSS rungs held at warning while kernel free memory is high, install on both Macs.
