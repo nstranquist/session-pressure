@@ -1,6 +1,7 @@
 package jsonl
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -8,17 +9,19 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/nstranquist/session-pressure/internal/lockfile"
+	"github.com/nstranquist/session-pressure/internal/filelock"
 )
 
 // AppendLine appends body plus one trailing newline to path while holding the
-// file's lockfile. body should be one already-marshaled JSON value.
+// cross-process file lock on path (sidecar path + ".lock", see
+// internal/filelock). body should be one already-marshaled JSON value.
 func AppendLine(path string, body []byte, perm os.FileMode) error {
 	return appendLine(path, body, perm, false, 0)
 }
 
 // AppendLineWithin is AppendLine with a bounded lock wait. A zero timeout uses
-// the lockfile package default; positive values cap contention latency.
+// filelock.DefaultTimeout; positive values cap contention latency. A wait that
+// runs out returns an error that matches filelock.ErrTimeout.
 func AppendLineWithin(path string, body []byte, perm os.FileMode, timeout time.Duration) error {
 	return appendLine(path, body, perm, false, timeout)
 }
@@ -30,19 +33,20 @@ func AppendLineDurable(path string, body []byte, perm os.FileMode) error {
 	return appendLine(path, body, perm, true, 0)
 }
 
+// testHookInsideLock runs first inside the lock. The cross-process test uses
+// it to record when each append enters and leaves its critical section.
+var testHookInsideLock func()
+
 func appendLine(path string, body []byte, perm os.FileMode, durable bool, timeout time.Duration) error {
 	if path == "" {
 		return errors.New("jsonl: empty path")
 	}
 	line := append(append([]byte(nil), body...), '\n')
 
-	withLock := lockfile.WithFileLock
-	if timeout > 0 {
-		withLock = func(path string, fn func() error) error {
-			return lockfile.WithFileLockTimeout(path, timeout, fn)
+	return filelock.WithFileLockContext(context.Background(), path, timeout, func() error {
+		if hook := testHookInsideLock; hook != nil {
+			hook()
 		}
-	}
-	return withLock(path, func() error {
 		dirPerm := os.FileMode(0o755)
 		if perm.Perm()&0o077 == 0 {
 			dirPerm = 0o700

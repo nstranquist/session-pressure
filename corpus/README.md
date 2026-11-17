@@ -49,3 +49,4 @@ product decisions have all been reconstructed.
 - [Telemetry history archived, never deleted](telemetry-history-archive-2026-11-17.md): WORK-1009, aged day files, command shards and audit generations move to verified gzip archives beside the live file; runner capacity offloads to retention-offload-local.
 - [Browser control: resident CPU cost and enforcement gate](browser-control-resident-cost-2026-11-17.md): WORK-1141, no steady-state rewrite, in-memory evidence, lock only on change, `Monitor.EnforceBrowsers` gate after a harness stopped a live browser.
 - [File lock reclaim race](filelock-reclaim-race-2026-11-17.md): WORK-1225 root cause, guarded reclaim fix and stress A/B.
+- [JSONL append lock race](jsonl-lock-race-2026-11-17.md): WORK-1252, `internal/lockfile` deleted, `internal/jsonl` on `internal/filelock`, n-1 sidecar contract, stress A/B and latency.

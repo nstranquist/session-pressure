@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nstranquist/session-pressure/internal/lockfile"
+	"github.com/nstranquist/session-pressure/internal/filelock"
 )
 
 func TestAppendLineWritesOneLockedJSONLRow(t *testing.T) {
@@ -53,7 +53,7 @@ func TestAppendLineTightensPrivateLogPermissions(t *testing.T) {
 
 func TestAppendLineWaitsForFileLock(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "queries.jsonl")
-	unlock, err := lockfile.Lock(path)
+	unlock, err := filelock.Acquire(path, time.Second)
 	if err != nil {
 		t.Fatalf("pre-lock file: %v", err)
 	}
@@ -97,8 +97,8 @@ func TestAppendLineWithinBoundsHeldLock(t *testing.T) {
 	}
 	started := time.Now()
 	err := AppendLineWithin(path, []byte(`{"q":"workspace"}`), 0o644, 25*time.Millisecond)
-	if !errors.Is(err, lockfile.ErrLocked) {
-		t.Fatalf("AppendLineWithin error = %v, want ErrLocked", err)
+	if !errors.Is(err, filelock.ErrTimeout) {
+		t.Fatalf("AppendLineWithin error = %v, want filelock.ErrTimeout", err)
 	}
 	if elapsed := time.Since(started); elapsed > 150*time.Millisecond {
 		t.Fatalf("AppendLineWithin elapsed = %s, want bounded contention", elapsed)

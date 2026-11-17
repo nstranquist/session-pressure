@@ -14,7 +14,6 @@ source_roots:
   - nicos-dev/internal/jsonl
   - nicos-dev/internal/jsonutil
   - nicos-dev/internal/kbpath
-  - nicos-dev/internal/lockfile
   - nicos-dev/internal/mac
   - nicos-dev/internal/operationcontract
   - nicos-dev/internal/registry
@@ -81,11 +80,6 @@ facets:
     kind: package
     path: nicos-dev/internal/kbpath
     entrypoint: nicos-dev/internal/kbpath/kbpath.go
-    runtime_contract: none
-  - id: lock-file
-    kind: package
-    path: nicos-dev/internal/lockfile
-    entrypoint: nicos-dev/internal/lockfile/lockfile.go
     runtime_contract: none
   - id: mac-host
     kind: package

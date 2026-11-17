@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **JSONL appends: no overlap between processes (WORK-1252).**
+  `internal/jsonl` took its lock from `internal/lockfile`, which removed a
+  sidecar it judged stale without a second check, preempted live owners
+  older than 30 s, and treated a sidecar still being written as stale. Two
+  processes could append to the same ledger at once (465 overlaps in 48,000
+  appends in a Linux stress run). `internal/lockfile` is deleted and
+  `internal/jsonl` now uses `internal/filelock`. The sidecar format is
+  unchanged, so n-1 binaries still exclude each other. A lock wait that runs
+  out now matches `filelock.ErrTimeout`. See
+  `corpus/jsonl-lock-race-2026-11-17.md`.
 - **File lock: no overlap after a release (WORK-1225).** A waiter that lost
   the create could judge a just-released sidecar stale and then delete the
   successor's live sidecar, so two processes held the lock together. A

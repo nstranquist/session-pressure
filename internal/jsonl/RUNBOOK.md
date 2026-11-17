@@ -24,7 +24,8 @@ func AppendLine(path string, body []byte, perm os.FileMode) error
 ```
 
 > AppendLine appends body plus one trailing newline to path while holding the
-> file's lockfile. body should be one already-marshaled JSON value.
+> cross-process file lock on path (sidecar path + ".lock", see
+> internal/filelock). body should be one already-marshaled JSON value.
 
 _Source: `nicos-dev/internal/jsonl/append.go:15`_
 
