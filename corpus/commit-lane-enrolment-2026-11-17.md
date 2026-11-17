@@ -132,6 +132,12 @@ with these rules. A new test in `sessionpressure` follows them
   `tempDirOutsideRepository`. A commit-delivery candidate puts TMPDIR inside
   its own git checkout, so `t.TempDir()` is not outside a repository there.
   To reproduce, run the package with TMPDIR inside a `git init` directory.
+- A fixed production bound that a test does not check (a lock or listing
+  timeout) is a package var, and the test raises it to `testWatchdog`:
+  `processIncidentLockTimeout` (2 s) and `expressSourceListTimeout` (15 s).
+  The production value does not change.
+- A CPU window starts after the process has settled (its CPU stops
+  changing), not at `Start`, so shell startup is not counted.
 - CPU and unit checks compare two counters of the same quantity (libproc
   against getrusage), or wait for an amount of CPU, not for a time window.
 - Live-host budgets (native inventory and disk-scan latency, sampler
@@ -162,12 +168,28 @@ Evidence on the Mac, 2026-11-17, with the package test binary run directly:
   the Mac. The Linux `go test ./...` passed in 139 s on the Linux gate runner.
   `delivery verify --full --ref d0e5bc5` passed all 5 policy checks in
   268 s.
+- The next three Darwin gate runs each found one more load race: the 60 ms
+  browser admission deadline, the idle group CPU window, and the 2 s
+  incident lock. A local stress found the last one before the gate did:
+  three `-short` package runs at once, with TMPDIR inside a `git init`
+  directory. The reuse singleflight test failed 2 of 6 there, from the 15 s
+  source listing bound. 3c4211d fixed all four. Its gate and
+  `delivery verify --full` passed (143 s), and it was published to origin.
+- Publish found a home-path finding in an earlier commit (6809ddc) after the
+  tip had removed it, because publish scans every outgoing commit. The value
+  was a one-letter placeholder user, so it was accepted with a recorded
+  reason. Use `/Users/example` in fixtures from the start.
 
 ## Follow-ups
 
 - Done (WORK-1157): make the real-time `sessionpressure` tests independent
   of host load, then restore a Darwin runtime check for `./sessionpressure`.
   See "Darwin sessionpressure gate (WORK-1157)".
+- WORK-1225: the Linux full verify once showed two holders inside
+  `internal/filelock` at the same time (TestExclusiveCriticalSectionAcrossProcesses).
+  That is a real mutual-exclusion bug, not a timing test.
+- Before a delivery that touches `sessionpressure` tests, run the stress
+  above. One gate run finds only one load race at a time.
 - The Darwin `-short` package run takes several minutes on a loaded Mac.
   Most of it is real `go test` children in the reuse and profile tests,
   which the Linux gate also runs. Watch the gate time.
