@@ -26,6 +26,14 @@ directory (`~/.nicos-dev/session-pressure/memory-levels.json`).
   interpolated values. Outside the anchors, MB values scale with memory and
   percent values stay at the nearest anchor. `hosts.<short-hostname>` can
   override single values with a required `reason`.
+- Tree and agent-total sizes come in two measures. The RSS sum double counts
+  shared pages and drops pages the kernel compressed or swapped out. The
+  `phys_footprint` sum (from the `proc_pid_rusage` call the inventory already
+  makes) counts memory each process owns, including compressed and swapped
+  pages. When an anchor sets `tree_footprint_mb` and `agent_total_footprint_mb`
+  (on every anchor or none), samples with footprint readings are judged on
+  footprint; RSS bands are the fallback (Linux, or no readings). A process
+  without a reading counts with its RSS, so a footprint sum never undercounts.
 - `rss_escalation_free_percent` holds the RSS-sum rungs at warning while the
   kernel free level (`kern.memorystatus_level`) is above it. Summed RSS double
   counts shared pages, so a large host can pass red with 90% free. 100 means

@@ -38,6 +38,9 @@ func TestDefaultPolicyOldMacKeepsTunedLadder(t *testing.T) {
 		TreeWarningMB: 3072, TreeRedMB: 5120, TreeCriticalMB: 7168,
 		AgentTotalWarningMB: 8192, AgentTotalRedMB: 11264, AgentTotalCriticalMB: 13312,
 		RSSEscalationFreePercent: 0,
+		// Footprint ladder carried over from the tuned RSS ladder (corpus).
+		TreeFootprintWarningMB: 5632, TreeFootprintRedMB: 9728, TreeFootprintCriticalMB: 12800,
+		AgentTotalFootprintWarningMB: 15360, AgentTotalFootprintRedMB: 21504, AgentTotalFootprintCriticalMB: 25600,
 	}
 	if got.Thresholds != want {
 		t.Fatalf("16 GiB thresholds changed:\n got %+v\nwant %+v", got.Thresholds, want)
@@ -52,14 +55,20 @@ func TestDefaultPolicyOldMacKeepsTunedLadder(t *testing.T) {
 
 func TestDefaultPolicyM4UsesMeasuredAnchor(t *testing.T) {
 	got := DefaultPolicy(m4MB).Thresholds
-	if got.TreeWarningMB != 20480 || got.TreeRedMB != 26624 || got.TreeCriticalMB != 32768 {
+	if got.TreeWarningMB != 28672 || got.TreeRedMB != 36864 || got.TreeCriticalMB != 45056 {
 		t.Fatalf("48 GiB tree ladder = %g/%g/%g", got.TreeWarningMB, got.TreeRedMB, got.TreeCriticalMB)
 	}
 	if got.AgentTotalWarningMB != 36864 || got.AgentTotalRedMB != 45056 || got.AgentTotalCriticalMB != 53248 {
 		t.Fatalf("48 GiB agent ladder = %g/%g/%g", got.AgentTotalWarningMB, got.AgentTotalRedMB, got.AgentTotalCriticalMB)
 	}
-	if got.RSSEscalationFreePercent != 50 {
-		t.Fatalf("48 GiB RSS escalation = %g, want 50", got.RSSEscalationFreePercent)
+	if got.RSSEscalationFreePercent != 25 {
+		t.Fatalf("48 GiB RSS escalation = %g, want 25", got.RSSEscalationFreePercent)
+	}
+	if got.TreeFootprintWarningMB != 30720 || got.TreeFootprintRedMB != 33792 || got.TreeFootprintCriticalMB != 36864 {
+		t.Fatalf("48 GiB tree footprint ladder = %g/%g/%g", got.TreeFootprintWarningMB, got.TreeFootprintRedMB, got.TreeFootprintCriticalMB)
+	}
+	if got.AgentTotalFootprintWarningMB != 31744 || got.AgentTotalFootprintRedMB != 34816 || got.AgentTotalFootprintCriticalMB != 37888 {
+		t.Fatalf("48 GiB agent footprint ladder = %g/%g/%g", got.AgentTotalFootprintWarningMB, got.AgentTotalFootprintRedMB, got.AgentTotalFootprintCriticalMB)
 	}
 	if budget := DefaultPolicy(m4MB).ResourceBudgets.MaxSelfRSSMB; budget != 44 {
 		t.Fatalf("48 GiB guard RSS budget = %g, want 44", budget)
@@ -73,7 +82,7 @@ func TestResolveInterpolatesAndScales(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Halfway between the 16 and 48 GiB anchors.
-	if mid.TreeMB.Red != (5120+26624)/2 || mid.RSSEscalationFreePercent != 75 || mid.GuardMaxSelfRSSMB != 37 {
+	if mid.TreeMB.Red != (5120+36864)/2 || mid.RSSEscalationFreePercent != 62.5 || mid.GuardMaxSelfRSSMB != 37 || mid.TreeFootprintMB.Red != (9728+33792)/2 {
 		t.Fatalf("32 GiB = tree red %g, escalation %g, guard %g", mid.TreeMB.Red, mid.RSSEscalationFreePercent, mid.GuardMaxSelfRSSMB)
 	}
 	if !strings.Contains(mid.Rule, "interpolated") {
@@ -90,7 +99,7 @@ func TestResolveInterpolatesAndScales(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if big.TreeMB.Red != 2*26624 || big.SwapMB.Red != 2*24576 || big.RSSEscalationFreePercent != 50 || big.GuardMaxSelfRSSMB != 44 {
+	if big.TreeMB.Red != 2*36864 || big.SwapMB.Red != 2*24576 || big.RSSEscalationFreePercent != 25 || big.GuardMaxSelfRSSMB != 44 || big.TreeFootprintMB.Red != 2*33792 {
 		t.Fatalf("96 GiB = tree red %g, swap red %g, escalation %g, guard %g", big.TreeMB.Red, big.SwapMB.Red, big.RSSEscalationFreePercent, big.GuardMaxSelfRSSMB)
 	}
 }
@@ -125,7 +134,7 @@ func TestParseMemoryLevelsRejectsBadConfig(t *testing.T) {
 		{"ladder order", strings.Replace(valid, `"tree_mb": {"warning": 3072, "red": 5120`, `"tree_mb": {"warning": 6000, "red": 5120`, 1), "anchors[0] (16gib-laptop).tree_mb: must satisfy warning < red < critical"},
 		{"free order", strings.Replace(valid, `"free_percent": {"warning": 25, "red": 15, "critical": 8},`, `"free_percent": {"warning": 8, "red": 15, "critical": 25},`, 1), "free memory must satisfy warning > red > critical"},
 		{"anchor order", strings.Replace(valid, `"memory_gib": 48`, `"memory_gib": 12`, 1), "strictly ascending memory order"},
-		{"escalation", strings.Replace(valid, `"rss_escalation_free_percent": 50`, `"rss_escalation_free_percent": 150`, 1), "rss_escalation_free_percent: must be in (0, 100]"},
+		{"escalation", strings.Replace(valid, `"rss_escalation_free_percent": 25`, `"rss_escalation_free_percent": 150`, 1), "rss_escalation_free_percent: must be in (0, 100]"},
 		{"guard", strings.Replace(valid, `"guard_max_self_rss_mb": 44`, `"guard_max_self_rss_mb": 2`, 1), "guard_max_self_rss_mb: must be between 10 and 256"},
 		{"schema", strings.Replace(valid, `"schema_version": 1`, `"schema_version": 2`, 1), "schema_version: want 1, got 2"},
 		{"trailing", valid + "{}", "trailing data"},
@@ -171,7 +180,7 @@ func TestLoadPolicyCalibratedResolvesHostLevels(t *testing.T) {
 	if err != nil || !persisted {
 		t.Fatalf("LoadPolicy: persisted=%v err=%v", persisted, err)
 	}
-	if policy.Thresholds.TreeRedMB != 26624 || policy.Thresholds.RSSEscalationFreePercent != 50 || policy.ResourceBudgets.MaxSelfRSSMB != 44 {
+	if policy.Thresholds.TreeRedMB != 36864 || policy.Thresholds.RSSEscalationFreePercent != 25 || policy.ResourceBudgets.MaxSelfRSSMB != 44 || policy.Thresholds.TreeFootprintRedMB != 33792 {
 		t.Fatalf("calibrated M4 policy = tree red %g, escalation %g, guard %g", policy.Thresholds.TreeRedMB, policy.Thresholds.RSSEscalationFreePercent, policy.ResourceBudgets.MaxSelfRSSMB)
 	}
 	// A caller that knows the memory size wins over the native read.
@@ -209,7 +218,7 @@ func TestLoadPolicyUsesDataDirMemoryLevelsFile(t *testing.T) {
 	if err != nil || levels.Source != MemoryLevelsPath(dir) || !levels.HostOverride {
 		t.Fatalf("source %q override %v err %v", levels.Source, levels.HostOverride, err)
 	}
-	bad := strings.Replace(string(embeddedMemoryLevelsJSON), `"red": 26624`, `"red": 99999`, 1)
+	bad := strings.Replace(string(embeddedMemoryLevelsJSON), `"red": 36864`, `"red": 99999`, 1)
 	if err := os.WriteFile(MemoryLevelsPath(dir), []byte(bad), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -236,22 +245,24 @@ func TestM4EvidenceSampleIsNotRed(t *testing.T) {
 	if got.Level != LevelNormal {
 		t.Fatalf("M4 evidence sample level %s, reasons %v", got.Level, got.Reasons)
 	}
-	// The observed M4 maximum (21746 MB at 90% free) is a warning only.
-	got = EvaluateMemoryPressure(memorySnapshot(90, 0, 21746), policy)
-	if got.Level != LevelWarning {
-		t.Fatalf("M4 max sample level %s, reasons %v", got.Level, got.Reasons)
+	// From 12:24Z the M4 was red on "claude tree RSS sum 27885 MB" at 50%
+	// free and no swap, which held every gate. The raised RSS fallback keeps
+	// it normal (tree warning 28672 MB).
+	got = EvaluateMemoryPressure(memorySnapshot(50, 0, 27885), policy)
+	if got.Level != LevelNormal {
+		t.Fatalf("M4 12:24Z sample level %s, reasons %v", got.Level, got.Reasons)
 	}
 }
 
 func TestM4RSSRungsNeedKernelAgreement(t *testing.T) {
 	policy := DefaultPolicy(m4MB)
 	held := EvaluateMemoryPressure(memorySnapshot(90, 0, 40000), policy)
-	if held.Level != LevelWarning || !strings.Contains(strings.Join(held.Reasons, "; "), "held at warning: host free 90% > 50%") {
+	if held.Level != LevelWarning || !strings.Contains(strings.Join(held.Reasons, "; "), "held at warning: host free 90% > 25%") {
 		t.Fatalf("held = %s %v", held.Level, held.Reasons)
 	}
-	agreed := EvaluateMemoryPressure(memorySnapshot(45, 0, 40000), policy)
+	agreed := EvaluateMemoryPressure(memorySnapshot(20, 0, 46000), policy)
 	if agreed.Level != LevelCritical {
-		t.Fatalf("40 GB tree at 45%% free = %s %v", agreed.Level, agreed.Reasons)
+		t.Fatalf("46 GB tree at 20%% free = %s %v", agreed.Level, agreed.Reasons)
 	}
 	// Free memory and swap are still judged on their own.
 	low := EvaluateMemoryPressure(memorySnapshot(12, 0, 4000), policy)
@@ -306,5 +317,26 @@ func TestProcMemTotalMB(t *testing.T) {
 	}
 	if _, err := procMemTotalMB(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Fatal("missing file accepted")
+	}
+}
+
+func TestEmbeddedFootprintBandsNeedEvidence(t *testing.T) {
+	config := EmbeddedMemoryLevels()
+	anchors := append([]MemoryLevelAnchor(nil), config.Anchors...)
+	anchors[0].FootprintEvidence = ""
+	config.Anchors = anchors
+	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "anchors[0] (16gib-laptop).footprint_evidence: required") {
+		t.Fatalf("missing footprint evidence error = %v", err)
+	}
+}
+
+// The 16 GiB laptop keeps its protection on the footprint ladder: a tree that
+// owns 10 GB (its usual load in the 2026-11-17 window) is red, as the RSS
+// ladder had it.
+func TestOldMacFootprintLadderKeepsProtection(t *testing.T) {
+	policy := DefaultPolicy(oldMacMB)
+	got := EvaluateMemoryPressure(footprintSnapshot(53, 5560, 10060, true), policy)
+	if got.Level != LevelRed || !strings.Contains(strings.Join(got.Reasons, "; "), "footprint 10060 MB >= red 9728 MB") {
+		t.Fatalf("old Mac 10 GB footprint = %s %v", got.Level, got.Reasons)
 	}
 }

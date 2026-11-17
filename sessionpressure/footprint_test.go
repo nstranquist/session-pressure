@@ -44,6 +44,13 @@ func TestAnnotateTreeLSPFootprint(t *testing.T) {
 	}
 }
 
+func withoutFootprintBands(policy Policy) Policy {
+	t := &policy.Thresholds
+	t.TreeFootprintWarningMB, t.TreeFootprintRedMB, t.TreeFootprintCriticalMB = 0, 0, 0
+	t.AgentTotalFootprintWarningMB, t.AgentTotalFootprintRedMB, t.AgentTotalFootprintCriticalMB = 0, 0, 0
+	return policy
+}
+
 func footprintPolicy() Policy {
 	policy := DefaultPolicy(16 * 1024)
 	t := &policy.Thresholds
@@ -90,7 +97,7 @@ func TestFootprintRungsReplaceRSSWhenMeasured(t *testing.T) {
 		t.Fatalf("no footprint = %s %v", got.Level, got.Reasons)
 	}
 	// Bands off: RSS judges even with readings.
-	off := DefaultPolicy(16 * 1024)
+	off := withoutFootprintBands(DefaultPolicy(16 * 1024))
 	got = EvaluateMemoryPressure(footprintSnapshot(60, 7008, 5000, true), off)
 	if got.Level != LevelRed {
 		t.Fatalf("bands off = %s %v", got.Level, got.Reasons)
@@ -151,7 +158,16 @@ func TestMemoryLevelsFootprintBands(t *testing.T) {
 		t.Fatalf("applied %+v", policy.Thresholds)
 	}
 	// A config without footprint bands turns the rungs off again.
-	plain, _ := EmbeddedMemoryLevels().Resolve(32*1024, "")
+	plainConfig := EmbeddedMemoryLevels()
+	plainAnchors := append([]MemoryLevelAnchor(nil), plainConfig.Anchors...)
+	for index := range plainAnchors {
+		plainAnchors[index].TreeFootprintMB, plainAnchors[index].AgentTotalFootprintMB, plainAnchors[index].FootprintEvidence = nil, nil, ""
+	}
+	plainConfig.Anchors = plainAnchors
+	if err := plainConfig.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	plain, _ := plainConfig.Resolve(32*1024, "")
 	plain.Apply(&policy)
 	if policy.Thresholds.FootprintRungsEnabled() || policy.Thresholds.TreeFootprintWarningMB != 0 {
 		t.Fatalf("footprint bands left on: %+v", policy.Thresholds)
@@ -175,7 +191,7 @@ func TestMemoryLevelsFootprintBands(t *testing.T) {
 	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "tree_footprint_mb: must satisfy warning < red < critical") {
 		t.Fatalf("order error = %v", err)
 	}
-	host := EmbeddedMemoryLevels()
+	host := plainConfig
 	host.Hosts = map[string]MemoryLevelHost{"big": {Reason: "x", TreeFootprintMB: footprintBand(1, 2, 3)}}
 	if err := host.Validate(); err == nil || !strings.Contains(err.Error(), "the anchors have none") {
 		t.Fatalf("host without anchors error = %v", err)

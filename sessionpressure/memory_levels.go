@@ -58,10 +58,13 @@ type MemoryLevelAnchor struct {
 	AgentTotalMB LevelBand `json:"agent_total_mb"`
 	// Footprint bands judge phys_footprint sums where the host measures them
 	// (macOS). Every anchor sets both, or none does (footprint rungs off).
-	TreeFootprintMB          *LevelBand `json:"tree_footprint_mb,omitempty"`
-	AgentTotalFootprintMB    *LevelBand `json:"agent_total_footprint_mb,omitempty"`
-	RSSEscalationFreePercent float64    `json:"rss_escalation_free_percent"`
-	GuardMaxSelfRSSMB        float64    `json:"guard_max_self_rss_mb"`
+	TreeFootprintMB       *LevelBand `json:"tree_footprint_mb,omitempty"`
+	AgentTotalFootprintMB *LevelBand `json:"agent_total_footprint_mb,omitempty"`
+	// FootprintEvidence names the footprint history the bands come from.
+	// Required when the footprint bands are set.
+	FootprintEvidence        string  `json:"footprint_evidence,omitempty"`
+	RSSEscalationFreePercent float64 `json:"rss_escalation_free_percent"`
+	GuardMaxSelfRSSMB        float64 `json:"guard_max_self_rss_mb"`
 }
 
 // MemoryLevelHost overrides single resolved values for one host. Absent
@@ -236,6 +239,9 @@ func (config MemoryLevelsConfig) Validate() error {
 		}
 		if strings.TrimSpace(anchor.Evidence) == "" {
 			return fmt.Errorf("%sevidence: required; say which host and monitor history the values come from", prefix)
+		}
+		if anchor.TreeFootprintMB != nil && strings.TrimSpace(anchor.FootprintEvidence) == "" {
+			return fmt.Errorf("%sfootprint_evidence: required with footprint bands; say which footprint history they come from", prefix)
 		}
 		if err := anchor.levels().validate(prefix); err != nil {
 			return err
