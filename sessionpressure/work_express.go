@@ -1382,6 +1382,11 @@ type expressReuseReceipt struct {
 	Artifacts     []expressReuseArtifact `json:"artifacts"`
 }
 
+// expressSingleflightWaitHook runs when a caller has fixed its start time and
+// is about to wait on the singleflight lock. It is nil in production. A test
+// sets it to sequence two callers without a wall-clock window.
+var expressSingleflightWaitHook func()
+
 // RunWorkCommandWithExpressReuse wraps RunWorkCommand with concurrent
 // singleflight and short-lived, source-verified successful-result reuse for
 // express work and full Go tests. Host red admission remains fail-closed inside
@@ -1469,6 +1474,9 @@ func RunWorkCommandWithExpressReuse(coordinator *WorkCoordinator, options WorkRu
 			// wait=0 still allows a brief singleflight handoff so concurrent
 			// identical package jobs collapse instead of racing two leases.
 			lockTimeout = 50 * time.Millisecond
+		}
+		if expressSingleflightWaitHook != nil {
+			expressSingleflightWaitHook()
 		}
 		waitStarted := time.Now()
 		unlock, lockErr := filelock.AcquireContext(context.Background(), lockPath, lockTimeout)

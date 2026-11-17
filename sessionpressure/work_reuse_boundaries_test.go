@@ -14,11 +14,13 @@ import (
 
 func TestGoReuseSingleflightAndExplicitExecution(t *testing.T) {
 	root, counter := t.TempDir(), filepath.Join(t.TempDir(), "executions")
+	release := filepath.Join(t.TempDir(), "release")
 	t.Setenv("SP_REUSE_COUNTER", counter)
+	t.Setenv("SP_REUSE_RELEASE", release)
 	t.Setenv("NDEV_PRESSURE_NO_GREEN_EXPRESS", "1")
 	for path, body := range map[string]string{
 		"go.mod":          "module fixture.invalid/reuse\n\ngo 1.25\n",
-		"fixture_test.go": "package reuse\nimport (\"os\"; \"testing\"; \"time\")\nfunc TestExecution(t *testing.T) { f,e:=os.OpenFile(os.Getenv(\"SP_REUSE_COUNTER\"),os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600); if e!=nil {t.Fatal(e)}; f.WriteString(\"run\\n\"); f.Close(); time.Sleep(100*time.Millisecond) }\n",
+		"fixture_test.go": "package reuse\nimport (\"os\"; \"testing\"; \"time\")\nfunc TestExecution(t *testing.T) { f,e:=os.OpenFile(os.Getenv(\"SP_REUSE_COUNTER\"),os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600); if e!=nil {t.Fatal(e)}; f.WriteString(\"run\\n\"); f.Close(); for end := time.Now().Add(2*time.Minute); time.Now().Before(end); time.Sleep(5*time.Millisecond) { if _, e := os.Stat(os.Getenv(\"SP_REUSE_RELEASE\")); e == nil { return } }; t.Fatal(\"never released\") }\n",
 	} {
 		if err := os.WriteFile(filepath.Join(root, path), []byte(body), 0600); err != nil {
 			t.Fatal(err)
@@ -51,11 +53,33 @@ func TestGoReuseSingleflightAndExplicitExecution(t *testing.T) {
 		}
 		return err
 	}
-	start, results := make(chan struct{}), make(chan error, 2)
-	for i := 0; i < 2; i++ {
-		go func() { <-start; results <- run(false, false) }()
+	// The executing fixture blocks until release exists. Release it only after
+	// both callers fixed their start time and reached the singleflight lock, so
+	// the waiter cannot miss the in-flight run however slow the host is.
+	waiting := make(chan struct{}, 2)
+	expressSingleflightWaitHook = func() {
+		select {
+		case waiting <- struct{}{}:
+		default:
+		}
 	}
-	close(start)
+	t.Cleanup(func() { expressSingleflightWaitHook = nil })
+	results := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() { results <- run(false, false) }()
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-waiting:
+		case err := <-results:
+			t.Fatalf("caller finished before both reached the singleflight lock: %v", err)
+		case <-time.After(testWatchdog):
+			t.Fatal("callers never reached the singleflight lock")
+		}
+	}
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 2; i++ {
 		if err := <-results; err != nil {
 			t.Fatal(err)

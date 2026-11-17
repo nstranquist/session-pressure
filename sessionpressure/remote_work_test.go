@@ -11,7 +11,7 @@ import (
 )
 
 func TestRemoteModuleClosureAndSourceBoundaries(t *testing.T) {
-	base := t.TempDir()
+	base := tempDirOutsideRepository(t)
 	a := filepath.Join(base, "a")
 	b := filepath.Join(base, "b")
 	write := func(path, body string) {

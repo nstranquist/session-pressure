@@ -79,12 +79,16 @@ func TestRunWorkPrestartRefusals(t *testing.T) {
 				t.Fatalf("lost deadline cause: %v", err)
 			}
 			boundary := map[string]string{"capacity": "acquire test work lease:", "no_wait": "acquire test work lease:", "reacquire": "reacquire pressure reservation:", "before_start": "wait for heavy work:"}[stage]
-			if !strings.Contains(err.Error(), boundary) {
-				t.Fatalf("did not reach %s boundary: %v", stage, err)
-			}
 			events, readErr := NewWorkEventStore(coordinator.Dir).Read(WorkEventFilter{})
 			if readErr != nil {
 				t.Fatal(readErr)
+			}
+			if !strings.Contains(err.Error(), boundary) {
+				lifecycle := make([]string, 0, len(events))
+				for _, event := range events {
+					lifecycle = append(lifecycle, string(event.Event)+"/"+event.Outcome)
+				}
+				t.Fatalf("did not reach %s boundary after %d admission calls (lifecycle %v): %v", stage, calls, lifecycle, err)
 			}
 			for _, event := range events {
 				if event.Event == WorkEventStarted {

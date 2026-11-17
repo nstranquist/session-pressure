@@ -66,7 +66,7 @@ func TestRemoteWorkIneligibleReason(t *testing.T) {
 }
 
 func TestRemoteSourceSizeUsesUploadFilter(t *testing.T) {
-	root := t.TempDir()
+	root := tempDirOutsideRepository(t)
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test/size\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

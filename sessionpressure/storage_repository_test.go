@@ -190,10 +190,7 @@ func TestStorageRepositoryOverridePersistsAndCompares(t *testing.T) {
 }
 
 func TestStorageRepositoryRootResolvesCheckoutWorktreeAndCandidate(t *testing.T) {
-	base, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	base := tempDirOutsideRepository(t)
 	mkdir := func(parts ...string) string {
 		path := filepath.Join(append([]string{base}, parts...)...)
 		if err := os.MkdirAll(path, 0o700); err != nil {
@@ -351,5 +348,47 @@ func TestStorageRepositoryAdmissionStatuses(t *testing.T) {
 	unavailable := StorageRepositoryAdmissionStatuses(policy.Storage, StorageSnapshot{})
 	if unavailable[1].AdmitsNow != nil {
 		t.Fatal("unavailable sample must not claim an admission verdict")
+	}
+}
+
+// tempDirOutsideRepository returns a resolved empty directory that no
+// ancestor .git claims. A commit-delivery candidate points TMPDIR inside its
+// own checkout, so t.TempDir alone is not outside every repository there.
+func tempDirOutsideRepository(t *testing.T) string {
+	t.Helper()
+	for _, parent := range []string{"", "/tmp", "/var/tmp"} {
+		var dir string
+		if parent == "" {
+			dir = t.TempDir()
+		} else {
+			created, err := os.MkdirTemp(parent, "sessionpressure-test-")
+			if err != nil {
+				continue
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(created) })
+			dir = created
+		}
+		resolved, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !insideGitCheckout(resolved) {
+			return resolved
+		}
+	}
+	t.Skip("every temp location is inside a git checkout")
+	return ""
+}
+
+func insideGitCheckout(dir string) bool {
+	for {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
 	}
 }

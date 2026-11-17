@@ -50,8 +50,10 @@ func TestWorkStatusHonorsShortContext(t *testing.T) {
 	if timeout := workStateLockTimeout(context.Background()); timeout != workStateLockFallback {
 		t.Fatalf("lock timeout without a deadline = %s, want the %s fallback", timeout, workStateLockFallback)
 	}
-	if _, err = coordinator.Status(ctx); err == nil || !errors.Is(err, filelock.ErrTimeout) {
-		t.Fatalf("Status while the lease file is locked: %v; want a lock timeout", err)
+	// Under load the 80ms can pass before the lock wait starts. Either error
+	// shows that Status kept to the caller deadline instead of the fallback.
+	if _, err = coordinator.Status(ctx); !errors.Is(err, filelock.ErrTimeout) && !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Status while the lease file is locked: %v; want a lock timeout or the caller deadline", err)
 	}
 }
 
