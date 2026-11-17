@@ -37,7 +37,15 @@ import (
 const (
 	// ResourceHeadroomRuleVersion names this decision rule in events and
 	// replay. Change it with any change to the estimator or the ladder.
-	ResourceHeadroomRuleVersion = "mac-resource-headroom-v1"
+	// v2 (2026-11-17): the seven-day replay of v1 delayed 22% of starts that
+	// the live queue ran with no thrash or critical sample after them. 159
+	// of those stopped at level red, which comes from the static thresholds
+	// in the policy, and the rest at CPU. v2 no longer reads red as an input:
+	// work that fits measured headroom runs at red. And a CPU shortage alone
+	// never queues work: it slows the work to one core, because CPU
+	// contention costs time and does not thrash the host. v1 was never
+	// installed, so no event carries it.
+	ResourceHeadroomRuleVersion = "mac-resource-headroom-v2"
 
 	ResourceStepAdmit    = "admit"
 	ResourceStepThrottle = "throttle"
@@ -53,26 +61,30 @@ const (
 	ResourceDimensionCPU    = "cpu"
 	ResourceDimensionIO     = "io"
 
-	resourceReasonFits       = "fits"
-	resourceReasonNoSample   = "no_sample"
-	resourceReasonCritical   = "critical"
-	resourceReasonRed        = "red"
-	resourceReasonRedLane    = "red_lane"
-	resourceReasonThrash     = "swap_thrash"
-	resourceReasonNoRoom     = "no_headroom"
-	resourceReasonProgress   = "keep_progress"
-	resourceReasonPartial    = "partial_headroom"
-	resourceReasonDiskWrite  = "disk_write_high"
-	resourceReasonFairShare  = "fair_share"
-	resourceReasonReclaim    = "reclaimable_family"
-	resourceReasonPortable   = "portable"
-	resourceFallbackCores    = 2.0
-	resourceCoresKeyMinimum  = 3
-	resourceCoresScopeMin    = 5
-	resourceCoresKeyPercent  = 90
-	resourceCoresScopePct    = 95
-	resourceReserveDivisor   = 8
-	resourceFairShareMinimum = 0.5
+	resourceReasonFits      = "fits"
+	resourceReasonNoSample  = "no_sample"
+	resourceReasonCritical  = "critical"
+	resourceReasonRedLane   = "red_lane"
+	resourceReasonThrash    = "swap_thrash"
+	resourceReasonNoRoom    = "no_headroom"
+	resourceReasonProgress  = "keep_progress"
+	resourceReasonPartial   = "partial_headroom"
+	resourceReasonSaturated = "cpu_saturated"
+	// resourceReasonRedV1 and resourceHeadroomRuleVersionV1 keep rows from a
+	// v1 build readable. No v2 decision uses them.
+	resourceReasonRedV1           = "red"
+	resourceHeadroomRuleVersionV1 = "mac-resource-headroom-v1"
+	resourceReasonDiskWrite       = "disk_write_high"
+	resourceReasonFairShare       = "fair_share"
+	resourceReasonReclaim         = "reclaimable_family"
+	resourceReasonPortable        = "portable"
+	resourceFallbackCores         = 2.0
+	resourceCoresKeyMinimum       = 3
+	resourceCoresScopeMin         = 5
+	resourceCoresKeyPercent       = 90
+	resourceCoresScopePct         = 95
+	resourceReserveDivisor        = 8
+	resourceFairShareMinimum      = 0.5
 	// resourceCPURamp is how long a new lease's predicted cores are charged.
 	// The resident samples CPU every 15 s under pressure and every 90 s when
 	// calm, so a lease is in the host figure after at most one calm interval.
@@ -253,8 +265,8 @@ func (decision ShadowResourceDecision) Throttle() WorkThrottle {
 var (
 	resourceSteps      = []string{ResourceStepAdmit, ResourceStepThrottle, ResourceStepRemote, ResourceStepRelieve, ResourceStepQueue}
 	resourceDimensions = []string{ResourceDimensionNone, ResourceDimensionSample, ResourceDimensionLevel, ResourceDimensionSwap, ResourceDimensionMemory, ResourceDimensionCPU, ResourceDimensionIO}
-	resourceReasons    = []string{resourceReasonFits, resourceReasonNoSample, resourceReasonCritical, resourceReasonRed, resourceReasonRedLane,
-		resourceReasonThrash, resourceReasonNoRoom, resourceReasonProgress, resourceReasonPartial, resourceReasonDiskWrite,
+	resourceReasons    = []string{resourceReasonFits, resourceReasonNoSample, resourceReasonCritical, resourceReasonRedV1, resourceReasonRedLane,
+		resourceReasonThrash, resourceReasonNoRoom, resourceReasonProgress, resourceReasonPartial, resourceReasonSaturated, resourceReasonDiskWrite,
 		resourceReasonFairShare, resourceReasonReclaim, resourceReasonPortable}
 )
 
@@ -269,10 +281,16 @@ func validShadowResourceDecision(label string) bool {
 // decideResourceAdmission is pure. It walks the ladder and stops at the first
 // step that keeps every dimension above its boundary.
 //
-// Guarantees kept from the live queue: critical and red stay with the level
-// gate, and the capped red lane still admits light interactive work. A queue
-// that has nothing running never waits on a resource that only its own work
-// can free: it gets a throttled admit. A missing sample fails open.
+// Guarantees kept from the live queue: critical stays with the level gate,
+// and the capped red lane still admits light interactive work that would
+// otherwise wait at red. A queue that has nothing running never waits on a
+// resource that only its own work can free: it gets a throttled admit. A
+// missing sample fails open.
+//
+// Red is not an input by itself (v2). The level is set by static thresholds;
+// the decision reads the measured quantities behind it: memory headroom, the
+// swap-out rate and CPU headroom. Only memory and swap activity can queue
+// work, because only they can thrash the host.
 func decideResourceAdmission(headroom ResourceHeadroom, request ResourceRequest) ShadowResourceDecision {
 	decision := ShadowResourceDecision{
 		PredictedPeak: request.PredictedPeakMB, PeakSource: request.PeakSource,
@@ -284,9 +302,12 @@ func decideResourceAdmission(headroom ResourceHeadroom, request ResourceRequest)
 		decision.Step, decision.Dimension, decision.Reason = step, dimension, reason
 		return decision
 	}
+	redLane := headroom.Memory.Level == LevelRed && request.Interactive && request.FastLaneMaxWeight > 0 && request.Weight <= request.FastLaneMaxWeight
 	// away is the step for work that cannot start here now.
 	away := func(dimension, reason string, deficitMB int64) ShadowResourceDecision {
 		switch {
+		case redLane:
+			return set(ResourceStepAdmit, ResourceDimensionLevel, resourceReasonRedLane)
 		case request.RemoteEligible:
 			return set(ResourceStepRemote, dimension, resourceReasonPortable)
 		case deficitMB > 0 && headroom.ReclaimableMB >= deficitMB:
@@ -304,11 +325,6 @@ func decideResourceAdmission(headroom ResourceHeadroom, request ResourceRequest)
 		return set(ResourceStepAdmit, ResourceDimensionSample, resourceReasonNoSample)
 	case memory.Level == LevelCritical:
 		return away(ResourceDimensionLevel, resourceReasonCritical, 0)
-	case memory.Level == LevelRed:
-		if request.Interactive && request.FastLaneMaxWeight > 0 && request.Weight <= request.FastLaneMaxWeight {
-			return set(ResourceStepAdmit, ResourceDimensionLevel, resourceReasonRedLane)
-		}
-		return away(ResourceDimensionLevel, resourceReasonRed, 0)
 	case memory.SwapThrashLatched || memory.SwapOutMBPerSecond >= headroomSwapOutRefuseMBPerSecond:
 		return away(ResourceDimensionSwap, resourceReasonThrash, max(request.PredictedPeakMB, 1))
 	}
@@ -327,9 +343,11 @@ func decideResourceAdmission(headroom ResourceHeadroom, request ResourceRequest)
 			return throttle(int(cpu.HeadroomCores), ResourceDimensionCPU, resourceReasonPartial)
 		case request.RunningLeases == 0:
 			return throttle(1, ResourceDimensionCPU, resourceReasonProgress)
+		case request.RemoteEligible:
+			decision.BackgroundIO = false
+			return set(ResourceStepRemote, ResourceDimensionCPU, resourceReasonPortable)
 		}
-		decision.BackgroundIO = false
-		return away(ResourceDimensionCPU, resourceReasonNoRoom, 0)
+		return throttle(1, ResourceDimensionCPU, resourceReasonSaturated)
 	}
 	if decision.BackgroundIO {
 		return throttle(int(math.Ceil(request.PredictedCores)), ResourceDimensionIO, resourceReasonDiskWrite)

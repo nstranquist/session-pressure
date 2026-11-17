@@ -248,7 +248,7 @@ func (event WorkEvent) Validate() error {
 	if !validShadowResourceDecision(event.ShadowResourceDecision) {
 		return fmt.Errorf("work event shadow_resource_decision %q is not in the closed vocabulary", event.ShadowResourceDecision)
 	}
-	if event.ShadowResourceRule != "" && event.ShadowResourceRule != ResourceHeadroomRuleVersion {
+	if event.ShadowResourceRule != "" && event.ShadowResourceRule != ResourceHeadroomRuleVersion && event.ShadowResourceRule != resourceHeadroomRuleVersionV1 {
 		return fmt.Errorf("work event shadow_resource_rule %q is not a known rule version", event.ShadowResourceRule)
 	}
 	if event.ShadowThrottleCores < 0 || event.ThrottleCores < 0 {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -421,7 +422,32 @@ func TestResidentSampler64SampleCPUAndLatencySoak(t *testing.T) {
 		latest.SampleDurationP95MS, latest.SampleCPUTimeP95MS, latest.GuardIdleCPUDutyPercent, latest.GuardRSSMaxMB)
 }
 
+// residentRSSBudgetChildEnv marks the re-executed test process below.
+const residentRSSBudgetChildEnv = "SESSION_PRESSURE_RSS_BUDGET_CHILD"
+
 func TestResidentSamplerRepeatedFreshInventoriesStayWithinRSSBudget(t *testing.T) {
+	// The budget is about the resident, which is a fresh process. This test
+	// reads the RSS of its own process, and in a full package run earlier
+	// tests have already grown it (40 MB against 28 MB alone, 2026-11-17,
+	// WORK-1095). Run the measurement in a fresh copy of the test binary so
+	// test order cannot change the result.
+	if os.Getenv(residentRSSBudgetChildEnv) != "1" {
+		child := exec.Command(os.Args[0], "-test.run=^TestResidentSamplerRepeatedFreshInventoriesStayWithinRSSBudget$", "-test.v")
+		child.Env = append(os.Environ(), residentRSSBudgetChildEnv+"=1")
+		output, err := child.CombinedOutput()
+		for _, line := range strings.Split(string(output), "\n") {
+			if strings.Contains(line, "fresh inventories") || strings.Contains(line, "exceeds") {
+				t.Log(strings.TrimSpace(line))
+			}
+		}
+		if err != nil {
+			t.Fatalf("isolated RSS budget run failed: %v\n%s", err, output)
+		}
+		if !strings.Contains(string(output), "fresh inventories") {
+			t.Fatalf("isolated RSS budget run did not measure:\n%s", output)
+		}
+		return
+	}
 	policy := DefaultPolicy(16 * 1024)
 	policy.Thresholds.AgentTotalWarningMB = 1 << 50
 	policy.Thresholds.TreeWarningMB = 1 << 50

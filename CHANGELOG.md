@@ -11,13 +11,20 @@
   headroom, all scaled by the host's memory and logical CPUs, and no session
   count, slot count or weighted capacity. Nothing admits, refuses or
   throttles from it: the live queue is unchanged, and there is no policy
-  field to turn it on.
+  field to turn it on. The rule is `mac-resource-headroom-v2`: level red is
+  not an input by itself (work that fits measured headroom runs at red), and
+  a CPU shortage slows work to one core and never queues it. Only memory and
+  swap activity can queue work.
 - **`work evaluate` scores the resource candidate against host samples.**
   `replay.resource_headroom` joins resident samples to each lease start. It
   reports, per class, the share of starts the candidate would delay or
   throttle beside the live p95 wait, and how many starts that a swap-thrash
   latch or a critical level followed the candidate would still start
-  unthrottled. It does not change `promotion_ready`.
+  unthrottled. It estimates the candidate's wait per class
+  (`candidate_wait_p95_ms`): the live wait plus the hold until a later host
+  sample would release the work. It does not change `promotion_ready`.
+- **Resident RSS budget test no longer depends on test order.** It measures
+  in a fresh copy of the test binary (WORK-1095).
 - **Opt-in work throttle.** `NDEV_WORK_THROTTLE_CORES=N` limits a leased
   command's parallelism through `GOMAXPROCS`, `GOFLAGS -p`, `MAKEFLAGS -j`
   and the cmake, cargo, rayon, OpenMP, uv and node-gyp job variables. It

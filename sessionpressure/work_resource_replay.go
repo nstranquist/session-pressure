@@ -22,9 +22,12 @@ import (
 //     (queue, remote or relieve) or throttled, beside the p95 wait that the
 //     live queue gave that class?
 //
-// It is a counterfactual. It does not move later arrivals, so it cannot give
-// the candidate's own wait times, and it cannot stand in for an elapsed
-// shadow window.
+// It is a counterfactual. It does not move later arrivals. The candidate's
+// wait is therefore an estimate: for a start that the candidate would hold
+// (queue or relieve), the replay steps through the later host samples, with
+// the leases the live queue had running then, until the candidate would let
+// the work start. That time is added to the wait the live queue gave. It
+// cannot stand in for an elapsed shadow window.
 
 const (
 	resourceReplaySchemaVersion = 1
@@ -37,6 +40,9 @@ const (
 	// History is rebuilt at most this often in trace time. Rebuilding at
 	// every start is quadratic over a seven-day trace.
 	resourceReplayHistoryStep = 15 * time.Minute
+	// resourceReplayMaxHold bounds the search for the sample at which a held
+	// start would be released. A hold that reaches it is counted unresolved.
+	resourceReplayMaxHold = time.Hour
 )
 
 // ResourceReplayHost supplies the host constants that compact heartbeats do
@@ -54,6 +60,10 @@ type ResourceReplayClass struct {
 	DelayedPercent   float64        `json:"delayed_percent"`
 	ThrottledPercent float64        `json:"throttled_percent"`
 	LiveWaitP95MS    int64          `json:"live_wait_p95_ms"`
+	// CandidateWaitP95MS is the estimated p95 wait under the candidate: the
+	// live wait plus the hold until a later host sample would release the
+	// work. Remote and throttled starts add no hold.
+	CandidateWaitP95MS int64 `json:"candidate_wait_p95_ms"`
 }
 
 // ResourceReplay is the report.
@@ -73,6 +83,12 @@ type ResourceReplay struct {
 	// followed. CandidateUnthrottledBeforePressure is how many of them the
 	// candidate would have started with a plain admit; the candidate's goal
 	// is zero.
+	// Held counts starts the candidate would hold (queue or relieve).
+	// UnresolvedHolds reached resourceReplayMaxHold with no releasing sample.
+	Held                               int      `json:"held"`
+	UnresolvedHolds                    int      `json:"unresolved_holds"`
+	HoldP50MS                          int64    `json:"hold_p50_ms"`
+	HoldP95MS                          int64    `json:"hold_p95_ms"`
 	StartsBeforePressure               int      `json:"starts_before_pressure"`
 	CandidateUnthrottledBeforePressure int      `json:"candidate_unthrottled_before_pressure"`
 	CandidateThrottledBeforePressure   int      `json:"candidate_throttled_before_pressure"`
@@ -134,41 +150,68 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 		Steps: map[string]int{}, Dimensions: map[string]int{}, ByClass: []ResourceReplayClass{},
 		PressureWindowSeconds: resourceReplayPressureWindow.Seconds(),
 		Limitations: []string{
-			"counterfactual: later arrivals are not moved, so the candidate's own wait times are not modelled; live_wait_p95_ms is the wait the live queue gave",
+			"counterfactual: later arrivals are not moved; candidate_wait_p95_ms is the live wait plus an estimated hold, not a simulated queue",
+			"the hold estimate reads later host samples that include the held work itself, because the live queue ran it; this overstates pressure and the hold",
 			"host samples are resident heartbeats (5 min when calm) and level transitions; a start is evaluated against the latest sample up to 6 min old",
 			"heartbeats carry no memory families or disk-write state, so the relieve step and the io dimension appear only at level transitions",
 			"running leases are rebuilt from acquired and terminal events; a lease whose terminal event was lost stays open until the trace ends",
+			"a hold with no releasing sample inside one hour is counted as one hour and as unresolved",
 			"an elapsed shadow window, not this replay, is the evidence for promotion",
 		}}
 	sorted := slices.Clone(events)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Timestamp.Before(sorted[j].Timestamp) })
 	observations := resourceObservations(telemetry, host)
 
-	type openLease struct {
+	// Lease intervals, from acquired to terminal. A lease with no terminal
+	// event stays open to the end of the trace.
+	type leaseInterval struct {
 		status  WorkLeaseStatus
 		session string
+		end     time.Time
 	}
-	open := map[string]openLease{}
+	var intervals []leaseInterval
+	intervalIndex := map[string]int{}
+	for _, event := range sorted {
+		switch {
+		case event.Event == WorkEventAcquired:
+			intervalIndex[event.OperationID] = len(intervals)
+			intervals = append(intervals, leaseInterval{session: event.SessionDigest, status: WorkLeaseStatus{OperationID: event.OperationID,
+				Class: event.Class, Weight: event.Weight, StartedAt: event.Timestamp, PredictedPeakMB: event.ShadowPredictedPeakMB}})
+		case isWorkTerminalEvent(event.Event):
+			if index, ok := intervalIndex[event.OperationID]; ok && intervals[index].end.IsZero() {
+				intervals[index].end = event.Timestamp
+			}
+		}
+	}
+	// leasesAt returns the leases running at the instant, without operation.
+	// intervals is in start order, so the scan stops at the first later start.
+	leasesAt := func(at time.Time, operation string) ([]WorkLeaseStatus, map[string]string) {
+		var leases []WorkLeaseStatus
+		owners := map[string]string{}
+		for _, interval := range intervals {
+			if interval.status.StartedAt.After(at) {
+				break
+			}
+			if interval.status.OperationID == operation || (!interval.end.IsZero() && !interval.end.After(at)) {
+				continue
+			}
+			leases = append(leases, interval.status)
+			owners[interval.status.OperationID] = interval.session
+		}
+		return leases, owners
+	}
+
 	type classTally struct {
-		row   ResourceReplayClass
-		waits []int64
+		row            ResourceReplayClass
+		waits, heldFor []int64
 	}
 	classes := map[WorkClass]*classTally{}
+	var holds []int64
 	var history peakRSSHistory
 	var historyAt time.Time
 	historyStart, observationIndex := 0, 0
 	for i, event := range sorted {
-		if isWorkTerminalEvent(event.Event) {
-			delete(open, event.OperationID)
-			continue
-		}
-		if event.Event != WorkEventAcquired {
-			continue
-		}
-		lease := openLease{session: event.SessionDigest, status: WorkLeaseStatus{OperationID: event.OperationID, Class: event.Class,
-			Weight: event.Weight, StartedAt: event.Timestamp, PredictedPeakMB: event.ShadowPredictedPeakMB}}
-		if event.Timestamp.Before(from) {
-			open[event.OperationID] = lease
+		if event.Event != WorkEventAcquired || event.Timestamp.Before(from) {
 			continue
 		}
 		replay.Starts++
@@ -178,7 +221,6 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 		if len(observations) == 0 || observations[observationIndex].at.After(event.Timestamp) ||
 			event.Timestamp.Sub(observations[observationIndex].at) > resourceReplaySampleMaxAge {
 			replay.NoHostSample++
-			open[event.OperationID] = lease
 			continue
 		}
 		if historyAt.IsZero() || event.Timestamp.Sub(historyAt) >= resourceReplayHistoryStep {
@@ -187,23 +229,23 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 			}
 			history, historyAt = buildPeakRSSHistory(sorted[historyStart:i]), event.Timestamp
 		}
-		leases := make([]WorkLeaseStatus, 0, len(open))
-		owners := make(map[string]string, len(open))
-		for id, other := range open {
-			leases = append(leases, other.status)
-			owners[id] = other.session
-		}
-		snapshot := observations[observationIndex].snapshot
-		// The sample age was checked above against the replay bound; stamp it
-		// with the start time so the live two-minute freshness rule passes.
-		snapshot.Timestamp = event.Timestamp
-		headroom := computeResourceHeadroom(snapshot, true, leases, history, event.Timestamp)
 		request := ResourceRequest{Interactive: event.Interactive, Weight: event.Weight, FastLaneMaxWeight: fastLaneMaxWeight,
-			RemoteEligible: event.ToolFamily == ToolFamilyGo || event.ToolFamily == ToolFamilyNode, RunningLeases: len(leases)}
+			RemoteEligible: event.ToolFamily == ToolFamilyGo || event.ToolFamily == ToolFamilyNode}
 		request.PredictedPeakMB, request.PeakSource = history.predict(event.Class, event.Workload, event.PlacementKey)
 		request.PredictedCores, request.CoresSource, request.CoreSamples = history.cores.predict(event.Class, event.Workload, event.PlacementKey)
-		request.SessionShare, request.SessionLeases = sessionCostShare(leases, owners, event.SessionDigest, history)
-		decision := decideResourceAdmission(headroom, request)
+		// decideAt asks the candidate at one host sample. The sample age was
+		// checked against the replay bound; it is stamped with the decision
+		// time so the live two-minute freshness rule passes.
+		decideAt := func(observation resourceObservation, at time.Time) ShadowResourceDecision {
+			leases, owners := leasesAt(at, event.OperationID)
+			snapshot := observation.snapshot
+			snapshot.Timestamp = at
+			asked := request
+			asked.RunningLeases = len(leases)
+			asked.SessionShare, asked.SessionLeases = sessionCostShare(leases, owners, event.SessionDigest, history)
+			return decideResourceAdmission(computeResourceHeadroom(snapshot, true, leases, history, at), asked)
+		}
+		decision := decideAt(observations[observationIndex], event.Timestamp)
 
 		replay.Evaluated++
 		replay.Steps[decision.Step]++
@@ -216,6 +258,23 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 		tally.row.Starts++
 		tally.row.Steps[decision.Step]++
 		tally.waits = append(tally.waits, event.WaitMilliseconds)
+		hold := int64(0)
+		if decision.Step == ResourceStepQueue || decision.Step == ResourceStepRelieve {
+			replay.Held++
+			hold = resourceReplayMaxHold.Milliseconds()
+			released := false
+			for next := observationIndex + 1; next < len(observations) && observations[next].at.Sub(event.Timestamp) <= resourceReplayMaxHold; next++ {
+				if step := decideAt(observations[next], observations[next].at).Step; step != ResourceStepQueue && step != ResourceStepRelieve {
+					hold, released = observations[next].at.Sub(event.Timestamp).Milliseconds(), true
+					break
+				}
+			}
+			if !released {
+				replay.UnresolvedHolds++
+			}
+			holds = append(holds, hold)
+		}
+		tally.heldFor = append(tally.heldFor, event.WaitMilliseconds+hold)
 
 		followed := false
 		for next := observationIndex + 1; next < len(observations) && !observations[next].at.After(event.Timestamp.Add(resourceReplayPressureWindow)); next++ {
@@ -233,14 +292,15 @@ func ReplayResourceHeadroom(events []WorkEvent, telemetry []TelemetryEvent, host
 				replay.CandidateThrottledBeforePressure++
 			}
 		}
-		open[event.OperationID] = lease
 	}
+	replay.HoldP50MS, replay.HoldP95MS = percentileInt64(holds, 50), percentileInt64(holds, 95)
 	for _, tally := range classes {
 		row := tally.row
 		delayed := row.Steps[ResourceStepQueue] + row.Steps[ResourceStepRemote] + row.Steps[ResourceStepRelieve]
 		row.DelayedPercent = roundTenth(100 * float64(delayed) / float64(row.Starts))
 		row.ThrottledPercent = roundTenth(100 * float64(row.Steps[ResourceStepThrottle]) / float64(row.Starts))
 		row.LiveWaitP95MS = percentileInt64(tally.waits, 95)
+		row.CandidateWaitP95MS = percentileInt64(tally.heldFor, 95)
 		replay.ByClass = append(replay.ByClass, row)
 	}
 	sort.Slice(replay.ByClass, func(i, j int) bool { return replay.ByClass[i].Class < replay.ByClass[j].Class })

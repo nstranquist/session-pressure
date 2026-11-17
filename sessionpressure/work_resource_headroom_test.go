@@ -32,6 +32,8 @@ func TestResourceDecisionLadder(t *testing.T) {
 	critical.Level = LevelCritical
 	red := lowMemory
 	red.Level = LevelRed
+	redRoomy := roomy
+	redRoomy.Level = LevelRed
 	thrash := roomy
 	thrash.SwapThrashLatched = true
 	reclaimable := lowMemory
@@ -60,7 +62,7 @@ func TestResourceDecisionLadder(t *testing.T) {
 		{"fits", roomy, job, "admit:none:fits", 0, false},
 		{"stale sample fails open", stale, job, "admit:sample:no_sample", 0, false},
 		{"partial cpu throttles to the headroom", busyCPU, job, "throttle:cpu:partial_headroom", 1, false},
-		{"no cpu with other work queues", fullCPU, job, "queue:cpu:no_headroom", 0, false},
+		{"no cpu slows work to one core, never queues", fullCPU, job, "throttle:cpu:cpu_saturated", 1, false},
 		{"no cpu, portable goes remote", fullCPU, with(func(r *ResourceRequest) { r.RemoteEligible = true }), "remote:cpu:portable", 0, false},
 		{"no cpu, empty queue keeps progress", fullCPU, with(func(r *ResourceRequest) { r.RunningLeases = 0 }), "throttle:cpu:keep_progress", 1, false},
 		{"no memory with other work queues", lowMemory, job, "queue:memory:no_headroom", 0, false},
@@ -69,8 +71,9 @@ func TestResourceDecisionLadder(t *testing.T) {
 		{"no memory, portable goes remote before relief", reclaimable, with(func(r *ResourceRequest) { r.RemoteEligible = true }), "remote:memory:portable", 0, false},
 		{"swap thrash queues", thrash, job, "queue:swap:swap_thrash", 0, false},
 		{"critical queues", critical, job, "queue:level:critical", 0, false},
-		{"red queues background work", red, job, "queue:level:red", 0, false},
-		{"red lane admits light interactive work", red, with(func(r *ResourceRequest) { r.Interactive, r.Weight, r.FastLaneMaxWeight = true, 2, 2 }), "admit:level:red_lane", 0, false},
+		{"red without memory headroom queues on memory", red, job, "queue:memory:no_headroom", 0, false},
+		{"red alone does not delay work that fits", redRoomy, job, "admit:none:fits", 0, false},
+		{"red lane admits light interactive work that would wait", red, with(func(r *ResourceRequest) { r.Interactive, r.Weight, r.FastLaneMaxWeight = true, 2, 2 }), "admit:level:red_lane", 0, false},
 		{"high disk writes lower io priority", diskHigh, job, "throttle:io:disk_write_high", 4, true},
 		{"fair share halves the dominant session under warning", warning, with(func(r *ResourceRequest) { r.SessionShare, r.SessionLeases = 0.8, 3 }), "throttle:cpu:fair_share", 2, false},
 		{"fair share spares interactive work", warning, with(func(r *ResourceRequest) { r.SessionShare, r.SessionLeases, r.Interactive = 0.8, 3, true }), "admit:none:fits", 0, false},
@@ -188,7 +191,7 @@ func TestResourceAdmissionHasNoFixedCount(t *testing.T) {
 func TestResourceRampsWalkTheLadder(t *testing.T) {
 	rank := map[string]int{ResourceStepAdmit: 0, ResourceStepThrottle: 1, ResourceStepRemote: 2, ResourceStepRelieve: 2, ResourceStepQueue: 3}
 	job := ResourceRequest{PredictedPeakMB: 3000, PredictedCores: 6, RunningLeases: 2}
-	walk := func(name string, samples []Snapshot) {
+	walk := func(name, last string, samples []Snapshot) {
 		previous, seen := -1, map[string]bool{}
 		for _, snapshot := range samples {
 			decision := decideResourceAdmission(resourceHeadroomFixture(snapshot), job)
@@ -202,8 +205,8 @@ func TestResourceRampsWalkTheLadder(t *testing.T) {
 			previous = current
 			seen[decision.Step] = true
 		}
-		if !seen[ResourceStepAdmit] || !seen[ResourceStepQueue] {
-			t.Fatalf("%s: ramp did not reach both ends of the ladder: %v", name, seen)
+		if !seen[ResourceStepAdmit] || !seen[last] {
+			t.Fatalf("%s: ramp did not go from admit to %s: %v", name, last, seen)
 		}
 	}
 	var cpuRamp, memoryRamp []Snapshot
@@ -213,16 +216,14 @@ func TestResourceRampsWalkTheLadder(t *testing.T) {
 	for free := 60; free >= 0; free-- {
 		memoryRamp = append(memoryRamp, resourceHostFixture(49152, 14, free, 10))
 	}
-	walk("cpu", cpuRamp)
-	walk("memory", memoryRamp)
-	// The CPU ramp must pass through the throttle step: partial headroom is
-	// used, not wasted.
-	throttled := false
+	// CPU pressure ends at a throttle: it slows work and never queues it.
+	// Memory pressure ends at the queue: it can thrash the host.
+	walk("cpu", ResourceStepThrottle, cpuRamp)
+	walk("memory", ResourceStepQueue, memoryRamp)
 	for _, snapshot := range cpuRamp {
-		throttled = throttled || decideResourceAdmission(resourceHeadroomFixture(snapshot), job).Step == ResourceStepThrottle
-	}
-	if !throttled {
-		t.Fatal("cpu ramp never throttled")
+		if step := decideResourceAdmission(resourceHeadroomFixture(snapshot), job).Step; step == ResourceStepQueue {
+			t.Fatalf("cpu ramp queued work at %.0f%% host CPU", snapshot.HostCPUPercent)
+		}
 	}
 }
 
@@ -289,7 +290,7 @@ func TestSessionCostShareUsesLeasesNotTrees(t *testing.T) {
 }
 
 func TestShadowResourceDecisionVocabularyIsClosed(t *testing.T) {
-	for _, label := range []string{"", "admit:none:fits", "throttle:cpu:partial_headroom", "queue:swap:swap_thrash"} {
+	for _, label := range []string{"", "admit:none:fits", "throttle:cpu:partial_headroom", "throttle:cpu:cpu_saturated", "queue:swap:swap_thrash", "queue:level:red"} {
 		if !validShadowResourceDecision(label) {
 			t.Errorf("%q should be valid", label)
 		}

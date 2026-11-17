@@ -79,6 +79,16 @@ func TestReplayResourceHeadroomJoinsHostSamples(t *testing.T) {
 	if row.Starts != 4 || row.DelayedPercent != 25 || row.ThrottledPercent != 25 || row.LiveWaitP95MS != 9_000 {
 		t.Fatalf("test class row = %+v", row)
 	}
+	// op2b is held at +12 min. The +15 min sample is thrashing; the +25 min
+	// sample (60% free, both leases ended at +20 min) releases it. Hold 13
+	// min, on top of its 2 s live wait.
+	wantHold := (13 * time.Minute).Milliseconds()
+	if replay.Held != 1 || replay.UnresolvedHolds != 0 || replay.HoldP50MS != wantHold || replay.HoldP95MS != wantHold {
+		t.Fatalf("held=%d unresolved=%d hold p50=%d p95=%d, want one hold of %d ms", replay.Held, replay.UnresolvedHolds, replay.HoldP50MS, replay.HoldP95MS, wantHold)
+	}
+	if row.CandidateWaitP95MS != wantHold+2_000 {
+		t.Fatalf("candidate wait p95 = %d, want %d", row.CandidateWaitP95MS, wantHold+2_000)
+	}
 	if len(replay.Limitations) == 0 {
 		t.Fatal("the replay must state its limits")
 	}

@@ -137,3 +137,64 @@ No Codex session was live. The interface is in a WORK-3 comment of
 - Measure deviation 2 before any talk of promotion.
 - KEP with a typed sidecar: not written. This is a cross-subsystem contract
   (work events are read by the delivery worker), so one is owed.
+
+## Rule v2, same day (2026-11-17, about 13:30Z)
+
+Status: 2026-11-17, source and tests written, not installed. The merge owner
+(claude session 6b131cdd) builds and installs one 0.7.3 release that holds
+this, after it merges refs/old-mac/main-20261117 on top. Nico approved the
+48-hour shadow install after that merge, shadow only ("Yes, after merge",
+relayed by the triage session).
+
+Changes from v1, made because of deviation 2 above:
+
+- Level red is not an input by itself. Work that fits measured headroom runs
+  at red. Critical stays a gate. The red lane still admits light interactive
+  work that would otherwise wait.
+- A CPU shortage never queues work. It throttles to the cores that are free,
+  or to one core (`cpu_saturated`). Only memory and swap activity can queue.
+  Reason: CPU contention costs time and does not thrash the host. This is a
+  design choice by claude/bb3c2dab; the WORK-3 owner has not reviewed it.
+- The replay estimates the candidate's wait: live wait plus the hold until a
+  later host sample would release held work (`candidate_wait_p95_ms`,
+  `held`, `hold_p50_ms`, `hold_p95_ms`, `unresolved_holds`).
+- Rows from a v1 build stay readable (rule name and the `red` reason).
+- WORK-1095: the resident RSS budget test measures in a fresh copy of the
+  test binary.
+
+Proof seen: `go test ./sessionpressure ./sessionpressurecmd -count=1` ok
+(117.0 s and 10.5 s), with the RSS test at 27.5 MB. `go vet` exit 0.
+
+Seven-day replay under v2, from source. The window moved, so it holds 955
+starts against 891 for v1. The two runs are not the same sample.
+
+| Step | v1 (891 starts) | v2 (955 starts) |
+| --- | --- | --- |
+| admit | 67.3% | 67.5% |
+| throttle | 9.2% | 30.4% |
+| remote | 1.2% | 2.1% |
+| queue | 22.2% | 0% |
+
+v2 deciding dimension: none 644, cpu 292, io 18. Held starts: 0, so the
+estimated candidate p95 wait equals the live p95 wait in every class.
+
+| Class | Starts | Throttled | Remote | Live and candidate wait p95 |
+| --- | --- | --- | --- | --- |
+| browser | 17 | 17.6% | 0% | 385.8 s |
+| build | 151 | 27.8% | 1.3% | 303.8 s |
+| express-build | 193 | 31.6% | 5.7% | 146.1 s |
+| express-test | 263 | 23.6% | 2.3% | 66.9 s |
+| heavy | 4 | 50% | 0% | 276.8 s |
+| install | 21 | 52.4% | 0% | 26.3 s |
+| test | 305 | 35.7% | 0.3% | 229.1 s |
+
+What this does and does not show:
+
+- v2 would hold nothing in this window. Memory never decided: the 48 GB host
+  had headroom for every start.
+- v2 would throttle 30% of starts. A throttled run takes longer. The replay
+  does not model that runtime cost, so "wait is equal" is not "cost is equal".
+- Safety is still without evidence: no start in the window was followed by
+  thrash or a critical level.
+- `work evaluate` exits 1 because the scheduler candidate's promotion gate is
+  not ready. That is WORK-3's gate and is the same before this change.
