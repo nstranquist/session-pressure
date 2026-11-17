@@ -790,17 +790,109 @@ func (store *WorkEventStore) CountWrapperInterruptOperations(since, generatedAt 
 	return newWrapperInterruptCounter(store.Dir).count(since, generatedAt)
 }
 
+// workEventLifecycle is the per-operation validation state. It is compact
+// because the resident keeps one per operation for a whole day (about 5,000
+// by evening, WORK-1141): identities are 64-bit hashes, enum strings are the
+// package constants, seen event types are a bit set, and the terminal event
+// keeps only the fields the reconciliation rule reads.
 type workEventLifecycle struct {
 	class         WorkClass
 	weight        int
-	leaseID       string
-	commandDigest string
-	sessionDigest string
+	leaseID       uint64
+	commandDigest uint64
+	sessionDigest uint64
+	lastOrder     int8
 	reserved      bool
-	lastOrder     int
-	seen          map[WorkEventType]struct{}
+	seen          uint16
+	otherSeen     map[WorkEventType]struct{} // event types outside the closed set
 	terminal      WorkEventType
-	terminalEvent WorkEvent
+	terminalEvent workTerminalRecord
+}
+
+// workTerminalRecord is the part of a terminal event that
+// lateRealTerminalAfter reads. Operation, class and weight are the
+// lifecycle's own.
+type workTerminalRecord struct {
+	event   WorkEventType
+	outcome string
+	leaseID uint64
+	pid     int
+	at      time.Time
+}
+
+func workTerminalRecordOf(event WorkEvent) workTerminalRecord {
+	outcome := ""
+	switch event.Outcome {
+	case "dead_lease_owner":
+		outcome = "dead_lease_owner"
+	case "reused_lease_pid":
+		outcome = "reused_lease_pid"
+	}
+	return workTerminalRecord{event: internWorkEventType(event.Event), outcome: outcome, leaseID: workIdentityHash(event.LeaseID), pid: event.PID, at: event.Timestamp}
+}
+
+// workIdentityHash is FNV-1a 64 of an identity; zero means empty.
+func workIdentityHash(value string) uint64 {
+	if value == "" {
+		return 0
+	}
+	hash := uint64(14695981039346656037)
+	for index := 0; index < len(value); index++ {
+		hash ^= uint64(value[index])
+		hash *= 1099511628211
+	}
+	if hash == 0 {
+		hash = 1
+	}
+	return hash
+}
+
+var workEventTypeBits = map[WorkEventType]uint16{
+	WorkEventQueued: 1 << 0, WorkEventAcquired: 1 << 1, WorkEventReserved: 1 << 2, WorkEventReacquired: 1 << 3,
+	WorkEventStarted: 1 << 4, WorkEventCompleted: 1 << 5, WorkEventFailed: 1 << 6, WorkEventCancelled: 1 << 7,
+	WorkEventExpired: 1 << 8, WorkEventReused: 1 << 9, WorkEventOverrideRequested: 1 << 10,
+}
+
+var workClassConstants = map[WorkClass]WorkClass{
+	WorkClassTest: WorkClassTest, WorkClassBuild: WorkClassBuild, WorkClassExpressTest: WorkClassExpressTest,
+	WorkClassExpressBuild: WorkClassExpressBuild, WorkClassInstall: WorkClassInstall, WorkClassEmulator: WorkClassEmulator,
+	WorkClassBrowser: WorkClassBrowser, WorkClassHeavy: WorkClassHeavy, WorkClassBenchmark: WorkClassBenchmark,
+	WorkClassBenchmarkExclusive: WorkClassBenchmarkExclusive, WorkClassReclaim: WorkClassReclaim,
+}
+
+// internWorkEventType returns the package constant so a decoded row's string
+// is not retained.
+func internWorkEventType(value WorkEventType) WorkEventType {
+	if workEventTypeBits[value] == 0 {
+		return value
+	}
+	for known := range workEventTypeBits {
+		if known == value {
+			return known
+		}
+	}
+	return value
+}
+
+func internWorkClass(value WorkClass) WorkClass {
+	if known, ok := workClassConstants[value]; ok {
+		return known
+	}
+	return value
+}
+
+func (state *workEventLifecycle) markSeen(eventType WorkEventType) (duplicate bool) {
+	if bit := workEventTypeBits[eventType]; bit != 0 {
+		duplicate = state.seen&bit != 0
+		state.seen |= bit
+		return duplicate
+	}
+	if state.otherSeen == nil {
+		state.otherSeen = make(map[WorkEventType]struct{})
+	}
+	_, duplicate = state.otherSeen[eventType]
+	state.otherSeen[eventType] = struct{}{}
+	return duplicate
 }
 
 type workEventLifecycleValidator struct {
@@ -814,16 +906,15 @@ func newWorkEventLifecycleValidator() *workEventLifecycleValidator {
 func (validator *workEventLifecycleValidator) add(event WorkEvent) error {
 	state := validator.operations[event.OperationID]
 	if state == nil {
-		state = &workEventLifecycle{class: event.Class, weight: event.Weight, lastOrder: -1, seen: make(map[WorkEventType]struct{})}
+		state = &workEventLifecycle{class: internWorkClass(event.Class), weight: event.Weight, lastOrder: -1}
 		validator.operations[event.OperationID] = state
 	}
 	if event.Class != state.class || event.Weight != state.weight {
 		return fmt.Errorf("work operation %s changed class or weight", event.OperationID)
 	}
-	if _, duplicate := state.seen[event.Event]; duplicate && event.Event != WorkEventOverrideRequested && event.Event != WorkEventReserved && event.Event != WorkEventReacquired {
+	if duplicate := state.markSeen(event.Event); duplicate && event.Event != WorkEventOverrideRequested && event.Event != WorkEventReserved && event.Event != WorkEventReacquired {
 		return fmt.Errorf("work operation %s contains duplicate %s event", event.OperationID, event.Event)
 	}
-	state.seen[event.Event] = struct{}{}
 	// An override is an operator annotation, not a lifecycle stage. A pressure
 	// reservation returns an operation to the waiter set, where OverrideWaiter
 	// still finds it, so override_requested is legitimately reachable after
@@ -835,20 +926,20 @@ func (validator *workEventLifecycleValidator) add(event WorkEvent) error {
 			return fmt.Errorf("work operation %s recorded %s after terminal %s", event.OperationID, event.Event, state.terminal)
 		}
 	} else {
-		order := workEventOrder(event.Event)
-		pressureCycle := event.Event == WorkEventReserved && state.lastOrder == workEventOrder(WorkEventReacquired) && !state.reserved
+		order := int8(workEventOrder(event.Event))
+		pressureCycle := event.Event == WorkEventReserved && state.lastOrder == int8(workEventOrder(WorkEventReacquired)) && !state.reserved
 		if order < state.lastOrder && !pressureCycle {
 			return fmt.Errorf("work operation %s lifecycle is out of order at %s", event.OperationID, event.Event)
 		}
 		state.lastOrder = order
 	}
-	if event.LeaseID != "" {
-		if state.leaseID != "" && state.leaseID != event.LeaseID {
+	if leaseID := workIdentityHash(event.LeaseID); leaseID != 0 {
+		if state.leaseID != 0 && state.leaseID != leaseID {
 			if event.Event != WorkEventReacquired || !state.reserved {
 				return fmt.Errorf("work operation %s changed lease identity", event.OperationID)
 			}
 		}
-		state.leaseID = event.LeaseID
+		state.leaseID = leaseID
 	}
 	if event.Event == WorkEventReserved {
 		if state.reserved {
@@ -862,17 +953,17 @@ func (validator *workEventLifecycleValidator) add(event WorkEvent) error {
 		}
 		state.reserved = false
 	}
-	if event.CommandDigest != "" {
-		if state.commandDigest != "" && state.commandDigest != event.CommandDigest {
+	if digest := workIdentityHash(event.CommandDigest); digest != 0 {
+		if state.commandDigest != 0 && state.commandDigest != digest {
 			return fmt.Errorf("work operation %s changed command digest", event.OperationID)
 		}
-		state.commandDigest = event.CommandDigest
+		state.commandDigest = digest
 	}
-	if event.SessionDigest != "" {
-		if state.sessionDigest != "" && state.sessionDigest != event.SessionDigest {
+	if digest := workIdentityHash(event.SessionDigest); digest != 0 {
+		if state.sessionDigest != 0 && state.sessionDigest != digest {
 			return fmt.Errorf("work operation %s changed session digest", event.OperationID)
 		}
-		state.sessionDigest = event.SessionDigest
+		state.sessionDigest = digest
 	}
 	if isWorkTerminalEvent(event.Event) {
 		if state.terminal != "" {
@@ -881,18 +972,18 @@ func (validator *workEventLifecycleValidator) add(event WorkEvent) error {
 				// the real child outcome. Consumers retain the first terminal event.
 				return nil
 			}
-			if isLateRealTerminalAfterReconciliation(state.terminalEvent, event) {
+			if state.terminalEvent.lateRealTerminalAfter(event) {
 				// A reconciler can observe the child exit in the narrow interval before
 				// its wrapper persists the real outcome. Preserve both immutable rows,
 				// but make the same-lease receipt the lifecycle authority.
-				state.terminal = event.Event
-				state.terminalEvent = event
+				state.terminal = internWorkEventType(event.Event)
+				state.terminalEvent = workTerminalRecordOf(event)
 				return nil
 			}
 			return fmt.Errorf("work operation %s contains multiple terminal events %s and %s", event.OperationID, state.terminal, event.Event)
 		}
-		state.terminal = event.Event
-		state.terminalEvent = event
+		state.terminal = internWorkEventType(event.Event)
+		state.terminalEvent = workTerminalRecordOf(event)
 	}
 	return nil
 }
@@ -978,7 +1069,17 @@ func isReconciliationExpiration(outcome string) bool {
 const maximumLateReconciliationTerminalLag = 5 * time.Second
 
 func isLateRealTerminalAfterReconciliation(expired, terminal WorkEvent) bool {
-	if expired.Event != WorkEventExpired || (expired.Outcome != "dead_lease_owner" && expired.Outcome != "reused_lease_pid") {
+	if expired.OperationID != terminal.OperationID || expired.Class != terminal.Class || expired.Weight != terminal.Weight {
+		return false
+	}
+	return workTerminalRecordOf(expired).lateRealTerminalAfter(terminal)
+}
+
+// lateRealTerminalAfter reports whether terminal is the wrapper's real outcome
+// arriving after a reconciliation expiry of the same lease and pid. The
+// caller has already matched operation, class and weight.
+func (expired workTerminalRecord) lateRealTerminalAfter(terminal WorkEvent) bool {
+	if expired.event != WorkEventExpired || expired.outcome == "" {
 		return false
 	}
 	if terminal.Event != WorkEventCompleted && terminal.Event != WorkEventFailed && terminal.Event != WorkEventCancelled {
@@ -987,13 +1088,10 @@ func isLateRealTerminalAfterReconciliation(expired, terminal WorkEvent) bool {
 	if terminal.ExitCode == nil || !validSHA256Digest(terminal.CommandDigest) {
 		return false
 	}
-	if expired.OperationID != terminal.OperationID || expired.Class != terminal.Class || expired.Weight != terminal.Weight {
+	if expired.leaseID == 0 || expired.leaseID != workIdentityHash(terminal.LeaseID) || expired.pid <= 0 || expired.pid != terminal.PID {
 		return false
 	}
-	if expired.LeaseID == "" || expired.LeaseID != terminal.LeaseID || expired.PID <= 0 || expired.PID != terminal.PID {
-		return false
-	}
-	lag := terminal.Timestamp.Sub(expired.Timestamp)
+	lag := terminal.Timestamp.Sub(expired.at)
 	return lag >= 0 && lag <= maximumLateReconciliationTerminalLag
 }
 

@@ -179,10 +179,28 @@ Fixes in the same delivery as the corrected disk-write trigger:
   (523). All 20 incremental counts took 108 to 147 ms in total. The old code
   took 136 to 161 ms for each count. Event IDs are kept as 64-bit FNV hashes.
 
+## Third profile and the memory fix (2026-11-17 19:45Z)
+
+A 600s profile of 56f36b8 read 1510ms, 0.25%. The level was normal in 19 of
+21 checks, but the host was busy (host CPU 52 to 99%, disk state high). Costs: pressure
+sample 0.35s, disk-write observer 0.19s (was 0.51s), browser enforcement
+0.17s (was 0.62s), GC mark 0.16s, memory-family classification 0.12s. The
+wrapper-interrupt count no longer shows in the top 80 nodes.
+
+RSS went from 47 MB to 51 MB (budget 44 MB). The incremental counter kept
+10.4 MB of validator state for 5,166 operations, about 2 KB each, mostly a
+full copy of each terminal event. The shared lifecycle validator is now
+compact: identities are 64-bit FNV hashes, enum strings are the package
+constants, seen types are a bit set, and the terminal event keeps only the
+fields the reconciliation rule reads. Retained state on the same data: 1.9 MB,
+same count (523). The rule logic does not change. A hash collision could
+hide a changed lease or digest only with a probability of about 2^-64 per
+pair.
+
 ## Open
 
-- Measure live duty after this delivery is installed, at level normal,
-  against 0.25%.
+- Measure live duty and RSS after the compact validator is installed,
+  against 0.25% and 44 MB.
 - The control record is written on every sample while browsers are blocked
   (`LastSample` advances). That is pressure-time cost, not idle cost.
 - The pressure sample itself is now the largest cost.
