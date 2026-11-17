@@ -168,8 +168,113 @@ Installed checks:
   (23.7 MB of 44 MB). The next sample (10:52:26Z) was normal with
   `monitor_healthy: true` and no budget reason (self RSS 25.5 MB of 44 MB).
 
+## mac-48g limit raise (2026-11-17 13:22Z, another session)
+
+From 12:24Z mac-48g judged red on `claude tree RSS sum 27885 MB >= red 26624
+MB` at 50% free and 0 swap: the 48gib anchor held the RSS rungs at warning
+only while free was above 50%. That held every nicos-tools gate (0 landed in
+30 minutes, backlog 52). Nico: "let's absolutely raise the limits". The
+landing session wrote a data-dir `memory-levels.json` on mac-48g with a host
+override: tree RSS 28672/36864/45056 MB and `rss_escalation_free_percent` 25.
+The footprint calibration below folds that override into the 48gib anchor and
+retires the data-dir file.
+
+## Footprint calibration (WORK-1105)
+
+### Change
+
+- The native inventory keeps `phys_footprint` from the `proc_pid_rusage` V2
+  call it already makes per process: no extra syscall. Trees, the agent
+  total, latest.json and heartbeats carry footprint next to the RSS sums
+  (`a64443a`, was `ff27be4` before the history rewrite).
+- Anchors may set `tree_footprint_mb` and `agent_total_footprint_mb` (every
+  anchor or none, with a required `footprint_evidence`). Where a sample has
+  footprint readings, those bands judge the tree and agent-total rungs; RSS
+  bands are the fallback. A process without a reading counts with its RSS.
+
+### Data
+
+One sample a minute from each resident's own latest.json (no extra sampling),
+2026-11-17 12:25Z to 13:47Z: 83 samples on mac-16g, 82 on mac-48g. The window
+was planned for 4 hours and was cut at 80 minutes on request; it includes
+mac-48g falling to 40% free, the case that matters. Raw files and the Go
+analysis and replay programs are in muse-workspace
+`session-pressure-calibration/footprint/`.
+
+| | mac-16g | mac-48g |
+|---|---|---|
+| free % | 46..57 | 40..70 |
+| swap MB | 1135..1199 | 0 |
+| tree RSS MB p50 / max | 5560 / 6465 | 23003 / 28524 |
+| tree footprint MB p50 / max | 10060 / 11962 | 23372 / 26954 |
+| tree footprint / RSS p50 | 1.8 | 1.1 |
+| free vs agent RSS, r | +0.63 | +0.42 |
+| free vs agent footprint, r | -0.36 | -0.78 |
+
+On both hosts free memory rises with the RSS sum: under pressure the kernel
+compresses and swaps pages out of RSS, so RSS reads as the opposite of load.
+Footprint counts those pages and tracks free memory the right way. On mac-16g
+footprint is about twice RSS for that reason.
+
+### Bands
+
+- mac-48g: the fit of free % on footprint (r -0.78) puts free at 35/25/15% at
+  tree footprint 30708/34086/37464 MB and agent footprint 32122/34927/37733
+  MB. Bands sit there, rounded down to 1 GiB, one step ahead of the free
+  rungs: tree 30720/33792/36864, agent total 31744/34816/37888. The RSS
+  fallback takes the 13:22Z override (tree 28672/36864/45056, hold at 25%).
+- mac-16g: the fit is too weak to extrapolate (r -0.36 over 46..57% free), so
+  the tuned RSS ladder is carried over. Red sits at the footprint quantile
+  where RSS red sat (q0.17, 9826 MB, rounded down to 9728); warning and
+  critical are the RSS bands times the median ratio 1.8. Tree 5632/9728/12800,
+  agent total 15360/21504/25600.
+
+Replay of the collected samples through `EvaluateMemoryPressure`:
+
+| | footprint bands | RSS ladder alone |
+|---|---|---|
+| mac-16g | red 71, warning 12 | red 68, warning 15 |
+| mac-48g | normal 82 | normal 82 |
+
+mac-16g keeps its protection, now on a measure that follows free memory. It
+is red most of the window, as it was before; that is its tuned choice, not a
+change here.
+
+### Resident cost
+
+The footprint is read from a struct the inventory already fetched, so CPU
+does not change; memory grows by 16 bytes a process.
+
+| | sample CPU p95 before / after | guard RSS max in window |
+|---|---|---|
+| mac-16g | 26.0 / 26.0 ms (budget 150) | 30.3 MB, p95 28.1 (budget 30) |
+| mac-48g | 31.7 / 29.7 ms (budget 50) | 36.3 MB (budget 44) |
+
+mac-16g guard RSS already ran 29.1..29.5 MB before this change; its
+rolling-p95 budget check passes. It has the least headroom of the two.
+
+### Install (2026-11-17 13:55Z)
+
+c186238 passed `go vet ./...`, `go test ./...`, darwin vet and the release
+build on runner-3 (job c1b05ad8), and the darwin packages locally. Installed
+with `session-pressure-release install --expected-current` on mac-16g (from
+ff27be4) and mac-48g (from 6744a73), then `monitor install` and
+`policy memory-levels calibrated`. On mac-48g the data-dir
+`memory-levels.json` (the 13:22Z override) moved to
+`memory-levels.json.folded-into-c186238-20261117T1400Z`, so the embedded
+anchors apply. `policy memory-levels show` on both: source embedded,
+footprint bands on.
+
+First samples after install:
+
+| Host | Level | Cause | Free | Agent footprint | Guard RSS |
+|---|---|---|---|---|---|
+| mac-16g | red | tree footprint 11298 MB >= red 9728 MB | 52% | 11565 MB | 18.5 MB |
+| mac-48g | red | host CPU 99.6% (memory rungs normal) | 44% | 28960 MB | 24.1 MB |
+
 ## Open
 
-- `phys_footprint` per process in the native inventory, so the RSS rungs stop
-  double counting shared pages.
-- Recalibrate the 48 GiB anchor after a week of M4 history (72 samples today).
+- Recheck both footprint ladders after a week of history. The heartbeats now
+  carry `agent_footprint_mb` and `top_tree_footprint_mb`, so the analysis can
+  run on the residents' own snapshots.
+- mac-16g guard RSS margin is under 2 MB.

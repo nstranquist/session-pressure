@@ -16,6 +16,12 @@
   `tree_footprint_mb` and `agent_total_footprint_mb`; where a sample measured
   footprint, those bands judge the tree and agent-total rungs in place of
   RSS. RSS bands remain the fallback (Linux, no readings).
+- **Footprint bands calibrated and on.** Both shipped anchors now judge the
+  tree and agent-total rungs by footprint, from collected history on the
+  16 GiB and 48 GiB Macs (free memory tracks footprint, r -0.78 on the 48 GiB
+  host, and runs against the RSS sum). The 48 GiB anchor also takes the
+  2026-11-17 limit raise as its RSS fallback (tree 28672/36864/45056 MB,
+  hold at 25% free). Anchors with footprint bands need `footprint_evidence`.
 
 ## 0.7.3 — 2026-11-17
 

@@ -10,18 +10,24 @@
       "swap_mb": {"warning": 4096, "red": 8192, "critical": 12288},
       "tree_mb": {"warning": 3072, "red": 5120, "critical": 7168},
       "agent_total_mb": {"warning": 8192, "red": 11264, "critical": 13312},
+      "tree_footprint_mb": {"warning": 5632, "red": 9728, "critical": 12800},
+      "agent_total_footprint_mb": {"warning": 15360, "red": 21504, "critical": 25600},
+      "footprint_evidence": "mac-16g 2026-11-17 12:25..13:46Z, 81 one-minute samples of the resident's latest.json: free 46..57%, swap 1135..1199 MB; tree footprint p50 10060, p95 10665, max 11962 MB; tree footprint/RSS p50 1.8 (compressed and swapped pages count in footprint, not in RSS). Free tracks RSS the wrong way (r +0.63) and footprint the right way but weakly (r -0.36, narrow range), so the tuned RSS ladder is carried over: red at the footprint quantile where RSS red sat (q0.17, 9826 MB, rounded down), warning and critical at the RSS bands times the median ratio.",
       "rss_escalation_free_percent": 100,
       "guard_max_self_rss_mb": 30
     },
     {
       "name": "48gib-workstation",
       "memory_gib": 48,
-      "evidence": "mac-48g (48 GiB, M4 Pro) 2026-11-17 04:10..10:25Z, 72 samples: free p5 68%, min 46%; swap 0 in every sample; claude tree RSS sum p50 13814 MB, p95 18294 MB, max 21746 MB at 90% free. Summed RSS double counts shared pages across about 1000 processes, so the RSS rungs only reach red or critical when the kernel free level agrees (50% or lower). Guard self RSS on the M4 (76 samples to 10:47Z, about 1000 processes in the inventory): p50 34.0 MB, p95 37.1 MB, p99 40.0 MB, max 40.0 MB; the budget is about 1.1x p99.",
+      "evidence": "mac-48g (48 GiB, M4 Pro) 2026-11-17 04:10..10:25Z, 72 samples: free p5 68%, min 46%; swap 0 in every sample; claude tree RSS sum p50 13814 MB, p95 18294 MB, max 21746 MB at 90% free. Summed RSS double counts shared pages across about 1000 processes, so the RSS rungs only reach red or critical when the kernel free level agrees. Guard self RSS on the M4 (76 samples to 10:47Z, about 1000 processes in the inventory): p50 34.0 MB, p95 37.1 MB, p99 40.0 MB, max 40.0 MB; the budget is about 1.1x p99.",
       "free_percent": {"warning": 25, "red": 15, "critical": 8},
       "swap_mb": {"warning": 12288, "red": 24576, "critical": 36864},
-      "tree_mb": {"warning": 20480, "red": 26624, "critical": 32768},
+      "tree_mb": {"warning": 28672, "red": 36864, "critical": 45056},
       "agent_total_mb": {"warning": 36864, "red": 45056, "critical": 53248},
-      "rss_escalation_free_percent": 50,
+      "tree_footprint_mb": {"warning": 30720, "red": 33792, "critical": 36864},
+      "agent_total_footprint_mb": {"warning": 31744, "red": 34816, "critical": 37888},
+      "footprint_evidence": "mac-48g 2026-11-17 12:25..13:47Z, 82 one-minute samples: free 40..70%, swap 0; agent footprint p50 26317, max 29430 MB; tree footprint p50 23372, max 26954 MB. Free tracks footprint (r -0.78) and not RSS (r +0.42). Fit: free reaches 35/25/15% at tree footprint 30708/34086/37464 MB and agent footprint 32122/34927/37733 MB; bands sit there, rounded down to 1 GiB, one step ahead of the free rungs. The RSS tree band and the 25% hold are the Nico-approved 2026-11-17 13:22Z raise (fallback only where footprint is not measured).",
+      "rss_escalation_free_percent": 25,
       "guard_max_self_rss_mb": 44
     }
   ],
