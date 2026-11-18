@@ -211,25 +211,37 @@ func judgeSidecar(lockFile string) sidecarState {
 	return sidecarStale
 }
 
-// processStartTime reports when pid started. Tests replace it to pin the
-// judgement on hosts where real process ages cannot be arranged.
-var processStartTime = platformProcessStartTime
+// processInfo is what the kernel says about a PID's process.
+type processInfo struct {
+	started time.Time
+	// zombie means the process exited and waits for its parent to reap it.
+	// kill(pid, 0) still succeeds for it.
+	zombie bool
+}
+
+// readProcessInfo reports on pid. Tests replace it to pin the judgement on
+// hosts where real process ages cannot be arranged.
+var readProcessInfo = platformProcessInfo
 
 // ownerAlive reports whether the process that wrote a record at recordedAt
-// under pid still runs. A dead PID is not the owner. A live PID whose process
-// started more than ownerStartSlack after recordedAt is a different process
-// that reused the PID after the owner died (killed inside the lock, or a host
-// restart), so it is not the owner either. When the start time cannot be
-// read, a live PID counts as the owner: the safe side, never two inside.
+// under pid still runs. A dead PID is not the owner, and neither is a zombie:
+// it exited inside the lock and only waits for its parent. A live PID whose
+// process started more than ownerStartSlack after recordedAt is a different
+// process that reused the PID after the owner died (killed inside the lock,
+// or a host restart), so it is not the owner either. When the kernel cannot
+// be read, a live PID counts as the owner: the safe side, never two inside.
 func ownerAlive(pid int, recordedAt time.Time) bool {
 	if !isProcessAlive(pid) {
 		return false
 	}
-	started, ok := processStartTime(pid)
+	proc, ok := readProcessInfo(pid)
 	if !ok {
 		return true
 	}
-	return !started.After(recordedAt.Add(ownerStartSlack))
+	if proc.zombie {
+		return false
+	}
+	return !proc.started.After(recordedAt.Add(ownerStartSlack))
 }
 
 // sweepOwnerlessTemps removes ownership records that a crashed process left
@@ -272,12 +284,18 @@ func sweepOwnerlessTemps(lockFile string) {
 // competing waiter into that window.
 var testHookBeforeReclaimGuard func()
 
+// testHookAfterReclaimLocks runs after a waiter holds the inode lock and the
+// guard and before it checks that the path still names the locked inode.
+var testHookAfterReclaimLocks func()
+
 // reclaimStale removes a stale sidecar and reports whether the caller should
 // try the create again at once.
 //
 // A missing sidecar is not removed: the owner released it, so a retry either
-// wins or finds the successor. A stale sidecar is removed only under the
-// non-blocking reclaim guard, after a second judgement. Inside the guard no
+// wins or finds the successor. A stale sidecar is removed only while this
+// waiter holds both the judged file's inode lock and the non-blocking reclaim
+// guard, after it confirms the path still names that inode and judges it
+// again. Inside the guard no
 // other waiter removes the sidecar and os.Link never replaces an existing
 // one, so the file judged stale is the file removed. The guard is
 // non-blocking, so a stopped reclaimer makes others poll, not hang, and the
@@ -292,6 +310,23 @@ func reclaimStale(lockFile string) bool {
 	if hook := testHookBeforeReclaimGuard; hook != nil {
 		hook()
 	}
+	// First lock the judged file's own inode. nicos-tools breakers
+	// (filelock.BreakStale) hold this lock, not the guard file, so taking both
+	// makes this reclaim exclude theirs on files both repositories write, such
+	// as the notify inbox (WORK-1374).
+	judged, err := os.OpenFile(lockFile, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	defer judged.Close()
+	if err := syscall.Flock(int(judged.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return false
+	}
+	defer syscall.Flock(int(judged.Fd()), syscall.LOCK_UN)
+	// Then the guard file, which n-1 binaries of this repository use.
 	guard, err := os.OpenFile(lockFile+".reclaim", os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return false
@@ -303,6 +338,19 @@ func reclaimStale(lockFile string) bool {
 		return false
 	}
 	defer syscall.Flock(fd, syscall.LOCK_UN)
+	if hook := testHookAfterReclaimLocks; hook != nil {
+		hook()
+	}
+	// The path must still name the inode this waiter locked: otherwise
+	// another breaker removed it and a successor may have published.
+	opened, openedErr := judged.Stat()
+	current, currentErr := os.Lstat(lockFile)
+	if errors.Is(currentErr, os.ErrNotExist) {
+		return true
+	}
+	if openedErr != nil || currentErr != nil || !os.SameFile(opened, current) {
+		return false
+	}
 	switch judgeSidecar(lockFile) {
 	case sidecarMissing:
 		return true

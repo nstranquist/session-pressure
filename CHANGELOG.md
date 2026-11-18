@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **File lock: zombie owners and one reclaim rule with nicos-tools
+  (WORK-1374).** An owner that exits inside the lock and is not yet reaped
+  is a zombie; it no longer counts as live. Stale reclaim now also holds the
+  judged sidecar's inode lock and checks that the path still names it, the
+  protocol nicos-tools breakers use, so the two repositories exclude each
+  other on shared files such as the notify inbox. A new crash stress test
+  (holders die inside the lock) pins the dead-owner path.
 - **File lock: a reused PID no longer keeps a dead owner's lock
   (WORK-1373).** A writer killed inside the lock, or a host restart, left a
   sidecar whose PID a later process could reuse. That kept the lock "live"

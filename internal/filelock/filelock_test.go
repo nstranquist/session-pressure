@@ -243,8 +243,8 @@ func TestAgedLockOwnedByLivePIDIsNotReclaimed(t *testing.T) {
 	// StaleAge. Planting this test's own PID with an old timestamp would be the
 	// reused-PID case (WORK-1373), which is stale by design.
 	recordedAt := time.Now().Add(-2 * StaleAge)
-	if started, ok := processStartTime(1); !ok || started.After(recordedAt.Add(-time.Minute)) {
-		t.Skipf("PID 1 start time unknown or too recent (%v, %v)", started, ok)
+	if proc, ok := readProcessInfo(1); !ok || proc.started.After(recordedAt.Add(-time.Minute)) {
+		t.Skipf("PID 1 start time unknown or too recent (%v, %v)", proc.started, ok)
 	}
 	bogus := []byte(fmt.Sprintf(`{"pid":%d,"timestamp":%d}`, 1, recordedAt.UnixMilli()))
 	if err := os.WriteFile(lockFile, bogus, 0o644); err != nil {

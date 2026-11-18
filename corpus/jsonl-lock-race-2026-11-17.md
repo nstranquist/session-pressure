@@ -227,6 +227,44 @@ Evidence:
   `BenchmarkShortLockHandoff` 3.88 to 4.11 ms vs 3.89 to 4.14 ms. Within
   noise on a shared runner (core count changed during the job).
 
+## Zombie owners and one reclaim rule across repositories (WORK-1374 slice 1, 2026-11-18)
+
+Zombie owner (found by the new crash stress): an owner that exits inside
+the lock stays a zombie until its parent reaps it. `kill(pid, 0)` still
+succeeds and its start time is old, so its sidecar looked live and every
+waiter timed out. In production this happens when a parent is slow to reap
+a crashed child. `ownerAlive` now treats a zombie as dead, from the same
+kernel record as the start time (Darwin `p_stat == SZOMB`, Linux state `Z`
+or `X`). On 8462f65 the crash stress hung in 3 of 3 Mac runs (30 s helper
+timeouts). With the fix it passes.
+
+One reclaim rule with nicos-tools: nicos-tools breakers
+(`filelock.BreakStale` there, 8e5bd7ff5) lock the stale sidecar's own inode
+and check that the path still names it. This repository locked only
+`<file>.lock.reclaim`. Neither lock excluded the other, so on a file both
+repositories write (`~/.nicos-dev/notifications/inbox.jsonl`) a breaker of
+one could remove a successor's live sidecar that the other had just
+published, on the dead-owner path. `reclaimStale` now holds both: the
+judged file's inode lock (opened with `O_NOFOLLOW`), then the guard file,
+then it checks that the path still names that inode and judges again. n-1
+binaries of this repository still exclude it through the guard; nicos-tools
+breakers through the inode. Slice 2 gives nicos-tools the guard and the
+owner rule.
+
+Evidence:
+
+- `TestReclaimWaitsForForeignInodeBreaker`: no removal while another open
+  file holds the inode lock; reclaim after it lets go.
+  `TestReclaimLeavesSidecarReplacedAfterLocks`: a seam after the locks
+  removes the inode and publishes a successor; the waiter leaves it.
+  `TestZombieOwnerIsNotLive` (a real unreaped child).
+- `TestReclaimUnderCrashingOwnersAcrossProcesses`: 8 processes, about 1 in 7
+  holders exits inside the lock, the parent reaps late. Linux gate runner,
+  job a5d95b5f: 30 of 30 passed, 84 acquisitions and 8 deaths each, no
+  overlap. Same job: full `go vet ./...` and `go test ./...`, `-race`
+  filelock and jsonl, filelock cross-process 20 of 20, jsonl 16x100
+  stress 0 of 30. Mac: the same targeted tests pass.
+
 ## Open
 
 - WORK-1374: nicos-tools `lockfile` and `filelock` still race; they share
