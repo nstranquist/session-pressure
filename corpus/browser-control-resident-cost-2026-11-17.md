@@ -314,7 +314,19 @@ Profile tool changes:
 - The disk process pass needs every row for its total PID count, so it keeps
   `kern.proc.all`.
 - After a restart the interrupt counter reads the whole day's work-event
-  shard once (90 ms on a 31 MB shard). `work-events.sqlite` already indexes
-  those rows.
+  shard once. Measured 2026-11-18 03:25Z on a 39.5 MB shard (WORK-1419),
+  three rounds each, same count (533):
+
+  | Route | Time | Heap allocated | Process max RSS |
+  | --- | --- | --- | --- |
+  | JSONL scan (kept) | about 155 ms | 50 MB | 24.8 MB |
+  | `work-events.sqlite` read | about 78 ms | 89 MB | 33.1 MB |
+
+  The index would save about 75 ms once per restart and add about 8 MB to
+  the guard's RSS, which already peaks at 38 MB against its 44 MB budget.
+  It also needs the index to be current, and only other processes keep it
+  current. Not done: this confirms the design note in
+  `sessionpressure/workevent_index.go` that the resident never loads a
+  database engine.
 - The control record is written on every sample while browsers are blocked.
   That is pressure-time cost, not idle cost.
