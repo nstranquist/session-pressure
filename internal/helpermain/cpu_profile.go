@@ -16,10 +16,13 @@ import (
 //
 //	kill -USR2 <resident pid>
 //
-// The profile goes to <data dir>/profiles/cpu-<UTC time>.pprof. The first
-// cpuTraceDuration of the window is also recorded as an execution trace,
+// The profile goes to <data dir>/profiles/cpu-<UTC time>.pprof. Right after
+// the profile window, cpuTraceDuration is recorded as an execution trace,
 // trace-<UTC time>.out, which names the goroutine behind every wakeup
-// (go tool trace -pprof=sched). The resident
+// (go tool trace -d=parsed). Note: the profiler itself wakes every 100 ms
+// (runtime/pprof profileWriter), so on this mostly idle process the
+// scheduler share of a profile (runtime.schedule, wakep, kevent) is largely
+// the measurement, not the resident. The resident
 // guard has a 0.25% idle CPU budget, and its cost depends on live inputs (lease
 // churn, disk writes, browser control) that a copy of the data dir cannot
 // reproduce, so the installed process must be measurable in place. Nothing
@@ -28,8 +31,8 @@ const CPUProfileSignal = syscall.SIGUSR2
 
 var cpuProfileDuration = 10 * time.Minute
 
-// cpuTraceDuration bounds the execution trace. A trace records every
-// scheduler event, so it stays short even though the profile runs longer.
+// cpuTraceDuration bounds the execution trace that follows the profile. A
+// trace records every scheduler event, so it stays short.
 var cpuTraceDuration = 30 * time.Second
 
 func cpuProfilePath(dir string, now time.Time) string {
@@ -61,6 +64,30 @@ func startTrace(path string) (stop func(), err error) {
 		trace.Stop()
 		_ = file.Close()
 	}, nil
+}
+
+// startCPUProfiles serves profiles until the returned stop is called. stop
+// ends the server and waits up to flushWait for a profile in progress to be
+// written, so a resident restart mid-window keeps a shorter profile instead of
+// an empty file.
+func startCPUProfiles(ctx context.Context, dir string, flushWait time.Duration) (stop func()) {
+	profileCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	ready := make(chan struct{})
+	go func() {
+		defer close(done)
+		serveCPUProfiles(profileCtx, dir, ready)
+	}()
+	<-ready
+	return func() {
+		cancel()
+		timer := time.NewTimer(flushWait)
+		defer timer.Stop()
+		select {
+		case <-done:
+		case <-timer.C:
+		}
+	}
 }
 
 // serveCPUProfiles takes one profile per signal until ctx ends. ready, when
@@ -102,32 +129,51 @@ func writeCPUProfile(ctx context.Context, dir string, signals <-chan os.Signal) 
 		_ = os.Remove(path)
 		return "", err
 	}
-	stopTrace, traceErr := startTrace(cpuTracePath(dir, now))
-	if traceErr != nil {
-		fmt.Fprintln(os.Stderr, "session-pressure-helper: execution trace:", traceErr)
-	}
-	defer stopTrace()
-	traceTimer := time.NewTimer(min(cpuTraceDuration, cpuProfileDuration))
-	defer traceTimer.Stop()
 	timer := time.NewTimer(cpuProfileDuration)
 	defer timer.Stop()
+	interrupted := false
 wait:
 	for {
 		select {
 		case <-ctx.Done():
+			interrupted = true
 			break wait
-		case <-traceTimer.C:
-			stopTrace()
 		case <-timer.C:
 			break wait
 		case <-signals:
 			// One profile at a time; the running one keeps its window.
 		}
 	}
-	stopTrace()
 	pprof.StopCPUProfile()
 	if err := file.Close(); err != nil {
 		return "", err
 	}
+	if !interrupted {
+		writeTrace(ctx, cpuTracePath(dir, now), signals)
+	}
 	return path, nil
+}
+
+// writeTrace records the execution trace after the profile window, so the
+// trace's own cost never lands in the CPU profile and profiles stay
+// comparable with earlier ones.
+func writeTrace(ctx context.Context, path string, signals <-chan os.Signal) {
+	stop, err := startTrace(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "session-pressure-helper: execution trace:", err)
+		return
+	}
+	defer stop()
+	timer := time.NewTimer(cpuTraceDuration)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			return
+		case <-signals:
+			// The trace finishes the same request; a new signal is ignored.
+		}
+	}
 }

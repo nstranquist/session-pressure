@@ -263,13 +263,51 @@ compile but were not run, because native Mac tests are paused (WORK-775).
 The installed resident exercised the darwin paths: inventory from libproc,
 disk attribution counts unchanged, browser control running.
 
+## WORK-1354: the runtime wakeups were the profiler (2026-11-18 02:50Z)
+
+The 300 ms of runtime wakeups in each 10-minute profile (`runtime.schedule`,
+`wakep`, `kevent`, `pthread_cond_signal`) were mostly the measurement.
+`runtime/pprof` runs a writer goroutine that wakes every 100 ms. On this
+mostly idle process every wake spins up a second thread through `wakep`,
+which then finds nothing, polls `kevent` and parks.
+
+Evidence, installed 4fc2162 (pid 35866), host load about 20-25:
+
+| Window (201 s) | Resident CPU | CPU % | Context switches/s |
+| --- | --- | --- | --- |
+| CPU profile running | 0.40 s | 0.20% | 75 |
+| No profile | 0.24 s | 0.12% | 24 |
+
+- A 30 s execution trace (`go tool trace -d=parsed`) counted wakes per
+  goroutine. The two top wakers, 297 wakes each, were `pprof.profileWriter`
+  and the trace's own CPU reader. The resident's goroutines (the monitor
+  loop and the disk observer) woke about 12 times each in 30 s.
+- An idle Go program with a signal handler and a 15 s ticker makes about
+  0 context switches a second, so the switch count is a usable signal.
+- The 5 s demand poll (`waitForResidentSample`) costs 30-50 ms in 600 s in
+  the profiles and adds under 1 switch a second. Making it event-driven
+  would add a blocked kqueue thread and a fallback path for about 0.005% CPU.
+  Not done, by the WORK-1354 stop rule.
+- The resident's real idle cost is about 0.12% at this load. A profile
+  overstates it by about 0.08% (about 480 ms per 10-minute window).
+  Read `runtime.schedule` in these profiles as mostly profiler cost.
+  For a cost number, use CPU-time deltas (`ps -o time=`) or
+  `guard_idle_cpu_duty_percent` with no profile running.
+
+Profile tool changes:
+
+- After the profile window, SIGUSR2 also records a 30 s execution trace,
+  `profiles/trace-<UTC>.out`. It runs after the window, so profiles stay
+  comparable with the ones above.
+- A resident stop during a profile now flushes the shorter profile (waiting
+  up to 2 s) instead of leaving an empty file. The install restart at about 02:33Z left
+  `cpu-20261118T022139Z.pprof` empty before this fix.
+
 ## Open
 
-- Runtime wakeups are now the largest share (about 300 ms in 600 s). The
-  5-second `waitForResidentSample` poll, the 15-second disk tick and the
-  sample timer each wake the runtime. Merging timers or making the poll
-  event-driven (the coordinator already writes `work-capacity.notify`) is
-  the next lever.
+- Runtime wakeups are closed (WORK-1354): they were mostly the profiler.
+  The remaining real costs are the process-table reads (sysctl and
+  `proc_pid_rusage` syscalls) and the IOKit disk counter.
 - Browser enforcement still reads the process table on every sample. Reusing
   the sampler's inventory would remove it, but the inventory can be 180 s
   old, which delays a stop. That trade needs a decision.

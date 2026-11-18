@@ -354,9 +354,8 @@ func run(ctx context.Context) error {
 		}
 	}()
 	monitor := configureMonitor(dir, sampler, store, policy, workCoordinator, starts24h)
-	profileCtx, stopProfiles := context.WithCancel(ctx)
+	stopProfiles := startCPUProfiles(ctx, dir, 2*time.Second)
 	defer stopProfiles()
-	go serveCPUProfiles(profileCtx, dir, nil)
 	if err := monitor.Run(ctx); !errors.Is(err, sessionpressure.ErrPolicyChanged) {
 		return err
 	}
