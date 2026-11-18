@@ -96,9 +96,13 @@ func TestAppendHonoursReclaimGuardAndKeepsSuccessor(t *testing.T) {
 
 // Defect 2: a live owner older than 30 s counted as stale, so a long append
 // (for example a writer paged out under swap) was preempted.
+//
+// The owner is PID 1, which has run since boot, so it started long before
+// its sidecar was written. This test's own PID with an old timestamp would be
+// the reused-PID case (WORK-1373), which is stale by design.
 func TestAppendDoesNotPreemptAgedLiveOwner(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
-	plantSidecar(t, path+".lock", os.Getpid(), time.Now().Add(-time.Hour), successorToken)
+	plantSidecar(t, path+".lock", 1, time.Now().Add(-time.Minute), successorToken)
 	err := AppendLineWithin(path, []byte(`{"q":"waiter"}`), 0o644, 150*time.Millisecond)
 	assertLockKept(t, path, err, successorToken)
 }
@@ -114,6 +118,18 @@ func TestAppendDoesNotStealSidecarDuringInitialization(t *testing.T) {
 	}
 	err := AppendLineWithin(path, []byte(`{"q":"waiter"}`), 0o644, 150*time.Millisecond)
 	assertLockKept(t, path, err, "")
+}
+
+// WORK-1373: a writer killed inside an append (or a host restart) leaves its
+// sidecar, and a new process can later get the same PID. That process started
+// after the sidecar was written, so it is not the owner, and the ledger must
+// not stay blocked until it exits.
+func TestAppendReclaimsSidecarOfReusedPID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	plantSidecar(t, path+".lock", os.Getpid(), time.Now().Add(-24*time.Hour), "owner-before-reuse")
+	if err := AppendLineWithin(path, []byte(`{"q":"ok"}`), 0o644, time.Second); err != nil {
+		t.Fatalf("ledger stayed blocked by a reused PID: %v", err)
+	}
 }
 
 // A dead owner's sidecar is still reclaimed, so recovery is not lost.

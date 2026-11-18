@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **File lock: a reused PID no longer keeps a dead owner's lock
+  (WORK-1373).** A writer killed inside the lock, or a host restart, left a
+  sidecar whose PID a later process could reuse. That kept the lock "live"
+  and blocked every waiter, including the JSONL ledgers, until the new
+  process exited. The owner now counts only if its process started before
+  the sidecar was written (10 s slack). The guarded stale path also removes
+  temp ownership records of dead processes. See
+  `corpus/jsonl-lock-race-2026-11-17.md`.
 - **File lock: cheaper uncontended acquire (WORK-1259).** The lock sidecar
   is published with an exclusive rename (`renameat2` RENAME_NOREPLACE on
   Linux, `renamex_np` RENAME_EXCL on Darwin), with the hard link as the

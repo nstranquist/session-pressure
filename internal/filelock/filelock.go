@@ -24,7 +24,10 @@
 //     under the guard. Without the guard, a waiter that judged an old sidecar
 //     stale could delete a successor's live sidecar and let two processes in
 //     (WORK-1225). A live owner is never preempted solely because a critical
-//     section outlived StaleAge; waiters time out safely.
+//     section outlived StaleAge; waiters time out safely. A dead owner's PID
+//     reused by a process that started after the sidecar was written is not
+//     the owner, so that sidecar is stale too (WORK-1373). Temp ownership
+//     records of dead processes are swept on the same guarded stale path.
 //
 // Sibling to the existing `internal/lock/` package, which is the `ndev lock`
 // CLI dispatcher (different audience, different concern).
@@ -39,6 +42,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -55,6 +60,13 @@ const (
 	// during that compatibility window. New writers avoid the window entirely
 	// by publishing a fully initialized sidecar with an atomic hard link.
 	lockInitializationGrace = StaleAge
+	// ownerStartSlack absorbs clock error between a process's recorded start
+	// time and the wall-clock timestamp it later writes into its sidecar:
+	// /proc/stat btime has one-second resolution, and the wall clock can step
+	// backwards. A smaller slack risks judging a real owner reused, which
+	// would let two processes in; a larger one only delays recovery when a PID
+	// is reused within the slack of the dead owner's acquisition.
+	ownerStartSlack = 10 * time.Second
 )
 
 // info is the JSON payload written to the sidecar lock file.
@@ -179,11 +191,12 @@ const (
 
 // judgeSidecar classifies the lock file. A malformed sidecar is stale only
 // after the n-1 initialization grace. Timestamp age is diagnostic only while
-// the PID is alive: stealing an aged live lock would allow overlapping
-// critical sections.
+// the owner is alive: stealing an aged live lock would allow overlapping
+// critical sections. The owner is the recorded PID only if that process
+// started before the sidecar was written (WORK-1373).
 func judgeSidecar(lockFile string) sidecarState {
 	if i := readLockInfo(lockFile); i != nil {
-		if isProcessAlive(i.PID) {
+		if ownerAlive(i.PID, time.UnixMilli(i.Timestamp)) {
 			return sidecarLive
 		}
 		return sidecarStale
@@ -196,6 +209,62 @@ func judgeSidecar(lockFile string) sidecarState {
 		return sidecarLive
 	}
 	return sidecarStale
+}
+
+// processStartTime reports when pid started. Tests replace it to pin the
+// judgement on hosts where real process ages cannot be arranged.
+var processStartTime = platformProcessStartTime
+
+// ownerAlive reports whether the process that wrote a record at recordedAt
+// under pid still runs. A dead PID is not the owner. A live PID whose process
+// started more than ownerStartSlack after recordedAt is a different process
+// that reused the PID after the owner died (killed inside the lock, or a host
+// restart), so it is not the owner either. When the start time cannot be
+// read, a live PID counts as the owner: the safe side, never two inside.
+func ownerAlive(pid int, recordedAt time.Time) bool {
+	if !isProcessAlive(pid) {
+		return false
+	}
+	started, ok := processStartTime(pid)
+	if !ok {
+		return true
+	}
+	return !started.After(recordedAt.Add(ownerStartSlack))
+}
+
+// sweepOwnerlessTemps removes ownership records that a crashed process left
+// between creating its private temp file and publishing it (or between a
+// hard-link publish and the temp unlink). It runs only on the stale path,
+// under the reclaim guard. A temp file of a live owner is never removed: its
+// publish would fail. The file's own modification time stands in for the
+// record time.
+func sweepOwnerlessTemps(lockFile string) {
+	dir, base := filepath.Split(lockFile)
+	if dir == "" {
+		dir = "."
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	prefix := base + ".tmp-"
+	for _, entry := range entries {
+		name := entry.Name()
+		rest, found := strings.CutPrefix(name, prefix)
+		if !found {
+			continue
+		}
+		pidText, _, found := strings.Cut(rest, "-")
+		pid, err := strconv.Atoi(pidText)
+		if !found || err != nil || pid <= 0 {
+			continue
+		}
+		stat, err := entry.Info()
+		if err != nil || !stat.Mode().IsRegular() || ownerAlive(pid, stat.ModTime()) {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, name))
+	}
 }
 
 // testHookBeforeReclaimGuard runs after a waiter first judges the sidecar
@@ -240,6 +309,7 @@ func reclaimStale(lockFile string) bool {
 	case sidecarLive:
 		return false
 	}
+	sweepOwnerlessTemps(lockFile)
 	if err := os.Remove(lockFile); err != nil && !errors.Is(err, os.ErrNotExist) {
 		// An undeletable sidecar must not spin the caller; poll until timeout.
 		return false
@@ -303,9 +373,10 @@ func tryCreateLock(lockFile string) (*info, error) {
 	// This record synchronizes live processes; it is not durable application
 	// state. Write and close make the complete payload visible before the
 	// publish. Sync would force an extra disk flush for every lock attempt,
-	// including losing contenders. After a host restart its owner is gone and
-	// the existing dead-owner recovery applies. Data durability belongs to
-	// the protected writer, whose syncs remain unchanged.
+	// including losing contenders. After a host restart the recorded PID is
+	// either gone or names a process that started after the record, and
+	// judgeSidecar treats both as stale. Data durability belongs to the
+	// protected writer, whose syncs remain unchanged.
 	if err := f.Close(); err != nil {
 		return nil, err
 	}

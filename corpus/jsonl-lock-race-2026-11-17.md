@@ -71,10 +71,10 @@ Behaviour changes for callers:
   now return `ErrTimeout` where the old code only waited. Callers log or
   return the error; none retries on the error type.
 - Recovery after a crash changed. The old code reclaimed any sidecar older
-  than 30 s. `filelock` keeps a sidecar while its PID is alive, so a dead
-  owner whose PID is later reused (after a crash or a host restart) blocks
-  appends to that file until that process exits. WORK-1373 tracks the fix
-  (check the process start time against the sidecar timestamp).
+  than 30 s. `filelock` kept a sidecar while its PID was alive, so a dead
+  owner whose PID was later reused (after a crash or a host restart)
+  blocked appends to that file until that process exited. Fixed by
+  WORK-1373 (see below).
 
 ## Evidence
 
@@ -174,9 +174,61 @@ limit, leftover guard and temp files, and the defect-1 test scope. The
 stress helper now waits up to 1 minute, so a loaded host cannot fail it on
 the 5 s default. The test checks exclusion, not latency.
 
+## Owner identity by process start time (WORK-1373, 2026-11-18)
+
+A sidecar's owner is live only if its PID is alive and that process started
+no later than the sidecar timestamp plus 10 s (`ownerStartSlack`). A live
+PID whose process started after the record is a different process that
+reused the PID after the owner died, so the sidecar is stale and the guarded
+reclaim removes it. This covers a writer killed inside the lock and a host
+restart. A real live owner of any age is still never preempted.
+
+- Start time: Darwin `sysctl kern.proc.pid` (`p_starttime`, microseconds);
+  Linux `/proc/stat` btime plus the start tick in `/proc/<pid>/stat`
+  (USER_HZ 100, one-second btime resolution). Other platforms, or an
+  unreadable start time, keep the old rule: a live PID is the owner. That is
+  the safe side: never two inside.
+- Slack: the owner writes its timestamp after it starts, so a real owner is
+  always on the live side. The 10 s covers btime resolution and wall-clock
+  steps backwards. A smaller slack risks preempting a real owner; a larger
+  one only delays recovery when a PID is reused within the slack of the dead
+  owner's acquisition.
+- The check runs only when a create fails (one sysctl or two small /proc
+  reads per judgement). The uncontended path is unchanged.
+- The guarded stale path also removes `<file>.lock.tmp-<pid>-<token>` files
+  of dead (or reused) PIDs, judged by the file's mtime. A live process's
+  temp file is never removed, because its publish would then fail. The
+  `.lock.reclaim` guard file stays: removing a flock file while another
+  waiter may open it would split the guard.
+- Sidecar format unchanged, so n-1 binaries are compatible. An n-1 waiter
+  still uses its own rule.
+
+Evidence:
+
+- `TestSidecarOfReusedPIDIsReclaimed` (a live child process, sidecar
+  recorded an hour before it started) failed on d92cfdc+e1da99a (2 s
+  timeout) and passes now. `TestAppendReclaimsSidecarOfReusedPID` pins the
+  same for jsonl.
+- Kept: `TestSidecarOfLiveOwnerStartedBeforeTimestampIsKept` (real child),
+  `TestAgedOwnerStartedBeforeRecordIsKept` (stubbed start time, record an
+  hour old), `TestAgedLockOwnedByLivePIDIsNotReclaimed` and the jsonl
+  defect-2 test, which now plant PID 1. Planting the test's own PID with an
+  old timestamp is the reused-PID case, so those two tests changed owner.
+- `TestOwnerAliveUsesStartTimeWithSlack` pins the slack edges and the
+  unknown-start fallback. `TestPlatformProcessStartTimeReadsRealProcesses`
+  checks the real readers against a spawned child (within 2 s) and a dead
+  PID. `TestReclaimSweepsTempRecordsOfDeadProcesses` pins the sweep.
+- Linux gate runner, job 9a7e4189: full `go vet ./...` and `go test ./...`
+  passed; `-race -count=2` of filelock and jsonl passed; no new test
+  skipped; filelock cross-process 20 of 20; jsonl 16x100 stress 0 of 30.
+  Mac: `-race` filelock and jsonl passed.
+- Latency, same job, 6 alternating runs, old (main) vs new:
+  `BenchmarkAppendLine` 82 to 101 us vs 87 to 102 us;
+  `BenchmarkShortLockHandoff` 3.88 to 4.11 ms vs 3.89 to 4.14 ms. Within
+  noise on a shared runner (core count changed during the job).
+
 ## Open
 
-- WORK-1373: a reused PID keeps a dead owner's sidecar live.
 - WORK-1374: nicos-tools `lockfile` and `filelock` still race; they share
   the notify inbox with this repository.
 

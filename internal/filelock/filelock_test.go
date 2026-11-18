@@ -238,10 +238,15 @@ func TestAgedLockOwnedByLivePIDIsNotReclaimed(t *testing.T) {
 	target := filepath.Join(dir, "data")
 	lockFile := target + ".lock"
 
-	// Plant a lock with a current PID but an ancient timestamp.
-	bogus := []byte(fmt.Sprintf(`{"pid":%d,"timestamp":%d}`,
-		os.Getpid(),
-		time.Now().Add(-2*StaleAge).UnixMilli()))
+	// Plant a lock owned by a live process that started long before the
+	// sidecar was written (PID 1, up since boot), with a timestamp older than
+	// StaleAge. Planting this test's own PID with an old timestamp would be the
+	// reused-PID case (WORK-1373), which is stale by design.
+	recordedAt := time.Now().Add(-2 * StaleAge)
+	if started, ok := processStartTime(1); !ok || started.After(recordedAt.Add(-time.Minute)) {
+		t.Skipf("PID 1 start time unknown or too recent (%v, %v)", started, ok)
+	}
+	bogus := []byte(fmt.Sprintf(`{"pid":%d,"timestamp":%d}`, 1, recordedAt.UnixMilli()))
 	if err := os.WriteFile(lockFile, bogus, 0o644); err != nil {
 		t.Fatalf("plant: %v", err)
 	}
