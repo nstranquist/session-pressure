@@ -11,9 +11,10 @@ import (
 
 // One SIGUSR2 writes one bounded, non-empty profile under <dir>/profiles.
 func TestCPUProfileSignalWritesOneBoundedProfile(t *testing.T) {
-	previous := cpuProfileDuration
+	previous, previousTrace := cpuProfileDuration, cpuTraceDuration
 	cpuProfileDuration = 300 * time.Millisecond
-	t.Cleanup(func() { cpuProfileDuration = previous })
+	cpuTraceDuration = 100 * time.Millisecond
+	t.Cleanup(func() { cpuProfileDuration, cpuTraceDuration = previous, previousTrace })
 	dir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -44,6 +45,14 @@ func TestCPUProfileSignalWritesOneBoundedProfile(t *testing.T) {
 	info, err := os.Stat(profiles[0])
 	if err != nil || info.Size() == 0 || info.Mode().Perm() != 0o600 {
 		t.Fatalf("profile %s: size/mode wrong (%v, %v)", profiles[0], info, err)
+	}
+	// The profile is written last, so the bounded trace is complete by now.
+	traces, _ := filepath.Glob(filepath.Join(dir, "profiles", "trace-*.out"))
+	if len(traces) != 1 {
+		t.Fatalf("traces = %v, want exactly one beside the profile", traces)
+	}
+	if info, err := os.Stat(traces[0]); err != nil || info.Size() == 0 || info.Mode().Perm() != 0o600 {
+		t.Fatalf("trace %s: size/mode wrong (%v, %v)", traces[0], info, err)
 	}
 	cancel()
 	<-done
