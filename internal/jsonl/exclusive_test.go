@@ -124,7 +124,9 @@ func TestAppendLineProcessHelper(t *testing.T) {
 	}
 	for round := 0; round < rounds; round++ {
 		id = fmt.Sprintf("%d.%d", os.Getpid(), round)
-		if err := AppendLine(target, []byte(fmt.Sprintf(`{"id":%q}`, id)), 0o600); err != nil {
+		// The test checks exclusion, not latency: a long wait budget keeps a
+		// loaded host from failing a helper on the 5 s default.
+		if err := AppendLineWithin(target, []byte(fmt.Sprintf(`{"id":%q}`, id)), 0o600, time.Minute); err != nil {
 			t.Fatal(err)
 		}
 	}

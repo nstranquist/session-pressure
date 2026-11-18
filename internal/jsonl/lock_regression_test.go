@@ -60,11 +60,16 @@ func assertLockKept(t *testing.T, path string, err error, token string) {
 }
 
 // Defect 1: a waiter judged the sidecar stale and then removed whatever file
-// was there, with no second check. A successor that published its live lock
-// in between was deleted, and two writers were inside. The test holds the
-// reclaim guard so the waiter must wait between its first judgement and the
-// removal, swaps in a live successor, then releases the guard.
-func TestAppendDoesNotRemoveSuccessorPublishedAfterStaleJudgement(t *testing.T) {
+// was there, with no guard and no second check. A successor that published
+// its live lock in between was deleted, and two writers were inside.
+//
+// This test pins the jsonl side: a waiter that judges a sidecar stale does
+// not remove it while another process holds the reclaim guard, and after the
+// guard is released it keeps a live successor. The old code removed the
+// sidecar at once and appended. The second judgement under the guard, the
+// exact defect-1 window, is pinned in package filelock by
+// TestReclaimJudgesAgainUnderGuard, which can use the unexported seam.
+func TestAppendHonoursReclaimGuardAndKeepsSuccessor(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
 	lockPath := path + ".lock"
 	plantSidecar(t, lockPath, deadPID(t), time.Now(), "dead-owner")

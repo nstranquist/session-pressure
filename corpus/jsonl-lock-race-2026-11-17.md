@@ -46,15 +46,35 @@ On-disk contract, compatible with n-1 binaries:
   leaves a malformed sidecar alone for 30 s (`lockInitializationGrace`).
 - An n-1 unlock removes a sidecar only when its token matches or the token
   is empty, and new sidecars always carry a token.
-- An n-1 waiter still has defects 1 and 2, so the race stays possible only
-  while an old binary appends to the same file.
+- An n-1 waiter still has defects 1 and 2, so the race stays possible
+  while an old binary appends to the same file. For one file this is not
+  transitional: nicos-tools also appends to
+  `~/.nicos-dev/notifications/inbox.jsonl` (`nicos-dev/internal/notify`,
+  `cmd/nicos-logs`) through its own unfixed `lockfile`. The race on the
+  inbox stays until WORK-1374 fixes nicos-tools.
 - New files beside a JSONL file: `<file>.lock.reclaim` (empty guard, only
-  on the stale path) and short-lived `<file>.lock.tmp-<pid>-<token>`. No
-  reader picks them up: every store globs `*.jsonl`, and the archive sweep
-  takes only names that continue with a digit.
+  on the stale path) and `<file>.lock.tmp-<pid>-<token>`. The temp file is
+  removed after publish, but a crash between create and publish leaves it
+  behind. The guard file is never removed, so it outlives an archived day
+  file. Both are empty, so only the file count grows. No reader picks them
+  up: every store globs `*.jsonl`, and the archive sweep takes only names
+  that continue with a digit.
 
-API change: a lock wait that runs out now matches `filelock.ErrTimeout`
-instead of `lockfile.ErrLocked`. No caller tested for `ErrLocked`.
+Behaviour changes for callers:
+
+- A lock wait that runs out now matches `filelock.ErrTimeout` instead of
+  `lockfile.ErrLocked`. No caller tested for `ErrLocked`.
+- Goroutines in one process used to wait on a `sync.Mutex` with no limit
+  and then got their own 5 s for the cross-process wait. Now one deadline
+  covers the in-process queue and the cross-process wait. Many goroutines
+  appending to one file, or slow `AppendLineDurable` fsyncs under swap, can
+  now return `ErrTimeout` where the old code only waited. Callers log or
+  return the error; none retries on the error type.
+- Recovery after a crash changed. The old code reclaimed any sidecar older
+  than 30 s. `filelock` keeps a sidecar while its PID is alive, so a dead
+  owner whose PID is later reused (after a crash or a host restart) blocks
+  appends to that file until that process exits. WORK-1373 tracks the fix
+  (check the process start time against the sidecar timestamp).
 
 ## Evidence
 
@@ -69,16 +89,24 @@ instead of `lockfile.ErrLocked`. No caller tested for `ErrLocked`.
     `go vet ./...` and `go test ./...` (job ID not captured).
   - Mac (M4): old code overlapped in 2 of 3 default runs (12 x 20); new
     code 0 of 5.
-- Regression tests, one for each defect. Each fails on the old code and
-  passes on the new code (Linux gate and Mac):
-  - `TestAppendDoesNotRemoveSuccessorPublishedAfterStaleJudgement` (the
-    test holds the reclaim guard, swaps in a live successor, then releases
-    it),
-  - `TestAppendDoesNotPreemptAgedLiveOwner`,
-  - `TestAppendDoesNotStealSidecarDuringInitialization`.
+- Regression tests. Each jsonl test below fails on the old code and passes
+  on the new code (Linux gate and Mac):
+  - Defect 1: `TestAppendHonoursReclaimGuardAndKeepsSuccessor` pins only
+    the jsonl side. A waiter does not remove a stale sidecar while another
+    process holds the reclaim guard, and after the guard is released it
+    keeps a live successor. The old code fails it because it removed the
+    sidecar at once with no guard. It does not reach the second judgement
+    under the guard, the exact defect-1 window. That needs the unexported
+    seam and is pinned in `filelock` by `TestReclaimJudgesAgainUnderGuard`
+    and `TestReclaimNeverRemovesSuccessorAfterOwnerReleased` (WORK-1225),
+    which run on the code jsonl now calls. (The test was first named
+    `TestAppendDoesNotRemoveSuccessorPublishedAfterStaleJudgement`, a
+    stronger claim than it checks. It was renamed after review on
+    2026-11-18.)
+  - Defect 2: `TestAppendDoesNotPreemptAgedLiveOwner`.
+  - Defect 3: `TestAppendDoesNotStealSidecarDuringInitialization`.
   `TestAppendReclaimsDeadOwnerSidecar` checks that dead-owner recovery
-  still works. The `filelock` seam tests from WORK-1225 cover the
-  missing-sidecar form of defect 1 at the package level.
+  still works.
 - Latency, Linux gate runner, same job b32dc98c, 6 alternating runs of
   5,000 appends:
   - uncontended `AppendLine`: old 63 to 71 us, new 83 to 92 us (+21 us).
@@ -134,7 +162,23 @@ and helper all report d35eade. After the restart, work events, work-control
 events and monitor telemetry kept appending complete JSON lines, and the new
 code left no temp sidecars.
 
+## Review, 2026-11-18
+
+An independent review of 52f8f41 found no way for two new binaries to
+overlap. Rerun on main d92cfdc (with WORK-1259): `go test -race -count=3`
+of jsonl and filelock passed on the Mac and on the Linux gate runner; the
+16x100 stress was 0 of 30; the regression tests passed 20 of 20 (job
+e1292a42). The review's other findings are recorded above: the inbox shared
+with nicos-tools (WORK-1374), PID reuse (WORK-1373), the in-process wait
+limit, leftover guard and temp files, and the defect-1 test scope. The
+stress helper now waits up to 1 minute, so a loaded host cannot fail it on
+the 5 s default. The test checks exclusion, not latency.
+
 ## Open
+
+- WORK-1373: a reused PID keeps a dead owner's sidecar live.
+- WORK-1374: nicos-tools `lockfile` and `filelock` still race; they share
+  the notify inbox with this repository.
 
 - Waiters poll with backoff (1 ms up to 50 ms) and have no cross-process
   queue. Under heavy contention on a loaded Mac a waiter can starve past its
