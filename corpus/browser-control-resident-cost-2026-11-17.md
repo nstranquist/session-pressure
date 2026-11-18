@@ -1,7 +1,7 @@
 # Browser control: resident CPU cost and enforcement gate
 
 Owner: claude, session e45120b4.
-Status: idle budget met; WORK-1315 trimmed the remaining idle costs (2026-11-17).
+Status: idle budget met (about 0.12% against 0.25%, no profile running); WORK-1315, WORK-1354 and WORK-1419 closed (2026-11-18).
 
 ## Problem
 
@@ -227,7 +227,7 @@ Changes in fe40179:
   probe showed 0 of 211 such rows readable for a non-root caller, so the
   skip changes no result. Accessible PIDs after install: 758 of 974, the same
   split as before. A darwin test checks that every skipped row is refused.
-  That test has not run yet, because Mac native tests are paused (WORK-775).
+  It passed on the Mac on 2026-11-18 after the native-test pause was lifted.
 - Browser enforcement reads `kern.proc.uid`. The probe was mixed: rounds of
   93, 101 and 91 us a call against 108, 98 and 111 us for `kern.proc.all`.
   Treat it as about equal. The change is for a smaller result set, not a
@@ -259,7 +259,11 @@ Tried and reverted: resident GOMAXPROCS=2. Thread wakeups (`mcall`,
 measured gain and was removed.
 
 Tests: full `go test ./...` passed on the Linux gate runner. The darwin-only tests
-compile but were not run, because native Mac tests are paused (WORK-775).
+were not run then, because native Mac tests were paused (WORK-775). After
+the pause was lifted (2026-11-18 02:47Z) `delivery verify --full` ran the
+darwin suites on b657c00 and 161a82c and passed. Each new test of WORK-1315,
+WORK-1354 and the review fix fails when its fix is removed (seven mutation
+checks run on the Mac, 2026-11-18).
 The installed resident exercised the darwin paths: inventory from libproc,
 disk attribution counts unchanged, browser control running.
 
