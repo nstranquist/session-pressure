@@ -3,8 +3,10 @@ package sessionpressure
 import (
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -91,6 +93,8 @@ var (
 	agentIdentityCacheDir string
 	// agentIdentityCacheAt is when the overlay fingerprint was last checked.
 	agentIdentityCacheAt time.Time
+	// agentIdentityCompiledAt is when the cached catalog was compiled.
+	agentIdentityCompiledAt time.Time
 )
 
 // DefaultAgentIdentityRules is the shipped catalog. Version numbers are never
@@ -214,6 +218,10 @@ func ActiveAgentIdentityCatalog() *AgentIdentityCatalog {
 // effect within this interval; an unchanged overlay never recompiles.
 const agentIdentityCheckInterval = 5 * time.Second
 
+// agentIdentityRecompileInterval is a backstop: an overlay rewritten in place
+// with the same size, mtime and inode is still picked up within this time.
+const agentIdentityRecompileInterval = 5 * time.Minute
+
 func loadAgentIdentityCatalogCached(dir string) *AgentIdentityCatalog {
 	agentIdentityMu.RLock()
 	if agentIdentityCached != nil && agentIdentityCacheDir == dir && time.Since(agentIdentityCacheAt) < agentIdentityCheckInterval {
@@ -225,7 +233,10 @@ func loadAgentIdentityCatalogCached(dir string) *AgentIdentityCatalog {
 
 	key, mtime := agentIdentityCacheFingerprint(dir)
 	agentIdentityMu.Lock()
-	if agentIdentityCached != nil && agentIdentityCacheDir == dir && agentIdentityCacheKey == key {
+	// A catalog that recorded an overlay error is never reused on an
+	// unchanged fingerprint: the error can be transient (a read failure, a
+	// file caught mid-write), so it is retried every interval, as before.
+	if agentIdentityCached != nil && agentIdentityCacheDir == dir && agentIdentityCacheKey == key && agentIdentityCached.OverlayError == "" && time.Since(agentIdentityCompiledAt) < agentIdentityRecompileInterval {
 		agentIdentityCacheAt = time.Now()
 		catalog := agentIdentityCached
 		agentIdentityMu.Unlock()
@@ -257,6 +268,7 @@ func loadAgentIdentityCatalogCached(dir string) *AgentIdentityCatalog {
 	agentIdentityCacheKey = key
 	agentIdentityCacheDir = dir
 	agentIdentityCacheAt = time.Now()
+	agentIdentityCompiledAt = agentIdentityCacheAt
 	agentIdentityMu.Unlock()
 	return catalog
 }
@@ -268,6 +280,7 @@ func ResetAgentIdentityCatalogCache() {
 	agentIdentityCacheKey = ""
 	agentIdentityCacheDir = ""
 	agentIdentityCacheAt = time.Time{}
+	agentIdentityCompiledAt = time.Time{}
 	agentIdentityMu.Unlock()
 }
 
@@ -280,7 +293,13 @@ func agentIdentityCacheFingerprint(dir string) (key string, mtime time.Time) {
 	if err != nil {
 		return "default:" + path, time.Time{}
 	}
-	return path + ":" + info.ModTime().UTC().Format(time.RFC3339Nano) + ":" + itoa64(info.Size()), info.ModTime()
+	// The inode makes an atomic replace (rename over the path) a change even
+	// when the new file has the same size and modification time.
+	inode := uint64(0)
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		inode = uint64(stat.Ino)
+	}
+	return path + ":" + info.ModTime().UTC().Format(time.RFC3339Nano) + ":" + itoa64(info.Size()) + ":" + strconv.FormatUint(inode, 10), info.ModTime()
 }
 
 func itoa64(value int64) string {

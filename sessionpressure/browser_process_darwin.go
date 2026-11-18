@@ -39,9 +39,11 @@ var browserArgsMemo = struct {
 }{results: make(map[browserArgsKey]browserArgsResult)}
 
 func automatedBrowserProcesses(ctx context.Context) ([]browserProcess, error) {
-	// Only this user's browsers are controlled. KERN_PROC_UID matches the
-	// same effective uid the loop checks, and the kernel copies out only
-	// those rows instead of the whole process table.
+	// Only this user's browsers are controlled. KERN_PROC_UID filters on
+	// each row's effective uid, the field the loop checks, and the kernel
+	// copies out only those rows instead of the whole process table. The
+	// value compared is this process's real uid, as before; the resident
+	// runs with real uid == effective uid.
 	uid := os.Getuid()
 	rows, err := unix.SysctlKinfoProcSlice("kern.proc.uid", uid)
 	if err != nil {

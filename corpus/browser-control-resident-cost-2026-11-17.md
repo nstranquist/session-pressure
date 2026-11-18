@@ -227,13 +227,19 @@ Changes in fe40179:
   probe showed 0 of 211 such rows readable for a non-root caller, so the
   skip changes no result. Accessible PIDs after install: 758 of 974, the same
   split as before. A darwin test checks that every skipped row is refused.
-- Browser enforcement reads `kern.proc.uid`. A probe timed it about 10% under
-  `kern.proc.all` (91-102 us against 98-111 us a call).
+  That test has not run yet, because Mac native tests are paused (WORK-775).
+- Browser enforcement reads `kern.proc.uid`. The probe was mixed: rounds of
+  93, 101 and 91 us a call against 108, 98 and 111 us for `kern.proc.all`.
+  Treat it as about equal. The change is for a smaller result set, not a
+  proven speed gain.
 - Disk observer: writer totals are cached by a generation that moves only on
   a process pass or prune. Point slices are pruned in place.
 - Identity catalog: the overlay is stat'ed at most every 5 s and the catalog
   recompiles only when the overlay changed. It used to stat on every lookup
-  and recompile every 5 s.
+  and recompile every 5 s. Review fix (2026-11-17): a catalog that holds an
+  overlay error recompiles at every check, so a transient read error does not
+  stick, and the fingerprint includes the inode, so an atomic replace with the
+  same size and mtime is seen.
 - `privacySafeExecutable` returns already safe names without a rune slice.
 - Sampler (option 2): the resident samples every 15 s but refreshes its
   inventory every 180 s. Trees, host consumers and memory families are now

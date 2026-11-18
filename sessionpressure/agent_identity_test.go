@@ -537,3 +537,87 @@ func TestAgentIdentityCatalogChecksOverlayOnIntervalAndReusesUnchanged(t *testin
 		t.Fatal("a different data dir reused the cached catalog")
 	}
 }
+
+// An overlay error is retried every interval even when the file's fingerprint
+// does not change, so a transient read failure does not stick.
+func TestAgentIdentityCatalogRetriesOverlayErrorOnUnchangedFingerprint(t *testing.T) {
+	dir := t.TempDir()
+	path := AgentIdentityOverlayPath(dir)
+	raw, _ := json.Marshal(AgentIdentityOverlay{SchemaVersion: agentIdentitySchemaVersion, Rules: []AgentIdentityRule{{Agent: "kimi", ExactBasenames: []string{"kimi-cli"}}}})
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ResetAgentIdentityCatalogCache)
+	ResetAgentIdentityCatalogCache()
+	good := loadAgentIdentityCatalogCached(dir)
+	if good.OverlayError != "" {
+		t.Fatalf("overlay error on a valid file: %s", good.OverlayError)
+	}
+	// Simulate a cached catalog that recorded a transient load error for the
+	// same, unchanged file.
+	failed := CompileAgentIdentityCatalog(DefaultAgentIdentityRules())
+	failed.OverlayPath = path
+	failed.OverlayError = "transient read error"
+	agentIdentityMu.Lock()
+	agentIdentityCached = failed
+	agentIdentityCacheAt = agentIdentityCacheAt.Add(-agentIdentityCheckInterval)
+	agentIdentityMu.Unlock()
+	healed := loadAgentIdentityCatalogCached(dir)
+	if healed == failed || healed.OverlayError != "" {
+		t.Fatalf("an overlay error stuck on an unchanged file: %q", healed.OverlayError)
+	}
+	if _, _, ok := healed.MatchExactBasename("kimi-cli"); !ok {
+		t.Fatal("healed catalog lacks the overlay rule")
+	}
+}
+
+// An atomic replace with the same size and modification time still changes
+// the fingerprint, through the inode.
+func TestAgentIdentityCacheFingerprintSeesAtomicReplace(t *testing.T) {
+	dir := t.TempDir()
+	path := AgentIdentityOverlayPath(dir)
+	if err := os.WriteFile(path, []byte(`{"a":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := agentIdentityCacheFingerprint(dir)
+	next := path + ".next"
+	if err := os.WriteFile(next, []byte(`{"b":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(next, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(next, path); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := agentIdentityCacheFingerprint(dir)
+	if before == after {
+		t.Fatalf("fingerprint unchanged across an atomic replace: %s", after)
+	}
+}
+
+// An unchanged fingerprint still recompiles after the backstop interval, so an
+// in-place rewrite that keeps size, mtime and inode is not missed for good.
+func TestAgentIdentityCatalogRecompilesAfterBackstopInterval(t *testing.T) {
+	dir := t.TempDir()
+	t.Cleanup(ResetAgentIdentityCatalogCache)
+	ResetAgentIdentityCatalogCache()
+	first := loadAgentIdentityCatalogCached(dir)
+	agentIdentityMu.Lock()
+	agentIdentityCacheAt = agentIdentityCacheAt.Add(-agentIdentityCheckInterval)
+	agentIdentityMu.Unlock()
+	if loadAgentIdentityCatalogCached(dir) != first {
+		t.Fatal("recompiled before the backstop interval")
+	}
+	agentIdentityMu.Lock()
+	agentIdentityCacheAt = agentIdentityCacheAt.Add(-agentIdentityCheckInterval)
+	agentIdentityCompiledAt = agentIdentityCompiledAt.Add(-agentIdentityRecompileInterval)
+	agentIdentityMu.Unlock()
+	if loadAgentIdentityCatalogCached(dir) == first {
+		t.Fatal("did not recompile after the backstop interval")
+	}
+}
