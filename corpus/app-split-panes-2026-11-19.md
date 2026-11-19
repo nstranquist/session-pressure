@@ -33,6 +33,29 @@ Rejected: keep `HSplitView` and add leading padding. The sidebar width changes
 with user resizing and window state, so a fixed inset would be wrong at some
 widths.
 
+## Guard and page review (WORK-1544)
+
+`Tests/NDevPressureCoreTests/LayoutGuardTests.swift` fails `make test` when a
+file under `Sources/NDevPressure` uses `HSplitView` or `VSplitView` outside a
+`//` comment. Proof: a planted `HSplitView` file failed the test with
+`use ResizableSplit, not ZZPlantedGuardProbe.swift:2: HSplitView`. After the
+plant was removed, `make test` passed 152 tests in 27 suites.
+
+Code review of every sidebar page for other ways content can slide under the
+sidebar (`ignoresSafeArea`, AppKit hosts, offsets):
+
+- Overview, Day Gate, Agent Trees, Disk Writes, Storage, Policy, Monitor,
+  Telemetry: SwiftUI stacks and scroll views only. No risk found.
+- Work Queue, Process Incidents: fixed in 9f6bc81.
+- Hetzner: `LogTextView` is an `NSScrollView`, but SwiftUI places it inside a
+  padded container. No risk found.
+- Settings: a nested `NavigationSplitView`. Only its background color ignores
+  the safe area. No risk found.
+
+Not verified: screen captures of the installed pages. Nico granted
+screen-recording permission on 2026-11-19, but it takes effect only after
+VSCodium restarts, and other agents were running in it.
+
 ## Verification
 
 - `make test`: 150 tests in 26 suites passed.
