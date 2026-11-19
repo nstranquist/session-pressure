@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import NDevPressureCore
 
@@ -632,5 +633,90 @@ struct CapacityBar: View {
             .frame(height: 8)
         }
         .help(PressureHelp.workCapacity)
+    }
+}
+
+// MARK: - Resizable split
+
+/// Two panes with a draggable divider, laid out by SwiftUI. One pane has a
+/// width that the divider changes. The other pane takes the remaining width.
+///
+/// Do not use `HSplitView` in the detail column. On macOS 26 the detail column
+/// runs under the floating sidebar, and SwiftUI insets content by the safe
+/// area. `HSplitView` is an `NSSplitView` that ignores that inset, so its
+/// leading pane started under the sidebar and the operator saw a blank pane.
+/// An `HStack` respects the inset.
+struct ResizableSplit<Leading: View, Trailing: View>: View {
+    enum Side { case leading, trailing }
+
+    /// The pane whose width the divider changes.
+    let sized: Side
+    @Binding var sizedWidth: CGFloat
+    let sizedRange: ClosedRange<CGFloat>
+    let flexibleMinWidth: CGFloat
+    /// When false, only the leading pane shows, at full width.
+    var showsTrailing: Bool = true
+    @ViewBuilder let leading: () -> Leading
+    @ViewBuilder let trailing: () -> Trailing
+
+    @State private var dragStartWidth: CGFloat?
+    @State private var cursorPushed = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = clamped(sizedWidth, available: geo.size.width)
+            HStack(spacing: 0) {
+                pane(leading(), side: .leading, width: width)
+                if showsTrailing {
+                    handle(available: geo.size.width)
+                    pane(trailing(), side: .trailing, width: width)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pane<Content: View>(_ content: Content, side: Side, width: CGFloat) -> some View {
+        if side == sized && showsTrailing {
+            content.frame(width: width).frame(maxHeight: .infinity)
+        } else {
+            content.frame(minWidth: flexibleMinWidth, maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func clamped(_ value: CGFloat, available: CGFloat) -> CGFloat {
+        // The flexible pane keeps its minimum before the sized pane grows.
+        let ceiling = max(sizedRange.lowerBound, min(sizedRange.upperBound, available - flexibleMinWidth - 1))
+        return min(max(value, sizedRange.lowerBound), ceiling)
+    }
+
+    private func handle(available: CGFloat) -> some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1)
+            .frame(maxHeight: .infinity)
+            .overlay(
+                Color.clear
+                    .frame(width: 9)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        if inside, !cursorPushed { NSCursor.resizeLeftRight.push(); cursorPushed = true }
+                        if !inside, cursorPushed { NSCursor.pop(); cursorPushed = false }
+                    }
+                    .gesture(
+                        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                            .onChanged { value in
+                                let start = dragStartWidth ?? clamped(sizedWidth, available: available)
+                                dragStartWidth = start
+                                let delta = sized == .leading ? value.translation.width : -value.translation.width
+                                sizedWidth = clamped(start + delta, available: available)
+                            }
+                            .onEnded { _ in dragStartWidth = nil }
+                    )
+            )
+            .onDisappear {
+                if cursorPushed { NSCursor.pop(); cursorPushed = false }
+            }
+            .accessibilityHidden(true)
     }
 }

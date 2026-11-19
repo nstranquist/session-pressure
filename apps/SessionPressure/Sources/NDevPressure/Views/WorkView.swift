@@ -7,14 +7,19 @@ struct WorkView: View {
 
     private var work: WorkStatus? { store.board.work }
 
+    @State private var drawerWidth: CGFloat = 380
+
     var body: some View {
-        HSplitView {
+        ResizableSplit(
+            sized: .trailing,
+            sizedWidth: $drawerWidth,
+            sizedRange: 320...480,
+            flexibleMinWidth: 480,
+            showsTrailing: store.workSelection != nil
+        ) {
             queuePane
-                .frame(minWidth: 480, idealWidth: 640)
-            if store.workSelection != nil {
-                WorkDetailDrawer()
-                    .frame(minWidth: 320, idealWidth: 380, maxWidth: 480)
-            }
+        } trailing: {
+            WorkDetailDrawer()
         }
         .background(PressureTheme.bg)
     }

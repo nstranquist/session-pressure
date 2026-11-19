@@ -11,6 +11,7 @@ struct ProcessIncidentsView: View {
     @State private var refreshing = false
     @State private var error: String?
     @State private var refreshedAt: Date?
+    @State private var listWidth: CGFloat = 360
 
     private var incidents: [ProcessIncident] { report?.incidents ?? [] }
     private var selected: ProcessIncident? { incidents.first { $0.id == selectedID } }
@@ -31,7 +32,12 @@ struct ProcessIncidentsView: View {
                 Spacer()
                 if let at = refreshedAt { ReadAgeView(date: at).font(.caption) }
             }.help(PressureHelp.processIncidents)
-            HSplitView {
+            ResizableSplit(
+                sized: .leading,
+                sizedWidth: $listWidth,
+                sizedRange: 290...560,
+                flexibleMinWidth: 400
+            ) {
                 List(selection: $selectedID) {
                     ForEach(incidents) { incident in
                         VStack(alignment: .leading, spacing: 5) {
@@ -46,14 +52,15 @@ struct ProcessIncidentsView: View {
                             Text(incident.lastSeen, style: .date).font(.caption2)
                         }.padding(.vertical, 5).tag(incident.id)
                     }
-                }.frame(minWidth: 290, idealWidth: 360)
+                }
+            } trailing: {
                 ScrollView {
                     if let incident = selected {
                         details(incident).padding(18)
                     } else {
                         ContentUnavailableView(incidents.isEmpty ? "No process incidents" : "Select an incident", systemImage: "waveform.path.ecg", description: Text("The resident monitor records sustained CPU incidents here. Short CPU spikes do not create incidents."))
                     }
-                }.frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
             DisclosureGroup("Detection and scan guard") {
                 VStack(alignment: .leading, spacing: 8) {
