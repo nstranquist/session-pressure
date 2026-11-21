@@ -60,16 +60,17 @@ type indexEntry struct {
 	retryAt int64
 }
 type Cache struct {
-	dir        string
-	maxBytes   int64
-	mu         sync.Mutex
-	lock       *os.File
-	clientLock *os.File
-	pins       string
-	closed     bool
-	index      map[string]indexEntry
-	offset     int64
-	journalID  os.FileInfo
+	dir         string
+	maxBytes    int64
+	graceWindow time.Duration
+	mu          sync.Mutex
+	lock        *os.File
+	clientLock  *os.File
+	pins        string
+	closed      bool
+	index       map[string]indexEntry
+	offset      int64
+	journalID   os.FileInfo
 	// journalGen is the key of the journal's first row as last replayed from
 	// byte zero (a compaction marker when compaction wrote the file). Inode
 	// identity alone cannot detect a rewritten journal: inode numbers are
@@ -92,6 +93,10 @@ var authorityStartupLockTimeout = 60 * time.Second
 
 // compactionMinBytes is a var so tests can exercise compaction cheaply.
 var compactionMinBytes int64 = 8 << 20
+
+// defaultEvictGraceWindow shields recently accessed objects across client Close
+// boundaries so short-lived subprocesses (e.g. go/packages) still find DiskPath.
+var defaultEvictGraceWindow = 5 * time.Minute
 
 // evictionHeap has one node per live entry; touches update in O(log n).
 // A pass examines at most 256 candidates, including pinned candidates. A busy
@@ -171,7 +176,7 @@ func New(dir string, maxBytes int64) (*Cache, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Cache{dir: dir, maxBytes: maxBytes, lock: lock, index: map[string]indexEntry{}}
+	c := &Cache{dir: dir, maxBytes: maxBytes, graceWindow: defaultEvictGraceWindow, lock: lock, index: map[string]indexEntry{}}
 	// Startup does not read the journal. On runner-3 (2026-11-15) it held
 	// 861,885 live keys in 1.1 M rows; a full replay cost 1.8 s of CPU and
 	// about 400 MB per Go process, and every go command starts a helper.
@@ -570,12 +575,11 @@ func (c *Cache) get(req Request) Response {
 		if info.Size() != meta.Size {
 			return nil
 		}
-		path, err := c.pin(meta.Object)
-		if err != nil {
+		if _, err := c.pin(meta.Object); err != nil {
 			return err
 		}
 		c.appendHint(indexEntry{Key: meta.Object, Size: meta.Size, Access: time.Now().UnixNano()})
-		resp = Response{ID: req.ID, OutputID: meta.OutputID, Size: meta.Size, DiskPath: path, Time: &meta.PutAt}
+		resp = Response{ID: req.ID, OutputID: meta.OutputID, Size: meta.Size, DiskPath: c.objectPath(meta.Object), Time: &meta.PutAt}
 		return nil
 	}()
 	if err != nil {
@@ -640,8 +644,7 @@ func (c *Cache) putReader(req Request, body io.Reader) Response {
 		if err := os.Link(f.Name(), c.objectPath(key)); err != nil && !os.IsExist(err) {
 			return err
 		}
-		path, err := c.pin(key)
-		if err != nil {
+		if _, err = c.pin(key); err != nil {
 			return err
 		}
 		raw, err := json.Marshal(meta)
@@ -657,7 +660,7 @@ func (c *Cache) putReader(req Request, body io.Reader) Response {
 		if err = c.evictLocked(); err != nil {
 			return err
 		}
-		resp = Response{ID: req.ID, DiskPath: path, Size: n, OutputID: req.OutputID, Time: &meta.PutAt}
+		resp = Response{ID: req.ID, DiskPath: c.objectPath(key), Size: n, OutputID: req.OutputID, Time: &meta.PutAt}
 		return nil
 	})
 	if err != nil {
@@ -692,6 +695,7 @@ func (c *Cache) evictLocked() error {
 			heap.Push(&c.eviction, row)
 		}
 	}()
+	now := time.Now().UnixNano()
 	for scanned := 0; scanned < 256 && c.eviction.Len() > 0; scanned++ {
 		row := heap.Pop(&c.eviction).(indexEntry)
 		if c.total <= c.maxBytes && len(c.index) <= c.maxEntries() {
@@ -700,6 +704,11 @@ func (c *Cache) evictLocked() error {
 		}
 		if strings.HasPrefix(row.Key, "action-") && len(c.index) <= c.maxEntries() {
 			row.retryAt = time.Now().Add(time.Second).UnixNano()
+			skipped = append(skipped, row)
+			continue
+		}
+		if !strings.HasPrefix(row.Key, "action-") && c.graceWindow > 0 && row.Access > 0 && now-row.Access < int64(c.graceWindow) {
+			row.retryAt = row.Access + int64(c.graceWindow)
 			skipped = append(skipped, row)
 			continue
 		}

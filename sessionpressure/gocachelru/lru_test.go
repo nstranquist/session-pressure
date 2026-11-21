@@ -84,6 +84,10 @@ func TestCorruptIndexCannotEscapeCache(t *testing.T) {
 }
 
 func TestCachePinsReturnedPathsUntilClose(t *testing.T) {
+	prevGrace := defaultEvictGraceWindow
+	defaultEvictGraceWindow = 0
+	t.Cleanup(func() { defaultEvictGraceWindow = prevGrace })
+
 	dir := t.TempDir()
 	cache, err := New(dir, 50)
 	if err != nil {
@@ -121,6 +125,50 @@ func TestCachePinsReturnedPathsUntilClose(t *testing.T) {
 		t.Fatalf("newest object lost: %+v", kept)
 	}
 
+}
+
+func TestDiskPathRemainsReadableAfterCloseForGoPackages(t *testing.T) {
+	dir := t.TempDir()
+	firstBody := bytes.Repeat([]byte("a"), 40)
+	secondBody := bytes.Repeat([]byte("b"), 40)
+
+	c, err := New(dir, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putResp := c.put(Request{ID: 1, Command: "put", ActionID: []byte("aaaa"), OutputID: []byte("out-a"), BodySize: 40}, firstBody)
+	if putResp.Err != "" {
+		t.Fatal(putResp.Err)
+	}
+	getResp := c.get(Request{ID: 2, Command: "get", ActionID: []byte("aaaa")})
+	if getResp.Miss || getResp.Err != "" {
+		t.Fatalf("get failed: %+v", getResp)
+	}
+	if !filepath.IsAbs(putResp.DiskPath) || filepath.Dir(putResp.DiskPath) != filepath.Join(dir, "objects") {
+		t.Fatalf("put DiskPath not in objects/: %q", putResp.DiskPath)
+	}
+	if getResp.DiskPath != putResp.DiskPath {
+		t.Fatalf("get DiskPath %q != put DiskPath %q", getResp.DiskPath, putResp.DiskPath)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// A second go/packages subprocess puts another oversized object within the grace window.
+	next, err := New(dir, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPut := next.put(Request{ID: 3, Command: "put", ActionID: []byte("bbbb"), OutputID: []byte("out-b"), BodySize: 40}, secondBody)
+	if secondPut.Err != "" {
+		t.Fatal(secondPut.Err)
+	}
+	if err := next.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(getResp.DiskPath)
+	if err != nil || !bytes.Equal(raw, firstBody) {
+		t.Fatalf("DiskPath unreadable after Close + sibling put: err=%v len=%d", err, len(raw))
+	}
 }
 
 func TestServeProtocolGetPutClose(t *testing.T) {
@@ -263,8 +311,11 @@ func TestRecoverAbandonedPins(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	if _, err = os.Stat(first.DiskPath); !os.IsNotExist(err) {
-		t.Fatalf("abandoned pin remains: %v", err)
+	if _, err = os.Stat(a.pins); !os.IsNotExist(err) {
+		t.Fatalf("abandoned pin directory remains: %v", err)
+	}
+	if _, err = os.Stat(first.DiskPath); err != nil {
+		t.Fatalf("shared object lost on abandoned pin sweep: %v", err)
 	}
 }
 func BenchmarkCachePut(b *testing.B) {
