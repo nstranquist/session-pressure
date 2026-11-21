@@ -198,3 +198,35 @@ func BenchmarkGetEightClients(b *testing.B) {
 		b.ReportMetric(float64(latencies[n*99/100].Microseconds()), "p99-get-us")
 	}
 }
+
+// BenchmarkPutClientLargeIndex is one Go process that puts one object into
+// the large cache: start, put, close. On runner-3 (2026-11-21) this cost
+// about 3.8 s with the JSONL journal, because the first put replayed it.
+// The first client, which pays any one-time index setup, is reported apart
+// as first-client-ms.
+func BenchmarkPutClientLargeIndex(b *testing.B) {
+	dir, _ := scaleCache(b, scaleRows(b), 0)
+	putClient := func(i int) {
+		c, err := New(dir, 64<<30)
+		if err != nil {
+			b.Fatal(err)
+		}
+		action := []byte(fmt.Sprintf("bench-put-%d", i))
+		if r := c.put(Request{ID: 1, ActionID: action, OutputID: action, BodySize: 8}, []byte("abcdefgh")); r.Err != "" {
+			b.Fatal(r.Err)
+		}
+		if err := c.Close(); err != nil {
+			b.Fatal(err)
+		}
+	}
+	started := time.Now()
+	putClient(-1)
+	first := time.Since(started)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		putClient(i)
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(first.Milliseconds()), "first-client-ms")
+	b.ReportMetric(float64(b.Elapsed().Microseconds())/float64(b.N)/1000, "put-client-ms")
+}

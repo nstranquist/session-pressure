@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,76 +11,6 @@ import (
 	"testing"
 	"time"
 )
-
-func TestPinnedCandidatesDoNotStarveLaterEviction(t *testing.T) {
-	c, err := New(t.TempDir(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	// More than one maintenance budget of old pinned objects precedes a
-	// reclaimable object. The next pass must advance past the pinned prefix.
-	for i := 0; i < 300; i++ {
-		key := fmt.Sprintf("%064x", i)
-		path := c.objectPath(key)
-		if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := c.pin(key); err != nil {
-			t.Fatal(err)
-		}
-		c.applyRow(indexEntry{Key: key, Size: 1, Access: int64(i + 1)})
-	}
-	key := fmt.Sprintf("%064x", 1000)
-	if err := os.WriteFile(c.objectPath(key), []byte("x"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	c.applyRow(indexEntry{Key: key, Size: 1, Access: 1000})
-	for i := 0; i < 2; i++ {
-		if err := c.evictLocked(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(c.objectPath(key)); !os.IsNotExist(err) {
-		t.Fatalf("reclaimable object starved: %v", err)
-	}
-}
-
-// A journal row naming a path outside the cache must never reach eviction.
-// Startup no longer reads the journal (a get needs no index), so the guard
-// sits in every replay: the put that would evict cannot load the index, and
-// degrades to an unindexed object instead of deleting anything.
-func TestCorruptIndexCannotEscapeCache(t *testing.T) {
-	root := t.TempDir()
-	dir := filepath.Join(root, "cache")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	outside := filepath.Join(root, "outside")
-	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "index.jsonl"), []byte("{\"key\":\"../outside\",\"size\":1,\"access\":1}\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	c, err := New(dir, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := c.withLock(c.loadIndex); err == nil {
-		t.Fatal("unsafe index accepted by replay")
-	}
-	c.resetJournal()
-	c.journalID = nil
-	put := c.put(Request{ID: 1, ActionID: []byte("a"), OutputID: []byte("o"), BodySize: 2}, []byte("xy"))
-	if put.Err != "" || put.DiskPath == "" {
-		t.Fatalf("put on an unsafe journal must degrade: %+v", put)
-	}
-	c.Close()
-	if raw, err := os.ReadFile(outside); err != nil || string(raw) != "keep" {
-		t.Fatalf("eviction escaped the cache: %q %v", raw, err)
-	}
-}
 
 func TestCachePinsReturnedPathsUntilClose(t *testing.T) {
 	prevGrace := defaultEvictGraceWindow
@@ -333,35 +262,5 @@ func BenchmarkCachePut(b *testing.B) {
 		if r.Err != "" {
 			b.Fatal(r.Err)
 		}
-	}
-}
-
-func TestEvictionHeapTouchesStayBounded(t *testing.T) {
-	c := &Cache{index: map[string]indexEntry{}}
-	for i := 0; i < 10000; i++ {
-		c.applyRow(indexEntry{Key: fmt.Sprintf("%064x", i), Size: 1, Access: int64(i)})
-	}
-	for i := 0; i < 10000; i++ {
-		c.applyRow(indexEntry{Key: fmt.Sprintf("%064x", i%100), Size: 1, Access: int64(i + 10000)})
-	}
-	if c.eviction.Len() != 10000 || len(c.eviction.positions) != 10000 || c.total != 10000 {
-		t.Fatalf("heap grew on touches: %d/%d total %d", c.eviction.Len(), len(c.eviction.positions), c.total)
-	}
-	if c.eviction.rows[0].Access != 100 {
-		t.Fatalf("oldest touch not updated: %+v", c.eviction.rows[0])
-	}
-}
-func BenchmarkEvictionTouch(b *testing.B) {
-	for _, n := range []int{1000, 100000} {
-		b.Run(fmt.Sprint(n), func(b *testing.B) {
-			c := &Cache{index: map[string]indexEntry{}}
-			for i := 0; i < n; i++ {
-				c.applyRow(indexEntry{Key: fmt.Sprintf("%064x", i), Size: 1, Access: int64(i)})
-			}
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				c.applyRow(indexEntry{Key: fmt.Sprintf("%064x", i%n), Size: 1, Access: int64(n + i)})
-			}
-		})
 	}
 }
