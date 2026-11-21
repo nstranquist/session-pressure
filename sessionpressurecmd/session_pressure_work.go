@@ -51,6 +51,13 @@ the whole finite sequence. Optional successful reuse requires declared source,
 environment, toolchain, and external-state boundaries; receipts replay only a
 successful exit status, never stdout or stderr.
 
+work run exits with the wrapped command's status, so the number alone cannot
+say whether a 2 is the command's result or a session-pressure usage error. A
+wrapper that needs to know creates an empty 0600 file and passes its absolute
+path in SESSION_PRESSURE_WORK_EXIT_REPORT. work run fills it with
+{"schema_version":1,"source":"child"|"session_pressure","exit_code":N}, never
+creates or follows it, and hides the variable from the wrapped command.
+
 A fast lane admits light, short work at CPU-red instead of latching it: the class
 weight must fit the fast-lane ceiling and the free weighted capacity, and measured
 class p95 runtime must be under the runtime ceiling. It fails closed without

@@ -119,19 +119,6 @@ func sessionPressureLeafAction(args []string) string {
 	return sessionpressure.CommandLeaf(args)
 }
 
-func sessionPressureInvocationOutcome(exitCode int) string {
-	switch {
-	case exitCode == 0:
-		return "success"
-	case exitCode == 2:
-		return "usage_error"
-	case exitCode >= 11 && exitCode <= 15:
-		return "policy_denied"
-	default:
-		return "failure"
-	}
-}
-
 func cmdSessionPressure(g *Flags, args []string) int {
 	args = StripSessionPressurePrefix(args)
 	sub := "snapshot"

@@ -117,6 +117,12 @@ func runNestedWorkCommand(parent WorkLeaseStatus, options WorkRunOptions, stream
 		fmt.Fprintf(streams.Stderr, "ndev session pressure: nested class=%s runs under parent operation=%s class=%s weight=%d\n",
 			options.Class, parent.OperationID, parent.Class, parent.Weight)
 	}
+	// The wrapped command replaces this process, so its exit status is the
+	// child's. A failed exec returns an error, and the caller rewrites the
+	// report with session_pressure.
+	if err := WriteWorkExitReport(options.ExitReportPath, WorkExitReport{Source: WorkExitSourceChild}); err != nil && streams.Stderr != nil {
+		fmt.Fprintln(streams.Stderr, "session-pressure:", err)
+	}
 	if err := workNestedExec(resolved, options.Command, withoutPressureWrapperMarker(os.Environ())); err != nil {
 		return 1, fmt.Errorf("exec nested leased command: %w", err)
 	}

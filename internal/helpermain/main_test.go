@@ -55,3 +55,23 @@ func TestConfigureMonitorWiresAllResidentCallbacks(t *testing.T) {
 		t.Fatal("resident must enforce host browser control")
 	}
 }
+
+// work run writes the wrapper's exit report and keeps the path away from the
+// wrapped command. A refused argument is session-pressure's own status.
+func TestRunWorkCommandReportsOwnUsageError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exit-report")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(sessionpressure.WorkExitReportEnv, path)
+	if code := runWorkCommand([]string{"--no-such-flag"}); code != 2 {
+		t.Fatalf("code=%d", code)
+	}
+	if _, set := os.LookupEnv(sessionpressure.WorkExitReportEnv); set {
+		t.Fatal("report path left in the environment")
+	}
+	report, ok, err := sessionpressure.ReadWorkExitReport(path)
+	if err != nil || !ok || report.Source != sessionpressure.WorkExitSourceSessionPressure || !report.AppliesTo(2) || report.AppliesTo(0) {
+		t.Fatalf("report=%+v ok=%v err=%v", report, ok, err)
+	}
+}

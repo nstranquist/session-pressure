@@ -238,27 +238,40 @@ func runWorkBatchCommand(args []string) int {
 	return code
 }
 
+// runWorkCommand runs one work run and records which side set its exit
+// status in the wrapper's exit report (sessionpressure.WorkExitReportEnv).
 func runWorkCommand(args []string) int {
+	reportPath := sessionpressure.TakeWorkExitReportPath()
+	code, source := runWorkCommandSource(args, reportPath)
+	if err := sessionpressure.WriteWorkExitReport(reportPath, sessionpressure.WorkExitReport{Source: source, ExitCode: &code}); err != nil {
+		fmt.Fprintln(os.Stderr, "session-pressure:", err)
+	}
+	return code
+}
+
+func runWorkCommandSource(args []string, reportPath string) (int, sessionpressure.WorkExitSource) {
+	own := sessionpressure.WorkExitSourceSessionPressure
 	options, err := sessionpressure.ParseWorkRunArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "session-pressure:", err)
-		return 2
+		return 2, own
 	}
 	dir, err := sessionpressure.DataDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "session-pressure:", err)
-		return 1
+		return 1, own
 	}
 	policy, persisted, err := sessionpressure.LoadPolicy(sessionpressure.PolicyPath(dir), 0)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "session-pressure:", err)
-		return 1
+		return 1, own
 	}
 	if !persisted {
 		fmt.Fprintln(os.Stderr, "session-pressure: policy is not initialized; run session-pressure policy init")
-		return 1
+		return 1, own
 	}
 	options.RetentionDays = policy.RetentionDays
+	options.ExitReportPath = reportPath
 	code, err := sessionpressure.RunWorkCommandWithExpressReuse(
 		sessionpressure.NewWorkCoordinator(dir, policy.WorkLimits),
 		options,
@@ -271,7 +284,7 @@ func runWorkCommand(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "session-pressure:", err)
 	}
-	return code
+	return code, sessionpressure.WorkExitSourceFor(err)
 }
 
 func configureMonitor(dir string, sampler *sessionpressure.Sampler, store *sessionpressure.TelemetryStore, policy sessionpressure.Policy, workCoordinator *sessionpressure.WorkCoordinator, starts24h int) *sessionpressure.Monitor {

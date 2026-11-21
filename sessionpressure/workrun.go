@@ -72,6 +72,9 @@ type WorkRunOptions struct {
 	// PlacementReason.
 	Placement       WorkPlacement
 	PlacementReason string
+	// ExitReportPath is the wrapper's work exit report (WorkExitReportEnv).
+	// A nested run writes it before the wrapped command replaces work run.
+	ExitReportPath string
 	// placementProbe reports whether the Mac could start this command now
 	// (work_placer.go). Nil means unknown, and the placer keeps remote.
 	placementProbe func() (idle bool, reason string)
