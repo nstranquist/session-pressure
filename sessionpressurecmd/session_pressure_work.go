@@ -154,12 +154,13 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 			}
 		}
 		if g != nil && g.JSON {
-			return sessionPressureError("work run does not accept --json because the child owns stdout; use work status for JSON", 2)
+			return sessionpressure.ReportOwnWorkExit(sessionPressureError("work run does not accept --json because the child owns stdout; use work status for JSON", 2))
 		}
 		if _, err := sessionpressure.ParseWorkRunArgs(args); err != nil {
-			return sessionPressureError(err.Error(), 2)
+			return sessionpressure.ReportOwnWorkExit(sessionPressureError(err.Error(), 2))
 		}
-		return runPressureWorkHelper(args)
+		// The helper replaces this process; a return is a failure to start it.
+		return sessionpressure.ReportOwnWorkExit(runPressureWorkHelper(args))
 	}
 	if sub == "batch" {
 		if g != nil && g.JSON {

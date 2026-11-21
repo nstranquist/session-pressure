@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -499,5 +501,65 @@ func TestPressureWorkAdapterKeepsPlacement(t *testing.T) {
 	}
 	if options.placement != sessionpressure.WorkPlacementLocal || options.placementReason != "darwin-cgo-producer" {
 		t.Fatalf("adapter dropped placement: %+v", options)
+	}
+}
+
+// The CLI checks work run arguments before it starts the helper, so it
+// reports those refusals itself, and leaves the variable for the helper.
+func TestPressureWorkRunReportsCLIRefusals(t *testing.T) {
+	originalResolve := resolvePressureWorkHelper
+	originalExec := execPressureWorkHelper
+	t.Cleanup(func() {
+		resolvePressureWorkHelper = originalResolve
+		execPressureWorkHelper = originalExec
+	})
+	path := filepath.Join(t.TempDir(), "exit-report")
+	t.Setenv(sessionpressure.WorkExitReportEnv, path)
+	read := func() sessionpressure.WorkExitReport {
+		t.Helper()
+		report, ok, err := sessionpressure.ReadWorkExitReport(path)
+		if err != nil || !ok {
+			t.Fatalf("report ok=%v err=%v", ok, err)
+		}
+		return report
+	}
+	reset := func() {
+		t.Helper()
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reset()
+	if code := cmdSessionPressureWork(&Flags{}, []string{"run", "--no-such-flag", "--", "true"}); code != 2 {
+		t.Fatalf("unknown argument code=%d", code)
+	}
+	if report := read(); report.Source != sessionpressure.WorkExitSourceSessionPressure || !report.AppliesTo(2) || report.AppliesTo(0) {
+		t.Fatalf("unknown argument report=%+v", report)
+	}
+
+	reset()
+	if code := cmdSessionPressureWork(&Flags{JSON: true}, []string{"run", "--", "true"}); code != 2 {
+		t.Fatalf("--json code=%d", code)
+	}
+	if report := read(); report.Source != sessionpressure.WorkExitSourceSessionPressure || !report.AppliesTo(2) {
+		t.Fatalf("--json report=%+v", report)
+	}
+
+	reset()
+	var helperEnv []string
+	resolvePressureWorkHelper = func() (string, error) { return "/tmp/immutable-helper", nil }
+	execPressureWorkHelper = func(_ string, _ []string, env []string) error {
+		helperEnv = env
+		return errors.New("exec intercepted")
+	}
+	if code := cmdSessionPressureWork(&Flags{}, []string{"run", "--class", "build", "--", "true"}); code != 1 {
+		t.Fatalf("helper start failure code=%d", code)
+	}
+	if report := read(); report.Source != sessionpressure.WorkExitSourceSessionPressure || !report.AppliesTo(1) {
+		t.Fatalf("helper start failure report=%+v", report)
+	}
+	if !slices.Contains(helperEnv, sessionpressure.WorkExitReportEnv+"="+path) {
+		t.Fatal("the helper did not get the report path")
 	}
 }

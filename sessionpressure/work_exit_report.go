@@ -64,12 +64,27 @@ func (r WorkExitReport) AppliesTo(observed int) bool {
 // environment and removes the variable, so wrapped commands never inherit
 // it. A relative path is ignored.
 func TakeWorkExitReportPath() string {
-	path := os.Getenv(WorkExitReportEnv)
+	path := workExitReportPath()
 	_ = os.Unsetenv(WorkExitReportEnv)
-	if !filepath.IsAbs(path) {
-		return ""
-	}
 	return path
+}
+
+func workExitReportPath() string {
+	if path := os.Getenv(WorkExitReportEnv); filepath.IsAbs(path) {
+		return path
+	}
+	return ""
+}
+
+// ReportOwnWorkExit records a status that the CLI chose before it started the
+// work run helper (an argument it refused, or a helper it could not start).
+// The variable stays set, so a helper that does start writes its own report.
+// It returns code, and prints a write failure to stderr.
+func ReportOwnWorkExit(code int) int {
+	if err := WriteWorkExitReport(workExitReportPath(), WorkExitReport{Source: WorkExitSourceSessionPressure, ExitCode: &code}); err != nil {
+		fmt.Fprintln(os.Stderr, "session-pressure:", err)
+	}
+	return code
 }
 
 // WriteWorkExitReport replaces the content of the wrapper's report file. An
