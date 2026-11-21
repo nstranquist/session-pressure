@@ -380,11 +380,12 @@ func runRemoteNodeWork(dir string, policy RemoteWorkPolicy, plan remoteNodePlan,
 	if err != nil {
 		return rejectRemoteNode(dir, err.Error())
 	}
+	conn := newRemoteSSH(job)
 	if policy.Fleet != "" {
 		binding, bindErr := runnerfleet.Assign(context.Background(), policy.Fleet, runnerfleet.Request{
 			Key: "pressure-" + job, Identity: plan.root + "\x00" + strings.Join(plan.argv, "\x00"),
 			Repository: "session-pressure-work", Profile: "linux-native", Lane: "heavy",
-		}, nil)
+		}, conn.probe())
 		if bindErr != nil {
 			return rejectRemoteNode(dir, "fleet assignment: "+bindErr.Error())
 		}
@@ -413,8 +414,11 @@ func runRemoteNodeWork(dir string, policy RemoteWorkPolicy, plan remoteNodePlan,
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
+	target := policy.User + "@" + policy.Host
+	// Deferred first, so it runs after the cleanup call below.
+	defer conn.close(target)
 	ssh := func(command string) *exec.Cmd {
-		return exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", policy.User+"@"+policy.Host, command)
+		return conn.command(ctx, "8", target, command)
 	}
 	remote := "/srv/build/candidates/pressure-" + job
 	requestDir := filepath.Join(dir, "remote-requests")
@@ -463,7 +467,7 @@ func runRemoteNodeWork(dir string, policy RemoteWorkPolicy, plan remoteNodePlan,
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = exec.CommandContext(cleanupCtx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", policy.User+"@"+policy.Host, "rm -rf -- "+shellQuote(remote)+" "+shellQuote(remote+".request")).Run()
+		_ = conn.command(cleanupCtx, "5", target, "rm -rf -- "+shellQuote(remote)+" "+shellQuote(remote+".request")).Run()
 	}()
 	command := remoteNodeRunnerCommand(plan, job)
 	command = "env NCD_RUNNER_FRAMED=1 NCD_RUNNER_CLASS=heavy" + remoteDeliveryLineage(os.Getenv) + " NCD_RUNNER_KEY=" + shellQuote("pressure-"+job) +

@@ -40,13 +40,15 @@ type fakeProbe struct {
 	mu        sync.Mutex
 	calls     int
 	deadlines []time.Time
+	options   [][]string
 	results   []func(context.Context) ([]byte, error)
 }
 
-func (f *fakeProbe) run(ctx context.Context, _ Host) ([]byte, error) {
+func (f *fakeProbe) run(ctx context.Context, _ Host, sshOptions []string) ([]byte, error) {
 	f.mu.Lock()
 	i := f.calls
 	f.calls++
+	f.options = append(f.options, sshOptions)
 	d, _ := ctx.Deadline()
 	f.deadlines = append(f.deadlines, d)
 	f.mu.Unlock()
@@ -335,5 +337,24 @@ func TestAssignRefusesUnreachableTransport(t *testing.T) {
 	b, err := Assign(context.Background(), path, req("slow-ok"), slow)
 	if err != nil || b.Host.Name != "runner-3" {
 		t.Fatalf("slow healthy host must stay selectable: %+v %v", b, err)
+	}
+}
+
+// ProbeVia hands a job's connection-reuse options to every attempt, so the
+// probe's login becomes the job's shared connection; Probe passes none.
+func TestProbeViaPassesSSHOptionsToEveryAttempt(t *testing.T) {
+	f := &fakeProbe{results: []func(context.Context) ([]byte, error){
+		func(context.Context) ([]byte, error) { return nil, exitError(t, 255) }, ok,
+	}}
+	withProbe(t, f)
+	opts := []string{"-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/x-%C"}
+	if o := ProbeVia(opts...)(context.Background(), probeHost()); !o.Healthy {
+		t.Fatalf("observation = %+v", o)
+	}
+	if len(f.options) != 2 || strings.Join(f.options[0], " ") != strings.Join(opts, " ") || strings.Join(f.options[1], " ") != strings.Join(opts, " ") {
+		t.Fatalf("attempt options = %q", f.options)
+	}
+	if o := Probe(context.Background(), probeHost()); !o.Healthy || f.options[2] != nil {
+		t.Fatalf("Probe options = %q (%+v)", f.options[2], o)
 	}
 }

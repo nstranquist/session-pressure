@@ -2,9 +2,11 @@ package sessionpressure
 
 import (
 	"archive/tar"
+	"bufio"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -555,12 +557,15 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		return true, 1, err
 	}
 	profile := remoteBuildProfile(argv[1], os.Getenv("CGO_ENABLED"))
+	// One SSH connection serves every call of this job; the fleet probe
+	// opens it (remote_ssh.go).
+	conn := newRemoteSSH(job)
 	if policy.Fleet != "" {
 		lane, _, _, _ := remoteLane(options)
 		binding, bindErr := runnerfleet.Assign(context.Background(), policy.Fleet, runnerfleet.Request{
 			Key: "pressure-" + job, Identity: cwd + "\x00" + strings.Join(argv, "\x00"),
 			Repository: "session-pressure-work", Profile: profile, Lane: lane,
-		}, nil)
+		}, conn.probe())
 		if bindErr != nil {
 			return reject("fleet assignment: " + bindErr.Error())
 		}
@@ -595,8 +600,11 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour+32*time.Minute)
 	defer cancel()
+	target := policy.User + "@" + policy.Host
+	// Deferred first, so it runs after the cleanup call below.
+	defer conn.close(target)
 	ssh := func(command string) *exec.Cmd {
-		return exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", policy.User+"@"+policy.Host, command)
+		return conn.command(ctx, "8", target, command)
 	}
 	// Keep the endpoint with the request key even after an ambiguous disconnect.
 	requestDir := filepath.Join(dir, "remote-requests")
@@ -653,7 +661,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = exec.CommandContext(cleanupCtx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", policy.User+"@"+policy.Host, "rm -rf -- "+shellQuote(remote)+" "+shellQuote(remote+".request")).Run()
+		_ = conn.command(cleanupCtx, "5", target, "rm -rf -- "+shellQuote(remote)+" "+shellQuote(remote+".request")).Run()
 	}()
 	rel, _ := filepath.Rel(common, cwd)
 	// A focused package test asks for the runner's light lane (1 CPU, 1 GiB,
@@ -686,11 +694,6 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		// recovered. Publish locally only after checking its retained manifest.
 		cleanupSafe = false
 		nextStage("artifact_download_ms")
-		manifest, manifestErr := ssh("cat " + shellQuote(remote+"/artifact.sha256")).Output()
-		fields := strings.Fields(string(manifest))
-		if manifestErr != nil || len(fields) != 2 || len(fields[0]) != 64 || fields[1] != remote+"/artifact" {
-			return true, 1, fmt.Errorf("remote artifact manifest unavailable or invalid: %w", manifestErr)
-		}
 		directoryOutput := remoteBuildDirectory(output)
 		if !filepath.IsAbs(output) {
 			output = filepath.Join(cwd, output)
@@ -706,20 +709,15 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 			return true, 1, err
 		}
 		defer os.Remove(f.Name())
-		fetch := ssh("cat " + shellQuote(remote+"/artifact"))
-		digest := sha256.New()
-		fetch.Stdout = io.MultiWriter(f, digest)
+		fetch := ssh("cat -- " + shellQuote(remote+"/artifact.sha256") + " " + shellQuote(remote+"/artifact"))
 		fetch.Stderr = streams.Stderr
-		err = fetch.Run()
+		sum, err := fetchRemoteArtifact(fetch, remote+"/artifact", f)
 		closeErr := f.Close()
 		if err != nil || closeErr != nil {
 			return true, 1, errors.Join(err, closeErr)
 		}
-		if fmt.Sprintf("%x", digest.Sum(nil)) != fields[0] {
-			return true, 1, errors.New("remote artifact checksum mismatch")
-		}
 		if remoteBuildDirectory(output) {
-			if err = publishRemoteBuildDirectory(f.Name(), output, remoteBuildDirectoryReceipt(policy, profile, "pressure-"+job, fmt.Sprintf("%x", digest.Sum(nil)), sourceBytes)); err != nil {
+			if err = publishRemoteBuildDirectory(f.Name(), output, remoteBuildDirectoryReceipt(policy, profile, "pressure-"+job, sum, sourceBytes)); err != nil {
 				return true, 1, err
 			}
 			cleanupSafe = true
@@ -787,4 +785,36 @@ func remoteGoInvocation(lane, procs, memlimit, parallel, goflags, buildEnv strin
 		return heavy(procs, memlimit, parallel)
 	}
 	return "if [ \"${NCD_RUNNER_LANE:-" + lane + "}\" = " + lane + " ]; then " + pinned(procs, memlimit, parallel) + "; else " + heavy(heavyProcs, heavyMemlimit, heavyParallel) + "; fi"
+}
+
+// fetchRemoteArtifact reads the retained manifest line and then the
+// artifact from one remote `cat -- <manifest> <artifact>` stream, writes the
+// artifact to dst and checks it against the manifest's SHA-256. One stream
+// replaces a manifest call and an artifact call. A missing or invalid
+// manifest fails the fetch; the artifact stays on the runner for recovery.
+func fetchRemoteArtifact(fetch *exec.Cmd, artifact string, dst io.Writer) (string, error) {
+	out, err := fetch.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	if err = fetch.Start(); err != nil {
+		return "", err
+	}
+	r := bufio.NewReaderSize(out, 64<<10)
+	line, lineErr := r.ReadSlice('\n')
+	fields := strings.Fields(string(line))
+	if lineErr != nil || len(fields) != 2 || len(fields[0]) != 64 || strings.ToLower(fields[0]) != fields[0] || fields[1] != artifact {
+		_ = fetch.Process.Kill()
+		return "", fmt.Errorf("remote artifact manifest unavailable or invalid: %w", errors.Join(lineErr, fetch.Wait()))
+	}
+	digest := sha256.New()
+	_, copyErr := io.Copy(io.MultiWriter(dst, digest), r)
+	if err = errors.Join(copyErr, fetch.Wait()); err != nil {
+		return "", err
+	}
+	sum := hex.EncodeToString(digest.Sum(nil))
+	if sum != fields[0] {
+		return "", errors.New("remote artifact checksum mismatch")
+	}
+	return sum, nil
 }

@@ -213,10 +213,12 @@ const probeMaxAttempts = 2
 // is a definitive answer from the host, so it is not retried.
 const sshTransportFailure = 255
 
-// probeCommand runs the remote health query. Tests replace it.
-var probeCommand = func(ctx context.Context, h Host) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", h.User+"@"+h.Name,
-		"/srv/build/gaterunner health && /srv/build/gaterunner status && uname -sm")
+// probeCommand runs the remote health query. sshOptions are extra ssh
+// arguments, for example a caller's connection reuse. Tests replace it.
+var probeCommand = func(ctx context.Context, h Host, sshOptions []string) ([]byte, error) {
+	args := append([]string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10"}, sshOptions...)
+	args = append(args, h.User+"@"+h.Name, "/srv/build/gaterunner health && /srv/build/gaterunner status && uname -sm")
+	cmd := exec.CommandContext(ctx, "ssh", args...)
 	var out cappedBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard
@@ -250,7 +252,7 @@ func hostGaveNoAnswer(err error) bool { return errors.As(err, new(noAnswerError)
 // queryHost runs probeCommand until it answers, fails definitively, or the
 // budget cannot hold another attempt. The error is a noAnswerError when the
 // host never answered; a remote command failure is an answer.
-func queryHost(ctx context.Context, h Host) ([]byte, int, error) {
+func queryHost(ctx context.Context, h Host, sshOptions []string) ([]byte, int, error) {
 	start := time.Now()
 	end := probeBudgetEnd(ctx, start)
 	pctx, cancel := context.WithDeadline(ctx, end)
@@ -260,7 +262,7 @@ func queryHost(ctx context.Context, h Host) ([]byte, int, error) {
 	for attempts < probeMaxAttempts {
 		attempts++
 		var out []byte
-		if out, err = probeCommand(pctx, h); err == nil {
+		if out, err = probeCommand(pctx, h, sshOptions); err == nil {
 			return out, attempts, nil
 		}
 		if pctx.Err() != nil || !retryableProbeError(err) || time.Until(end) < probeRetryPause+probeMinAttempt {
@@ -280,7 +282,21 @@ func queryHost(ctx context.Context, h Host) ([]byte, int, error) {
 	return nil, attempts, fmt.Errorf("SSH health probe: %w (%d attempt(s), %.1fs)", err, attempts, time.Since(start).Seconds())
 }
 
-func Probe(ctx context.Context, h Host) (o Observation) {
+func Probe(ctx context.Context, h Host) Observation {
+	return probeVia(ctx, h, nil)
+}
+
+// ProbeVia is Probe with extra ssh arguments. A remote job passes its
+// per-job connection reuse options, so the probe's authenticated
+// connection serves the job's later calls instead of each paying a new
+// SSH login (about 1.7 s from the Mac).
+func ProbeVia(sshOptions ...string) ProbeFunc {
+	return func(ctx context.Context, h Host) Observation {
+		return probeVia(ctx, h, sshOptions)
+	}
+}
+
+func probeVia(ctx context.Context, h Host, sshOptions []string) (o Observation) {
 	o.Host = h
 	// ObservedAt is when the host's answer (or the failure) is known, so a slow
 	// but successful probe is not reported as already stale to its consumers.
@@ -291,7 +307,7 @@ func Probe(ctx context.Context, h Host) (o Observation) {
 		return
 	}
 	start := time.Now()
-	raw, attempts, err := queryHost(ctx, h)
+	raw, attempts, err := queryHost(ctx, h, sshOptions)
 	elapsed := time.Since(start)
 	o.ProbeMS, o.ProbeAttempts = max(elapsed.Milliseconds(), 1), attempts
 	if hostGaveNoAnswer(err) {
