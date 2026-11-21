@@ -55,3 +55,4 @@ product decisions have all been reconstructed.
 - [Darwin cgo stable tool directory](darwin-cgo-cache-key-2026-11-21.md): WORK-1480 per-job clang -B path broke every cgo cache key; shared link, fallback, release 9c3367c, 41 s to 6-8 s runner job.
 - [Remote SSH reuse](remote-ssh-reuse-2026-11-21.md): WORK-1602 one private ControlMaster per job and a one-stream artifact fetch; 6 logins to 1; upload plus download 8.0-13.9 s to 3.6-4.0 s; zstd not adopted.
 - [gocache-lru SQLite index](gocache-lru-sqlite-index-2026-11-21.md): WORK-1601 put client stops replaying the 860k-row journal (1031 ms to 14.9 ms); one-time import; runner pin afcfe04f; rollback needs a cache reset.
+- [Work run exit source report](work-exit-report-2026-11-21.md): WORK-1627 `SESSION_PRESSURE_WORK_EXIT_REPORT` tells a wrapped command's exit 2 from a session-pressure usage error; ndev rows get `exit_source`, child exits become `expected_negative`.
