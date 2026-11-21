@@ -20,9 +20,9 @@ import (
 // Unlike the producer (-s -w), a Mac build keeps its debug information, and
 // Go's darwin external link then runs `strip -S` and dsymutil. The runner's
 // GNU strip cannot read Mach-O, and clang finds /usr/bin/strip before PATH,
-// so each job gets a private tool directory whose strip is LLVM's, passed to
-// clang with -B. Probe 2026-11-08: the cgo binary runs on the Mac and keeps
-// its __DWARF segments; no file on the runner changes.
+// so clang gets a tool directory whose strip is LLVM's, passed with -B.
+// Probe 2026-11-08: the cgo binary runs on the Mac and keeps its __DWARF
+// segments. The directory holds only that link; see remoteDarwinSharedTools.
 const (
 	remoteDarwinCC     = "/srv/build/opt/pressure-darwin-clang"
 	remoteDarwinSDK    = "/srv/build/opt/macos-sdk-cgo"
@@ -30,7 +30,21 @@ const (
 	remoteDarwinStrip  = "/usr/lib/llvm-18/bin/llvm-strip"
 )
 
-// remoteDarwinTools is the job's private tool directory for clang -B.
+// remoteDarwinSharedTools is the runner-wide tool directory for clang -B.
+// Its path is part of CC, and Go puts CC in the action ID of every package of
+// a cgo build. A per-job path therefore made each job rebuild the standard
+// library and every cgo package from scratch: on the Linux gate runner the
+// catalog-providers build took 53.9 s with a new path and 1.0 s with a
+// reused one, also from another source directory (WORK-1480, 2026-11-21).
+// The preflight makes the link atomically; it changes nothing else.
+const remoteDarwinSharedTools = "/srv/build/cache/pressure-darwin-tools"
+
+// remoteDarwinToolsVar is the shell variable the preflight sets to the tool
+// directory it verified. CC reads it, so a job that cannot use the shared
+// directory still builds, only without the cross-job cache.
+const remoteDarwinToolsVar = "NCD_PRESSURE_DARWIN_TOOLS"
+
+// remoteDarwinTools is the job's private fallback tool directory for clang -B.
 func remoteDarwinTools(job string) string { return job + "/tools" }
 
 // Remote build profiles, recorded in remote_work_finished telemetry.
@@ -61,7 +75,8 @@ func remoteBuildEnvironment(profile, job string) string {
 	case remoteProfileDarwinNoCgo:
 		return " GOOS=darwin GOARCH=arm64 CGO_ENABLED=0"
 	case remoteProfileDarwinCgo:
-		return " GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 CC=" + shellQuote(remoteDarwinCC+" -B"+remoteDarwinTools(job)+"/") +
+		// Double quotes: the preflight's tool directory expands at run time.
+		return " GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 CC=\"" + remoteDarwinCC + " -B${" + remoteDarwinToolsVar + ":?}/\"" +
 			" PRESSURE_MACOS_SDK=" + shellQuote(remoteDarwinSDK) +
 			" CGO_CFLAGS=" + shellQuote(remoteDarwinCFLAGS) + " CGO_CPPFLAGS= CGO_CXXFLAGS= CGO_LDFLAGS="
 	}
@@ -84,16 +99,28 @@ func remoteBuildPreflight(profile, host string, pins map[string]string, job stri
 	if endpoint == "" || digest == "" {
 		return "", fmt.Errorf("runner %q has no reviewed Darwin compiler pin in remote-work.json", host)
 	}
-	return remoteToolchainPreflight(remoteDarwinCC, digest, remoteDarwinSDK, remoteDarwinStrip, remoteDarwinTools(job)), nil
+	return remoteToolchainPreflight(remoteDarwinCC, digest, remoteDarwinSDK, remoteDarwinStrip, remoteDarwinSharedTools, remoteDarwinTools(job)), nil
 }
 
-func remoteToolchainPreflight(compiler, digest, sdk, strip, tools string) string {
+// remoteToolchainPreflight verifies the pinned toolchain and sets
+// remoteDarwinToolsVar. It uses the shared tool directory when its strip
+// links to the pinned strip, making the link first if needed. The link is
+// renamed into place, so a concurrent job never sees a missing strip. When
+// the shared directory cannot be made (a pool user without write access),
+// the job's private directory is used instead.
+func remoteToolchainPreflight(compiler, digest, sdk, strip, shared, jobTools string) string {
 	refuse := func(reason string) string {
 		return fmt.Sprintf("{ echo %s >&2; exit %d; }", shellQuote(WorkRefusalMarker+" kind="+WorkRefusalRemoteProfile+": remote Go work blocked: "+reason), workExitPolicyDenied)
 	}
+	linked := func(dir string) string {
+		return "test \"$(readlink " + shellQuote(dir+"/strip") + " 2>/dev/null)\" = " + shellQuote(strip)
+	}
+	tmp := shellQuote(shared+"/strip.") + "$$"
 	return "{ printf '%s  %s\\n' " + shellQuote(digest) + " " + shellQuote(compiler) + " | sha256sum -c --status - || " +
 		refuse("runner Darwin compiler "+compiler+" does not match its pinned SHA-256") + "; } && " +
 		"{ test -d " + shellQuote(sdk+"/usr/include") + " || " + refuse("runner macOS SDK "+sdk+" is missing") + "; } && " +
 		"{ test -x " + shellQuote(strip) + " || " + refuse("runner Mach-O strip "+strip+" is missing") + "; } && " +
-		"mkdir -p " + shellQuote(tools) + " && ln -sf " + shellQuote(strip) + " " + shellQuote(tools+"/strip") + " && "
+		"{ " + linked(shared) + " || { mkdir -p " + shellQuote(shared) + " && ln -sf " + shellQuote(strip) + " " + tmp + " && mv -f " + tmp + " " + shellQuote(shared+"/strip") + "; } 2>/dev/null || rm -f " + tmp + " 2>/dev/null || :; } && " +
+		"if " + linked(shared) + "; then " + remoteDarwinToolsVar + "=" + shellQuote(shared) + "; else " +
+		"mkdir -p " + shellQuote(jobTools) + " && ln -sf " + shellQuote(strip) + " " + shellQuote(jobTools+"/strip") + " && " + remoteDarwinToolsVar + "=" + shellQuote(jobTools) + "; fi && "
 }

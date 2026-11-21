@@ -24,7 +24,7 @@ func TestRemoteBuildProfileMatchesTheMacCgoSetting(t *testing.T) {
 		}
 	}
 	cgo := remoteBuildEnvironment(remoteProfileDarwinCgo, "/srv/build/candidates/pressure-j")
-	for _, want := range []string{"GOOS=darwin", "GOARCH=arm64", "CGO_ENABLED=1", "CC='" + remoteDarwinCC + " -B/srv/build/candidates/pressure-j/tools/'", "PRESSURE_MACOS_SDK='" + remoteDarwinSDK + "'", "CGO_LDFLAGS="} {
+	for _, want := range []string{"GOOS=darwin", "GOARCH=arm64", "CGO_ENABLED=1", "CC=\"" + remoteDarwinCC + " -B${" + remoteDarwinToolsVar + ":?}/\"", "PRESSURE_MACOS_SDK='" + remoteDarwinSDK + "'", "CGO_LDFLAGS="} {
 		if !strings.Contains(cgo, want) {
 			t.Errorf("cgo environment %q lacks %q", cgo, want)
 		}
@@ -120,6 +120,7 @@ func TestRemoteToolchainPreflightRefusesWithTheContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	tools := filepath.Join(dir, "job", "tools")
+	shared := filepath.Join(dir, "shared", "tools")
 	// A sentinel no path can contain: "ran" matched a home directory name in
 	// the refusal text, which quotes the compiler path.
 	const preflightPassed = "preflight-passed-7c1e"
@@ -134,17 +135,57 @@ func TestRemoteToolchainPreflightRefusesWithTheContract(t *testing.T) {
 		}
 		return 0, string(out)
 	}
-	if code, out := run(remoteToolchainPreflight(compiler, digest, sdk, strip, tools)); code != 0 || strings.TrimSpace(out) != preflightPassed {
+	if code, out := run(remoteToolchainPreflight(compiler, digest, sdk, strip, shared, tools)); code != 0 || strings.TrimSpace(out) != preflightPassed {
 		t.Fatalf("pinned toolchain: exit %d, output %q", code, out)
 	}
-	// clang -B finds the job's strip, which must be the Mach-O strip.
+	// clang -B finds the shared strip, which must be the Mach-O strip.
+	if target, err := os.Readlink(filepath.Join(shared, "strip")); err != nil || target != strip {
+		t.Fatalf("shared strip = %q, %v; want a link to %s", target, err, strip)
+	}
+	toolsDir := func(shared string) string {
+		t.Helper()
+		out, err := exec.Command("bash", "-c", remoteToolchainPreflight(compiler, digest, sdk, strip, shared, tools)+"echo \"$"+remoteDarwinToolsVar+"\"").CombinedOutput()
+		if err != nil {
+			t.Fatalf("preflight: %v\n%s", err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	// A stable path keeps CC, and so every cgo action ID, the same across
+	// jobs (WORK-1480). A second job reuses the link and leaves no temp file.
+	if got := toolsDir(shared); got != shared {
+		t.Fatalf("tool directory = %q, want the shared %q", got, shared)
+	}
+	if entries, err := os.ReadDir(shared); err != nil || len(entries) != 1 {
+		t.Fatalf("shared directory entries = %v, %v; want only strip", entries, err)
+	}
+	// A wrong link is replaced, not trusted.
+	if err := os.Remove(filepath.Join(shared, "strip")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/usr/bin/strip", filepath.Join(shared, "strip")); err != nil {
+		t.Fatal(err)
+	}
+	if got := toolsDir(shared); got != shared {
+		t.Fatalf("tool directory after a wrong link = %q, want %q", got, shared)
+	}
+	if target, _ := os.Readlink(filepath.Join(shared, "strip")); target != strip {
+		t.Fatalf("shared strip after repair = %q, want %s", target, strip)
+	}
+	// A shared directory the job cannot create falls back to the job's own.
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocked, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := toolsDir(filepath.Join(blocked, "tools")); got != tools {
+		t.Fatalf("tool directory without a usable shared one = %q, want the job's %q", got, tools)
+	}
 	if target, err := os.Readlink(filepath.Join(tools, "strip")); err != nil || target != strip {
 		t.Fatalf("job strip = %q, %v; want a link to %s", target, err, strip)
 	}
 	for name, preflight := range map[string]string{
-		"compiler digest": remoteToolchainPreflight(compiler, strings.Repeat("0", 64), sdk, strip, tools),
-		"missing sdk":     remoteToolchainPreflight(compiler, digest, filepath.Join(dir, "absent"), strip, tools),
-		"missing strip":   remoteToolchainPreflight(compiler, digest, sdk, filepath.Join(dir, "absent-strip"), tools),
+		"compiler digest": remoteToolchainPreflight(compiler, strings.Repeat("0", 64), sdk, strip, shared, tools),
+		"missing sdk":     remoteToolchainPreflight(compiler, digest, filepath.Join(dir, "absent"), strip, shared, tools),
+		"missing strip":   remoteToolchainPreflight(compiler, digest, sdk, filepath.Join(dir, "absent-strip"), shared, tools),
 	} {
 		code, out := run(preflight)
 		if code != workExitPolicyDenied || strings.Contains(out, preflightPassed) || !strings.Contains(out, WorkRefusalMarker+" kind=remote_profile: ") {
