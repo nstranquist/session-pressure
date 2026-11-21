@@ -52,3 +52,4 @@ product decisions have all been reconstructed.
 - [JSONL append lock race](jsonl-lock-race-2026-11-17.md): WORK-1252, `internal/lockfile` deleted, `internal/jsonl` on `internal/filelock`, n-1 sidecar contract, stress A/B and latency.
 
 - [App split panes clear the sidebar](app-split-panes-2026-11-19.md): Work Queue and Process Incidents were blank under the macOS 26 floating sidebar; `HSplitView` replaced by the SwiftUI `ResizableSplit`.
+- [Darwin cgo stable tool directory](darwin-cgo-cache-key-2026-11-21.md): WORK-1480 per-job clang -B path broke every cgo cache key; shared link, fallback, release 9c3367c, 41 s to 6-8 s runner job.
