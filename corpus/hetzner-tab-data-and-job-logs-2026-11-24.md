@@ -1,8 +1,8 @@
 # Hetzner tab: real delegate data, full receipt window, job logs
 
 Work: WORK-SP-3. Owner: claude (session 46175392). Date: 2026-11-24.
-Status: source landed, tests green. Not installed: the installed app and
-`ndev` keep the old behaviour until the next release or install.
+Status: landed and pushed as `5de9b4e`, installed and live-checked on
+the primary Mac the same day.
 
 ## What was wrong
 
@@ -54,8 +54,25 @@ Measured live against runner-3 before the change:
   the running-job panel with the FOLLOWING chip, the receipt panel with the
   full command and copy button, and delegate rows with full argv.
 
+## Installed acceptance (2026-11-24 20:11Z)
+
+- First lane run paused with VERIFY_FAILED on the Linux runner: the test
+  helper passed a >128 KiB SQL script as one argv string, over Linux
+  `MAX_ARG_STRLEN` (macOS has no such cap). The helper now sends it on
+  stdin; the replacement delivery passed the runner gate and the full
+  publish verify.
+- CLI: `session-pressure-release install` from a clean clone of `5de9b4e`
+  (expected current `37e6094`), `monitor install` (resident reporting
+  after 800 ms, source `5de9b4e`), front door rebuilt with
+  `build-committed-ndev`; `artifact status` reports cli, front door and
+  helper agree on `5de9b4e`.
+- Through the installed front door: `remote inspect` returns 1,000 runs and
+  1,000 receipts with the box reachable; `remote job-log` returns
+  `job_log` with the decoded multi-line command.
+- App: `make install-headless` (signed, Team ID verified, no relaunch). The
+  running app picks the new build up on its next launch.
+
 ## Open
 
-- Release and install the app and CLI.
 - The render harness lives in `/tmp/hz/render`. It could become a repo tool
   for windowless view checks.
