@@ -92,6 +92,18 @@ type PlacementRemoteConfig struct {
 	Host    string `json:"host,omitempty"`
 }
 
+// ParkedLeaseStall identifies a live lease that has remained idle/parked long
+// enough to warrant lock-holder inspection.
+type ParkedLeaseStall struct {
+	OperationID      string    `json:"operation_id"`
+	Class            WorkClass `json:"class"`
+	PID              int       `json:"pid"`
+	Weight           int       `json:"weight"`
+	ParkedAt         time.Time `json:"parked_at"`
+	ParkedDurationMS int64     `json:"parked_duration_ms"`
+	AgeMS            int64     `json:"age_ms"`
+}
+
 // PlacementReport is the payload of `session-pressure work placement`.
 type PlacementReport struct {
 	GeneratedAt    time.Time                `json:"generated_at"`
@@ -102,6 +114,7 @@ type PlacementReport struct {
 	LocalFallbacks map[string]int           `json:"local_fallbacks"`
 	ActiveStall    *QueueStall              `json:"active_stall,omitempty"`
 	LastStall      *QueueStall              `json:"last_stall,omitempty"`
+	ParkedStalls   []ParkedLeaseStall       `json:"parked_stalls,omitempty"`
 	Waiters        []WaiterETA              `json:"waiters"`
 	ETABasis       string                   `json:"eta_basis"`
 	Runners        []RunnerSlots            `json:"runners,omitempty"`
@@ -232,12 +245,39 @@ func BuildPlacementReport(ctx context.Context, dir string, status WorkStatus, wi
 		}
 	}
 
+	report.ParkedStalls = detectParkedLeaseStalls(status, now)
 	report.Waiters = estimateWaiterETAs(status, classRuntimeP50(dir, now), now)
 
 	if probeRunners && policy.Fleet != "" {
 		report.Runners, report.RunnersError = runnerSlots(ctx, policy.Fleet, probe)
 	}
 	return report
+}
+
+func detectParkedLeaseStalls(status WorkStatus, now time.Time) []ParkedLeaseStall {
+	var stalls []ParkedLeaseStall
+	for _, lease := range status.Leases {
+		if !lease.Parked || lease.ParkedAt == nil {
+			continue
+		}
+		parkedDur := now.Sub(*lease.ParkedAt)
+		if parkedDur < ParkedLeaseStallThreshold {
+			continue
+		}
+		stalls = append(stalls, ParkedLeaseStall{
+			OperationID:      lease.OperationID,
+			Class:            lease.Class,
+			PID:              lease.PID,
+			Weight:           lease.Weight,
+			ParkedAt:         lease.ParkedAt.UTC(),
+			ParkedDurationMS: parkedDur.Milliseconds(),
+			AgeMS:            lease.AgeMS,
+		})
+	}
+	sort.SliceStable(stalls, func(i, j int) bool {
+		return stalls[i].ParkedDurationMS > stalls[j].ParkedDurationMS
+	})
+	return stalls
 }
 
 // classRuntimeP50 returns the 7-day p50 runtime of completed work by class.

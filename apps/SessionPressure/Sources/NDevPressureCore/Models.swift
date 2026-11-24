@@ -1556,9 +1556,11 @@ public struct WorkInspectReport: Decodable, Sendable, Hashable {
     public var cpuPercent: Double?
     public var rssKB: Int64?
     public var ageMS: Int64
+    public var parkedDurationMS: Int64
     public var classP95RuntimeMS: Int64?
     public var classP95Known: Bool
     public var parentDead: Bool
+    public var openLocks: [String]
     public var actions: [WorkInspectAction]
 
     enum CodingKeys: String, CodingKey {
@@ -1584,10 +1586,12 @@ public struct WorkInspectReport: Decodable, Sendable, Hashable {
         case cpuPercent = "cpu_percent"
         case rssKB = "rss_kb"
         case parentDead = "parent_dead"
+        case openLocks = "open_locks"
     }
 
     enum CalibrationKeys: String, CodingKey {
         case ageMS = "age_ms"
+        case parkedDurationMS = "parked_duration_ms"
         case classP95RuntimeMS = "class_p95_runtime_ms"
         case classP95Known = "class_p95_known"
     }
@@ -1616,15 +1620,19 @@ public struct WorkInspectReport: Decodable, Sendable, Hashable {
             cpuPercent = try process.decodeIfPresent(Double.self, forKey: .cpuPercent)
             rssKB = try process.decodeIfPresent(Int64.self, forKey: .rssKB)
             parentDead = try process.decodeIfPresent(Bool.self, forKey: .parentDead) ?? false
+            openLocks = try process.decodeIfPresent([String].self, forKey: .openLocks) ?? []
         } else {
             parentDead = false
+            openLocks = []
         }
         if let calibration = try? c.nestedContainer(keyedBy: CalibrationKeys.self, forKey: .calibration) {
             ageMS = try calibration.decodeIfPresent(Int64.self, forKey: .ageMS) ?? 0
+            parkedDurationMS = try calibration.decodeIfPresent(Int64.self, forKey: .parkedDurationMS) ?? 0
             classP95RuntimeMS = try calibration.decodeIfPresent(Int64.self, forKey: .classP95RuntimeMS)
             classP95Known = try calibration.decodeIfPresent(Bool.self, forKey: .classP95Known) ?? false
         } else {
             ageMS = 0
+            parkedDurationMS = 0
             classP95Known = false
         }
     }

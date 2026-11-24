@@ -358,10 +358,19 @@ struct WorkView: View {
                     .help(lease.reviewReason ?? "Finite lease exceeded review age")
             }
             Spacer()
-            Text(lease.parked ? "idle · parked" : "running")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(lease.parked ? Color.secondary : PressureTheme.levelColor(.normal))
-                .help(lease.parked ? "Idle for the park window; its weight is free for queued work until it uses CPU again." : "Running and charged its full weight.")
+            let parkedElapsed = lease.parkedAt.map { Date().timeIntervalSince($0) } ?? 0
+            let longParked = lease.parked && parkedElapsed >= 300
+            if longParked {
+                Label("parked \(PressureFormat.durationMS(Int64(parkedElapsed * 1000))) · check lock", systemImage: "lock.trianglebadge.exclamationmark")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(PressureTheme.levelColor(.warning))
+                    .help("Lease has been parked idle for over 5 minutes; tap to inspect held lock files or cancel.")
+            } else {
+                Text(lease.parked ? "idle · parked" : "running")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(lease.parked ? Color.secondary : PressureTheme.levelColor(.normal))
+                    .help(lease.parked ? "Idle for the park window; its weight is free for queued work until it uses CPU again." : "Running and charged its full weight.")
+            }
             Text("pid \(PressureFormat.pid(lease.pid))")
                 .font(PressureTheme.monoCaption)
             Text(PressureFormat.relative(lease.startedAt))
@@ -647,6 +656,13 @@ struct WorkDetailDrawer: View {
                     .font(.caption)
                     .textSelection(.enabled)
                 labeledRow("Stall", inspect.stallClass)
+                if inspect.parkedDurationMS > 0 {
+                    labeledRow("Parked for", PressureFormat.durationMS(inspect.parkedDurationMS))
+                }
+                if !inspect.openLocks.isEmpty {
+                    labeledRow("Open locks", inspect.openLocks.joined(separator: ", "))
+                        .textSelection(.enabled)
+                }
                 if inspect.originKind != "ad_hoc" {
                     labeledRow("Origin", inspect.scheduleName ?? inspect.originKind)
                 }

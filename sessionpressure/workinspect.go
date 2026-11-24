@@ -19,10 +19,18 @@ const (
 	workInspectCommandMax    = 512
 	workInspectLogMax        = 2048
 	workInspectTermGrace     = 2 * time.Second
+	workInspectLockLimit     = 8
+	workInspectLockTimeout   = 500 * time.Millisecond
+
+	// ParkedLeaseStallThreshold marks a long-parked lease for operator review
+	// (for example processes waiting indefinitely on an external file lock).
+	ParkedLeaseStallThreshold = 5 * time.Minute
 
 	StallRunning    = "running"
 	StallWaitingIO  = "waiting_io"
 	StallParentDead = "parent_dead"
+	StallParkedLock = "parked_lock_holder"
+	StallParkedIdle = "parked_idle"
 	StallNoProgress = "no_progress"
 	StallDead       = "dead"
 	StallUnknown    = "unknown"
@@ -57,6 +65,7 @@ type WorkProcessSnapshot struct {
 	Truncated   bool                  `json:"command_truncated,omitempty"`
 	Alive       bool                  `json:"alive"`
 	ParentDead  bool                  `json:"parent_dead,omitempty"`
+	OpenLocks   []string              `json:"open_locks,omitempty"`
 	Children    []WorkProcessSnapshot `json:"children,omitempty"`
 	ParentChain []WorkProcessRef      `json:"parent_chain,omitempty"`
 }
@@ -78,6 +87,7 @@ type WorkInspectOrigin struct {
 type WorkInspectCalibration struct {
 	Class             WorkClass `json:"class,omitempty"`
 	AgeMS             int64     `json:"age_ms"`
+	ParkedDurationMS  int64     `json:"parked_duration_ms,omitempty"`
 	ClassP95RuntimeMS int64     `json:"class_p95_runtime_ms,omitempty"`
 	ClassP95Known     bool      `json:"class_p95_known"`
 	AgeToP95Ratio     float64   `json:"age_to_p95_ratio,omitempty"`
@@ -118,6 +128,7 @@ var (
 	runScheduleNowFn        = runScheduleNow
 	scheduleRunnerReadyFn   = scheduleRunnerReady
 	readProcessEnv          = processEnvKeys
+	readProcessLocks        = inspectProcessLockFiles
 	captureScratchpadAgents = captureScratchpadAgentsNote
 )
 
@@ -183,7 +194,17 @@ func InspectWork(ctx context.Context, coordinator *WorkCoordinator, operationID 
 	})
 	report.Origin = mergeInspectOrigin(lookupOriginStamp(coordinator, operationID), env)
 	report.Calibration = inspectCalibration(coordinator.Dir, class, ageMS)
-	report.StallClass = classifyStall(proc, report.Calibration)
+	if report.Lease != nil && report.Lease.Parked {
+		if report.Lease.ParkedAt != nil {
+			if parked := report.GeneratedAt.Sub(*report.Lease.ParkedAt).Milliseconds(); parked > 0 {
+				report.Calibration.ParkedDurationMS = parked
+			}
+		}
+		if proc != nil && proc.Alive {
+			proc.OpenLocks = readProcessLocks(inspectTreePIDs(report))
+		}
+	}
+	report.StallClass = classifyStallWithLease(proc, report.Lease, report.Calibration)
 	report.Summary = inspectSummary(report)
 	report.Output = collectWorkInspectOutput(coordinator.Dir, operationID, report.Origin)
 	report.SuggestedActions = inspectActions(report)
@@ -223,6 +244,10 @@ func inspectCalibration(dir string, class WorkClass, ageMS int64) WorkInspectCal
 }
 
 func classifyStall(proc *WorkProcessSnapshot, cal WorkInspectCalibration) string {
+	return classifyStallWithLease(proc, nil, cal)
+}
+
+func classifyStallWithLease(proc *WorkProcessSnapshot, lease *WorkLeaseStatus, cal WorkInspectCalibration) string {
 	if proc == nil || !proc.Alive {
 		return StallDead
 	}
@@ -232,6 +257,14 @@ func classifyStall(proc *WorkProcessSnapshot, cal WorkInspectCalibration) string
 	state := strings.ToUpper(proc.State)
 	if strings.Contains(state, "D") || strings.Contains(state, "U") {
 		return StallWaitingIO
+	}
+	if lease != nil && lease.Parked && proc.CPUPercent < 1 {
+		if len(proc.OpenLocks) > 0 {
+			return StallParkedLock
+		}
+		if cal.ParkedDurationMS >= ParkedLeaseStallThreshold.Milliseconds() || (cal.ClassP95Known && cal.AgeToP95Ratio >= 3) {
+			return StallParkedIdle
+		}
 	}
 	if cal.ClassP95Known && cal.AgeToP95Ratio >= 3 && proc.CPUPercent < 1 {
 		return StallNoProgress
@@ -271,8 +304,15 @@ func inspectSummary(report WorkInspectReport) string {
 	if report.Calibration.ClassP95Known {
 		p95 = "class p95 " + (time.Duration(report.Calibration.ClassP95RuntimeMS) * time.Millisecond).Round(time.Second).String()
 	}
-	return fmt.Sprintf("%s %s pid=%d age=%s vs %s. stall=%s. origin=%s. cmd=%s",
-		role, report.Calibration.Class, pid, age.Round(time.Second), p95, report.StallClass, origin, cmd)
+	extra := ""
+	if report.Calibration.ParkedDurationMS > 0 {
+		extra += fmt.Sprintf(" parked=%s", (time.Duration(report.Calibration.ParkedDurationMS) * time.Millisecond).Round(time.Second))
+	}
+	if report.Process != nil && len(report.Process.OpenLocks) > 0 {
+		extra += " locks=" + strings.Join(report.Process.OpenLocks, ",")
+	}
+	return fmt.Sprintf("%s %s pid=%d age=%s vs %s. stall=%s%s. origin=%s. cmd=%s",
+		role, report.Calibration.Class, pid, age.Round(time.Second), p95, report.StallClass, extra, origin, cmd)
 }
 
 func inspectActions(report WorkInspectReport) []WorkInspectAction {
@@ -641,6 +681,12 @@ func formatInspectBrief(report WorkInspectReport) string {
 		if report.Process.CWD != "" {
 			fmt.Fprintf(&b, "- cwd: %s\n", report.Process.CWD)
 		}
+		if report.Calibration.ParkedDurationMS > 0 {
+			fmt.Fprintf(&b, "- parked_for: %s\n", (time.Duration(report.Calibration.ParkedDurationMS) * time.Millisecond).Round(time.Second))
+		}
+		if len(report.Process.OpenLocks) > 0 {
+			fmt.Fprintf(&b, "- open_locks: %s\n", strings.Join(report.Process.OpenLocks, ", "))
+		}
 	}
 	if report.Output.Text != "" {
 		fmt.Fprintf(&b, "\n## Output (%s)\n\n```\n%s\n```\n", report.Output.Source, report.Output.Text)
@@ -721,4 +767,67 @@ func truncateCommand(raw string) (string, bool) {
 func parsePSInt(raw string) int {
 	n, _ := strconv.Atoi(strings.TrimSpace(raw))
 	return n
+}
+
+// inspectProcessLockFiles runs a bounded read-only lsof probe over the lease
+// tree to identify open lock files (such as *.lock or install-handoff.lock)
+// without returning full user home paths.
+func inspectProcessLockFiles(pids []int) []string {
+	if len(pids) == 0 {
+		return nil
+	}
+	lsofPath, err := exec.LookPath("lsof")
+	if err != nil {
+		return nil
+	}
+	pidArgs := make([]string, 0, len(pids))
+	for _, pid := range pids {
+		if pid > 1 {
+			pidArgs = append(pidArgs, strconv.Itoa(pid))
+		}
+	}
+	if len(pidArgs) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), workInspectLockTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, lsofPath, "-nP", "-Fn", "-p", strings.Join(pidArgs, ","))
+	out, err := cmd.Output()
+	if err != nil && len(out) == 0 {
+		return nil
+	}
+	return parseOpenLockPaths(string(out))
+}
+
+func parseOpenLockPaths(lsofOutput string) []string {
+	seen := map[string]struct{}{}
+	var locks []string
+	for _, line := range strings.Split(lsofOutput, "\n") {
+		if len(line) < 2 || line[0] != 'n' {
+			continue
+		}
+		path := strings.TrimSpace(line[1:])
+		if !strings.HasPrefix(path, "/") {
+			continue
+		}
+		base := filepath.Base(path)
+		lower := strings.ToLower(base)
+		if !strings.Contains(lower, ".lock") && !strings.HasSuffix(lower, "lock") {
+			continue
+		}
+		parent := filepath.Base(filepath.Dir(path))
+		label := base
+		if parent != "" && parent != "." && parent != "/" {
+			label = parent + "/" + base
+		}
+		if _, dup := seen[label]; dup {
+			continue
+		}
+		seen[label] = struct{}{}
+		locks = append(locks, label)
+		if len(locks) >= workInspectLockLimit {
+			break
+		}
+	}
+	return locks
 }

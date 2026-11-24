@@ -56,6 +56,14 @@ func TestPlacementFamilyKeyCollapsesCheckoutsAndSelection(t *testing.T) {
 	if PlacementKey(one, []string{"go", "test", "./pkg/a"}) == PlacementKey(two, []string{"go", "test", "./pkg/a"}) {
 		t.Fatal("exact key merged two checkouts")
 	}
+	// Temporary build output paths (-o /tmp/...) must share one family key so
+	// repeated builds accumulate closed-loop placement history instead of churning.
+	buildA := PlacementFamilyKey(one, []string{"go", "build", "-o", "/tmp/build-aaa/bin", "./pkg/a"})
+	buildB := PlacementFamilyKey(two, []string{"go", "build", "-o=/tmp/build-bbb/bin", "./pkg/a"})
+	buildC := PlacementFamilyKey(one, []string{"go", "build", "./pkg/a"})
+	if buildA != buildB || buildA != buildC {
+		t.Fatalf("build output flag split family: a=%s b=%s c=%s", buildA, buildB, buildC)
+	}
 }
 
 func TestPlacementFamilyKeyNamesNodePackages(t *testing.T) {

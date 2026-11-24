@@ -19,6 +19,7 @@ public struct WorkPlacementReport: Decodable, Sendable, Hashable {
     public var localFallbacks: [String: Int]
     public var activeStall: WorkQueueStall?
     public var lastStall: WorkQueueStall?
+    public var parkedStalls: [ParkedLeaseStall]
     public var waiters: [WaiterETA]
     public var etaBasis: String?
     public var runners: [RunnerSlots]
@@ -32,6 +33,7 @@ public struct WorkPlacementReport: Decodable, Sendable, Hashable {
         case localFallbacks = "local_fallbacks"
         case activeStall = "active_stall"
         case lastStall = "last_stall"
+        case parkedStalls = "parked_stalls"
         case waiters
         case etaBasis = "eta_basis"
         case runners
@@ -48,6 +50,7 @@ public struct WorkPlacementReport: Decodable, Sendable, Hashable {
         localFallbacks = try c.decodeIfPresent([String: Int].self, forKey: .localFallbacks) ?? [:]
         activeStall = try c.decodeIfPresent(WorkQueueStall.self, forKey: .activeStall)
         lastStall = try c.decodeIfPresent(WorkQueueStall.self, forKey: .lastStall)
+        parkedStalls = try c.decodeIfPresent([ParkedLeaseStall].self, forKey: .parkedStalls) ?? []
         waiters = try c.decodeIfPresent([WaiterETA].self, forKey: .waiters) ?? []
         etaBasis = try c.decodeIfPresent(String.self, forKey: .etaBasis)
         runners = try c.decodeIfPresent([RunnerSlots].self, forKey: .runners) ?? []
@@ -176,6 +179,27 @@ public struct WorkQueueStall: Decodable, Sendable, Hashable {
         case effectiveCapacity = "effective_capacity"
         case level
         case decisionReason = "decision_reason"
+    }
+}
+
+public struct ParkedLeaseStall: Decodable, Sendable, Hashable, Identifiable {
+    public var operationID: String
+    public var `class`: String?
+    public var pid: Int?
+    public var weight: Int?
+    public var parkedAt: Date?
+    public var parkedDurationMS: Int64
+    public var ageMS: Int64
+
+    public var id: String { operationID }
+
+    enum CodingKeys: String, CodingKey {
+        case operationID = "operation_id"
+        case `class` = "class"
+        case pid, weight
+        case parkedAt = "parked_at"
+        case parkedDurationMS = "parked_duration_ms"
+        case ageMS = "age_ms"
     }
 }
 

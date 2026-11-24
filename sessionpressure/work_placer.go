@@ -39,7 +39,7 @@ const (
 	placementHistoryWindow    = 7 * 24 * time.Hour
 	placementMinSamples       = 2
 	placementMaxSamples       = 20
-	placementExploreCeilingMS = 45_000
+	placementExploreCeilingMS = 60_000
 )
 
 // PlacementKey is an opaque digest of the working directory and argv. It
@@ -102,6 +102,8 @@ func decidePlacement(idle bool, busyReason string, history placementHistory) pla
 		decision.Reason = "no_remote_history"
 	case decision.RemoteETAMS > 0 && decision.RemoteETAMS <= placementExploreCeilingMS:
 		decision.Local, decision.Reason = true, "explore_local"
+	case decision.RemoteETAMS > placementExploreCeilingMS:
+		decision.Reason = "remote_above_explore_ceiling"
 	default:
 		decision.Reason = "no_local_history"
 	}

@@ -126,3 +126,28 @@ func TestRunnerSlotsProbesOnlyActiveHosts(t *testing.T) {
 		t.Fatalf("slots %+v err %q probed %v", slots, errText, probed)
 	}
 }
+
+func TestDetectParkedLeaseStallsSurfacesLongParkedLeases(t *testing.T) {
+	now := time.Date(2026, 11, 24, 19, 0, 0, 0, time.UTC)
+	shortPark := now.Add(-2 * time.Minute)
+	longPark := now.Add(-12 * time.Minute)
+	longerPark := now.Add(-25 * time.Minute)
+	status := WorkStatus{
+		Leases: []WorkLeaseStatus{
+			{OperationID: "active01", Class: WorkClassBuild, PID: 10, Weight: 4, Parked: false},
+			{OperationID: "short001", Class: WorkClassBuild, PID: 11, Weight: 4, Parked: true, ParkedAt: &shortPark},
+			{OperationID: "long0001", Class: WorkClassBuild, PID: 12, Weight: 4, Parked: true, ParkedAt: &longPark, AgeMS: 900_000},
+			{OperationID: "longer01", Class: WorkClassTest, PID: 13, Weight: 2, Parked: true, ParkedAt: &longerPark, AgeMS: 1_800_000},
+		},
+	}
+	stalls := detectParkedLeaseStalls(status, now)
+	if len(stalls) != 2 {
+		t.Fatalf("expected 2 parked stalls, got %+v", stalls)
+	}
+	if stalls[0].OperationID != "longer01" || stalls[0].ParkedDurationMS != (25*time.Minute).Milliseconds() {
+		t.Fatalf("expected longest parked first, got %+v", stalls[0])
+	}
+	if stalls[1].OperationID != "long0001" || stalls[1].ParkedDurationMS != (12*time.Minute).Milliseconds() {
+		t.Fatalf("expected second parked stall, got %+v", stalls[1])
+	}
+}

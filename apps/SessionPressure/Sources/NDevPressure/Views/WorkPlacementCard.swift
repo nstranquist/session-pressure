@@ -109,6 +109,21 @@ struct WorkPlacementCard: View {
                 }
             }
         }
+        if !report.parkedStalls.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("\(report.parkedStalls.count) long-parked \(report.parkedStalls.count == 1 ? "lease" : "leases") (>5m)", systemImage: "lock.trianglebadge.exclamationmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(PressureTheme.levelColor(.warning))
+                ForEach(report.parkedStalls.prefix(4)) { parked in
+                    Text("\(parked.class ?? "work") pid \(PressureFormat.pid(parked.pid)) · parked \(PressureFormat.durationMS(parked.parkedDurationMS)) · op \(String(parked.operationID.prefix(12)))")
+                        .font(PressureTheme.monoCaption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(PressureTheme.levelColor(.warning).opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+        }
         if let stall = report.lastStall, report.activeStall == nil, let since = stall.since {
             Text("Last stall: \(stall.class ?? "work") idle \(PressureFormat.durationMS(stall.durationMS)), \(PressureFormat.relative(since)).")
                 .font(.caption)

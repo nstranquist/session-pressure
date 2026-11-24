@@ -40,6 +40,8 @@ func NewPlacementKeys(cwd string, argv []string) PlacementKeys {
 // not written as -flag=value.
 var selectionFlags = map[string]bool{
 	"-run": true, "-skip": true, "-count": true, "-timeout": true, "-shuffle": true,
+	"-o": true, "-coverprofile": true, "-cpuprofile": true, "-memprofile": true,
+	"-blockprofile": true, "-mutexprofile": true, "-trace": true,
 	"-v": false, "-failfast": false, "-json": false,
 	"-t": true, "--testNamePattern": true, "--grep": true, "--reporter": true,
 	"--verbose": false, "--silent": false,
