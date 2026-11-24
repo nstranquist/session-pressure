@@ -45,10 +45,11 @@ type Runner interface {
 }
 
 type RunResult struct {
-	Stdout   []byte
-	Stderr   []byte
-	ExitCode int
-	Err      error
+	Stdout         []byte
+	Stderr         []byte
+	ExitCode       int
+	StdoutExceeded bool
+	Err            error
 }
 
 type Config struct {
@@ -131,6 +132,8 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("/v1/pressure/board", s.handleBoard)
 	mux.HandleFunc("/v1/pressure/status", s.handleStatus)
+	mux.HandleFunc("/v1/pressure/check", s.handleCheck)
+	mux.HandleFunc("/v1/pressure/browser", s.handleBrowser)
 	mux.HandleFunc("/v1/pressure/doctor", s.handleDoctor)
 	mux.HandleFunc("/v1/pressure/work", s.handleWork)
 	mux.HandleFunc("/v1/pressure/telemetry", s.handleTelemetry)
@@ -328,6 +331,10 @@ func (s *Server) writeProjection(w http.ResponseWriter, r *http.Request, args []
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.CommandTimeout)
 	defer cancel()
 	result := s.cfg.Runner.Run(ctx, args)
+	if result.StdoutExceeded {
+		writeError(w, http.StatusBadGateway, "output_limit", "canonical projection exceeded the API output budget", false)
+		return
+	}
 	if len(result.Stdout) == 0 {
 		message := strings.TrimSpace(string(result.Stderr))
 		if message == "" && result.Err != nil {
@@ -355,7 +362,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	health := sessionpressurecontrol.Health{
 		Status: "ready", API: sessionpressurecontrol.APIVersion, Authority: "ndev.session.pressure",
 		Transport: transport, PID: os.Getpid(), StartedAt: s.startedAt.Format(time.RFC3339Nano),
-		Capabilities: []string{"board", "status", "doctor", "work", "telemetry", "policy", "storage", "cleanup", "io", "events", "actions", "trace-request"},
+		Capabilities: []string{"board", "status", "check", "browser", "doctor", "work", "telemetry", "policy", "storage", "cleanup", "io", "events", "actions", "trace-request"},
 	}
 	body, _ := json.Marshal(health)
 	writeData(w, http.StatusOK, "api", body)
@@ -383,6 +390,14 @@ func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
 	s.writeProjection(w, r, pressureArgs("doctor"))
 }
 
+func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
+	s.writeProjection(w, r, pressureArgs("check"))
+}
+
+func (s *Server) handleBrowser(w http.ResponseWriter, r *http.Request) {
+	s.writeProjection(w, r, pressureArgs("browser", "status"))
+}
+
 func (s *Server) handleWork(w http.ResponseWriter, r *http.Request) {
 	view, err := projectionView(r, "status", map[string]bool{
 		"status": true, "history": true, "stats": true, "report": true,
@@ -395,7 +410,7 @@ func (s *Server) handleWork(w http.ResponseWriter, r *http.Request) {
 	allowed := allowedQuery{}
 	switch view {
 	case "history":
-		allowed = allowedQuery{"full": queryBool, "limit": queryLimit, "since": queryDuration}
+		allowed = allowedQuery{"full": queryBool, "limit": queryLimit, "since": queryDuration, "operation_id": queryID}
 	case "stats", "report":
 		allowed = allowedQuery{"full": queryBool, "since": queryDuration}
 	case "placement":
@@ -684,6 +699,13 @@ func queryToken(value string) (string, error) {
 	return value, nil
 }
 
+func queryID(value string) (string, error) {
+	if !safeID.MatchString(value) {
+		return "", errors.New("must be a bounded identifier")
+	}
+	return value, nil
+}
+
 func writeData(w http.ResponseWriter, status int, source string, data []byte) {
 	if len(data) > maxJSONBytes {
 		writeError(w, http.StatusBadGateway, "output_limit", "projection exceeded the API output budget", false)
@@ -755,7 +777,7 @@ func (r commandRunner) Run(ctx context.Context, args []string) RunResult {
 	stderr := newLimitedBuffer(64 << 10)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	err := cmd.Run()
-	result := RunResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ExitCode: 0, Err: err}
+	result := RunResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ExitCode: 0, StdoutExceeded: stdout.exceeded, Err: err}
 	if err != nil {
 		result.ExitCode = 1
 		var exitErr *exec.ExitError

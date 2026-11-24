@@ -62,6 +62,9 @@ func newActionRegistry() *actionRegistry {
 	})
 	registry.addFixed("monitor.uninstall", pressureArgs("monitor", "uninstall"))
 	registry.addFixed("monitor.sample", pressureArgs("monitor", "once"))
+	registry.addFixed("recovery.clear", pressureArgs("recovery", "clear"))
+	registry.addFixed("browser.pause", pressureArgs("browser", "pause"))
+	registry.addFixed("browser.auto", pressureArgs("browser", "auto"))
 	registry.add("work.override", []string{"operation_id", "all", "clear"}, func(params map[string]string) ([]string, error) {
 		clear, err := optionalBool(params, "clear")
 		if err != nil {
