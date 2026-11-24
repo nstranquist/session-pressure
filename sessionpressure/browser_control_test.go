@@ -208,13 +208,14 @@ func TestBrowserControlSteadyResidentPathTakesNoLock(t *testing.T) {
 		}
 	}
 	err := filelock.WithFileLockContext(ctx, filepath.Join(dir, "browser-control"), time.Second, func() error {
-		began := time.Now()
-		state, err := browserControlStatus(ctx, dir, "", evidence(start.Add(18*time.Second), 10))
+		// While the exclusive lock is held, pass an already-canceled context:
+		// the unlocked steady path ignores ctx and succeeds, whereas any
+		// attempt to acquire the file lock fails immediately with Canceled.
+		canceledCtx, cancel := context.WithCancel(ctx)
+		cancel()
+		state, err := browserControlStatus(canceledCtx, dir, "", evidence(start.Add(18*time.Second), 10))
 		if err != nil || state.Blocked {
 			t.Fatalf("steady under held lock: %+v %v", state, err)
-		}
-		if waited := time.Since(began); waited > 500*time.Millisecond {
-			t.Fatalf("steady resident path waited %v on the control lock", waited)
 		}
 		return nil
 	})

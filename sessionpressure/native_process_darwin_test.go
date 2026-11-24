@@ -190,8 +190,12 @@ func TestNativeDiskWriteCountersAreBoundedAndIncludeSelf(t *testing.T) {
 	if !foundSelf {
 		t.Fatal("native disk-write scan omitted current process")
 	}
-	if elapsed := time.Since(started); liveHostBudgets() && elapsed > 500*time.Millisecond {
-		t.Fatalf("native disk-write scan took %s; expected <=500ms", elapsed)
+	maxElapsed := 500 * time.Millisecond
+	if raceDetectorEnabled {
+		maxElapsed = 1500 * time.Millisecond
+	}
+	if elapsed := time.Since(started); liveHostBudgets() && elapsed > maxElapsed {
+		t.Fatalf("native disk-write scan took %s; expected <= %s", elapsed, maxElapsed)
 	} else {
 		t.Logf("native disk-write scan: devices=%d pids=%d/%d elapsed=%s", device.DeviceCount, processes.AccessibleCount, processes.TotalPIDCount, elapsed)
 	}
@@ -365,7 +369,11 @@ func TestNativeSamplerBuildsAgentTreesWithinOperatorBudget(t *testing.T) {
 		t.Fatalf("native sample did not report its host_cpu phase: %+v", snapshot.SamplePhaseMS)
 	}
 	workMS := snapshot.SampleDurationMS - waitMS
-	maxWaitMS := float64((hostCPUInitialMaxWait + hostCPUInitialPollInterval).Milliseconds())
+	waitSlack := 250 * time.Millisecond
+	if raceDetectorEnabled {
+		waitSlack = 500 * time.Millisecond
+	}
+	maxWaitMS := float64((hostCPUInitialMaxWait + waitSlack).Milliseconds())
 	if liveHostBudgets() && (workMS > maxWorkMS || waitMS > maxWaitMS) {
 		t.Fatalf("native sample work %.3fms (budget %.0fms), host CPU wait %.3fms (cap %.0fms)", workMS, maxWorkMS, waitMS, maxWaitMS)
 	}

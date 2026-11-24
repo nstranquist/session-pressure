@@ -64,6 +64,10 @@ func liveSessionHintIDs(processes []Process) []string {
 	return out
 }
 
+// sessionHintReader is a test seam matching pidOwnershipLSOF so non-blocking
+// resident refresh tests can block I/O deterministically without wall clocks.
+var sessionHintReader = readSessionOwnershipHint
+
 // peekSessionOwnershipHints never enumerates the session registry. The
 // resident only needs hints for live IDs, and refreshes those bounded files
 // asynchronously so hook storage cannot block host-pressure sampling.
@@ -86,10 +90,11 @@ func peekSessionOwnershipHints(dir string, catalog *AgentIdentityCatalog, ids []
 	}
 	residentSessionHints.Unlock()
 	if refresh {
+		reader := sessionHintReader
 		go func() {
 			hints := make([]SessionOwnershipHint, 0, len(ids))
 			for _, id := range ids {
-				if hint, ok := readSessionOwnershipHint(filepath.Join(dir, id+".json"), id, catalog.agents); ok {
+				if hint, ok := reader(filepath.Join(dir, id+".json"), id, catalog.agents); ok {
 					hints = append(hints, hint)
 				}
 			}

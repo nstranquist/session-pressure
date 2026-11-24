@@ -57,3 +57,15 @@ A second host dependency in the soak: free memory at the warning level forces a 
 ## Known limit
 
 The soak budgets (300 ms duration, 50 ms CPU p95) are the resident's production budgets, and the soak checks the contract, not small regressions: real per-sample work is now 0.1-0.2 ms. A forced inventory on every sample, the expensive regression, still fails the `freshInventories == 1` check. A tighter test-only threshold was not added, because a number chosen by the agent would be a new gate without a production meaning.
+
+## Follow-up hardening (WORK-SP-1, 2026-11-24)
+
+Post-landing review caught four remaining wall-clock risks across `./sessionpressure`:
+
+- `TestNativeSamplerBuildsAgentTreesWithinOperatorBudget`: widened `maxWaitMS` slack above `hostCPUInitialMaxWait` from 50 ms to 250 ms (500 ms under `-race`) so the allowed 1250 ms `process-inventory-fallback` timeout path does not flake on scheduler wake-up jitter.
+- `TestNativeDiskWriteCountersAreBoundedAndIncludeSelf`: added 3x `-race` scaling (`500ms` to `1500ms`), matching `TestNativeProcessInventoryIsFastAndIncludesSelf`.
+- `TestResidentSessionHintsDoNotBlockSample`: replaced the unguarded 50 ms wall-clock check on `os.TempDir()` with a deterministic blocked `sessionHintReader` seam proving the sample path returns immediately while an async refresh is stalled on I/O.
+- `TestBrowserControlSteadyResidentPathTakesNoLock`: replaced the 500 ms wall-clock check with an already-canceled context passed under the held exclusive file lock, deterministically failing if the steady path attempts lock acquisition.
+
+Verified with `go vet ./...`, 3x targeted `go test -race`, and full `go test -race -count=1 ./sessionpressure` (46.9 s, pass).
+

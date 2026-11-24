@@ -377,14 +377,60 @@ func TestResidentHintsFindLiveIDBeyondRegistryPrefix(t *testing.T) {
 
 func TestResidentSessionHintsDoNotBlockSample(t *testing.T) {
 	ResetSessionOwnershipHintCache()
-	t.Cleanup(ResetSessionOwnershipHintCache)
-	started := time.Now()
-	out := applyResidentSessionHints([]Process{{PID: 1, Agent: "grok", Executable: "grok"}}, os.TempDir())
-	if elapsed := time.Since(started); elapsed > 50*time.Millisecond {
-		t.Fatalf("resident session hints blocked sample for %s", elapsed)
+	startedRead := make(chan struct{}, 1)
+	releaseRead := make(chan struct{})
+	previousReader := sessionHintReader
+	sessionHintReader = func(path, id string, agents map[string]struct{}) (SessionOwnershipHint, bool) {
+		select {
+		case startedRead <- struct{}{}:
+		default:
+		}
+		<-releaseRead
+		return SessionOwnershipHint{SessionID: id, Agent: "grok"}, true
 	}
-	if out[0].SessionID != "" {
-		t.Fatalf("cold resident hints must not invent a session: %+v", out[0])
+	t.Cleanup(func() {
+		select {
+		case <-releaseRead:
+		default:
+			close(releaseRead)
+		}
+		deadline := time.Now().Add(testWatchdog)
+		for time.Now().Before(deadline) {
+			residentSessionHints.Lock()
+			done := !residentSessionHints.refreshing
+			residentSessionHints.Unlock()
+			if done {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		sessionHintReader = previousReader
+		ResetSessionOwnershipHintCache()
+	})
+	dir := t.TempDir()
+	// A process with a live session ID triggers an async refresh; the sample
+	// path must return immediately without waiting for the blocked file read.
+	done := make(chan []Process, 1)
+	go func() {
+		done <- applyResidentSessionHints([]Process{
+			{PID: 1, Agent: "grok", Executable: "grok"},
+			{PID: 2, Executable: "node", Command: "node worker 019f5be0-7d38-7271-ba7d-8ade4a407bf0"},
+		}, dir)
+	}()
+	var out []Process
+	select {
+	case out = <-done:
+	case <-time.After(testWatchdog):
+		t.Fatal("resident session hints blocked sample while async reader was stalled")
+	}
+	if out[0].SessionID != "" || out[1].Agent != "" {
+		t.Fatalf("cold resident hints must not block or invent identity: %+v", out)
+	}
+	// Confirm the background reader actually started while the caller returned.
+	select {
+	case <-startedRead:
+	case <-time.After(testWatchdog):
+		t.Fatal("async resident session hint refresh did not start")
 	}
 }
 
