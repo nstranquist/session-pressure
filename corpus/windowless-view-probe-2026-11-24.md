@@ -86,10 +86,12 @@ handle uses the same function. `SplitLayoutTests` covers both cases.
 
 ## Limits and next steps
 
-- Disk Writes and Telemetry have no recorded fixture, so their fixture
-  scenes show the empty state. `LIVE=1` shows real data. Record and scrub
-  a payload for each (`AGENTS.md`: never hand-write CLI JSON) to gate
-  their populated layout.
+- Disk Writes is gated with recorded data since WORK-SP-15 (below).
+  Telemetry was already populated: `board-full.json` carries 40 events.
+  Its Relief actions card stays empty because no host has recorded a
+  relief action (none in a year on the primary Mac, none in 90 days on
+  the second Mac), and a hand-made row would break the fixture rule. Its
+  rows are wrapping text only.
 - The job-log scene's log text is built in Swift (`SceneFixtures.jobLog`,
   a typed `GateRunnerJobLog` with a 600-character line), not CLI JSON. It
   exists to stress layout, not to test the decode contract.
@@ -100,3 +102,32 @@ handle uses the same function. `SplitLayoutTests` covers both cases.
   was rejected: dates and relative ages change every run, and the failures
   that reached Nico were layout and blank pages, which the gate catches.
   Whether goldens are ever worth adding is Nico's call (WORK-SP-14).
+
+## Follow-up: recorded Disk Writes data (WORK-SP-15)
+
+WORK-SP-14 said Disk Writes and Telemetry had no recorded data. That was
+half wrong: Telemetry draws the 40 events in `board-full.json`. Disk Writes
+did show only its empty states.
+
+- `Fixtures/io-status.json`, `io-history.json` and `io-health.json` are the
+  three real reads behind the page (`io status --live --full`, `io history
+  --since 24h --limit 20`, `io health`), recorded 2026-11-24 while a
+  full-state backup wrote about 260 MB/s. `Fixtures/io.md` lists the
+  commands and the two scrubs (data dir, SSD serial).
+  `DiskWriteContractTests` decodes them and fails if a re-record drops
+  the scrubs.
+- The `disk-writes` scene now draws the state header, rate tiles, SMART
+  card, four writers, the hourly chart and the policy card. It fits 700 pt
+  in dark and light mode.
+- Real data showed two wrong labels, now fixed in `DiskWritesView`.
+  - The producer omits `baseline_p99_bytes_15m` and `baseline_ratio` until
+    a nonzero quiet baseline exists (`nonzero_baseline_insufficient`).
+    Swift decoded them as 0, so the page claimed "0.00× quiet p99" and a
+    quiet p99 of "0 B". It now says "no quiet baseline yet" and "None
+    yet".
+  - The hourly chart's last date and hour axis label ran past the plot
+    and was cut to "Nov 24…". The axis now has hour-only labels every 6 h.
+- Not fixed here: writer names come from the kernel's 16-character
+  process name (`nicos-system-bac`, `nicos-delivery-p`). A full name needs
+  a producer change.
+- `swift test`: 175 tests in 32 suites pass.

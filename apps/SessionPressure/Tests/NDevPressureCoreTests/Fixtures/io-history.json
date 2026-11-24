@@ -1,0 +1,175 @@
+{
+  "action": "io.history",
+  "available_count": 23,
+  "history": [
+    {
+      "attributed_bytes": 64494530560,
+      "bytes_written": 260736618496,
+      "hour": "2026-11-24T20:00:00Z",
+      "sample_count": 240,
+      "state": "high",
+      "swap_out_bytes": 759234560,
+      "unscored_gap_bytes": 668798976
+    },
+    {
+      "attributed_bytes": 25048911872,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 261997821952,
+      "hour": "2026-11-24T19:00:00Z",
+      "sample_count": 240,
+      "state": "high",
+      "swap_out_bytes": 1644036096,
+      "unscored_gap_bytes": 641650688
+    },
+    {
+      "attributed_bytes": 21850923008,
+      "bytes_written": 199033679872,
+      "hour": "2026-11-24T18:00:00Z",
+      "sample_count": 240,
+      "state": "high",
+      "swap_out_bytes": 123191296
+    },
+    {
+      "attributed_bytes": 16973758464,
+      "bytes_written": 143282180096,
+      "hour": "2026-11-24T17:00:00Z",
+      "sample_count": 240,
+      "state": "high",
+      "swap_out_bytes": 271990784
+    },
+    {
+      "attributed_bytes": 4331589632,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 29944754176,
+      "hour": "2026-11-24T16:00:00Z",
+      "sample_count": 240,
+      "state": "normal"
+    },
+    {
+      "attributed_bytes": 5901967360,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 31041863680,
+      "hour": "2026-11-24T15:00:00Z",
+      "sample_count": 240,
+      "state": "normal"
+    },
+    {
+      "attributed_bytes": 4235321344,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 28765257728,
+      "hour": "2026-11-24T14:00:00Z",
+      "sample_count": 240,
+      "state": "normal"
+    },
+    {
+      "attributed_bytes": 4229459968,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 30091788288,
+      "hour": "2026-11-24T13:00:00Z",
+      "sample_count": 240,
+      "state": "normal"
+    },
+    {
+      "attributed_bytes": 3898589184,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 28853690368,
+      "hour": "2026-11-24T12:00:00Z",
+      "sample_count": 240,
+      "state": "normal"
+    },
+    {
+      "attributed_bytes": 7873781760,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 37975019520,
+      "hour": "2026-11-24T11:00:00Z",
+      "sample_count": 240,
+      "state": "normal"
+    },
+    {
+      "attributed_bytes": 3930591232,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 29153505280,
+      "hour": "2026-11-24T10:00:00Z",
+      "sample_count": 240,
+      "state": "normal"
+    },
+    {
+      "attributed_bytes": 4331900928,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 30258757632,
+      "hour": "2026-11-24T09:00:00Z",
+      "sample_count": 240,
+      "state": "normal"
+    },
+    {
+      "attributed_bytes": 3872219136,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 31013429248,
+      "hour": "2026-11-24T08:00:00Z",
+      "sample_count": 240,
+      "state": "normal"
+    },
+    {
+      "attributed_bytes": 208276021248,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 278181748736,
+      "hour": "2026-11-24T07:00:00Z",
+      "sample_count": 240,
+      "state": "normal",
+      "swap_out_bytes": 1579696128
+    },
+    {
+      "attributed_bytes": 599702736896,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 668782653440,
+      "hour": "2026-11-24T06:00:00Z",
+      "sample_count": 240,
+      "state": "high"
+    },
+    {
+      "attributed_bytes": 3911487488,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 31656378368,
+      "hour": "2026-11-24T05:00:00Z",
+      "sample_count": 240,
+      "state": "normal"
+    },
+    {
+      "attributed_bytes": 7029665792,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 34016063488,
+      "hour": "2026-11-24T04:00:00Z",
+      "sample_count": 240,
+      "state": "high"
+    },
+    {
+      "attributed_bytes": 4331819008,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 28782149632,
+      "hour": "2026-11-24T03:00:00Z",
+      "sample_count": 240,
+      "state": "normal"
+    },
+    {
+      "attributed_bytes": 3909111808,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 28238516224,
+      "hour": "2026-11-24T02:00:00Z",
+      "sample_count": 240,
+      "state": "normal"
+    },
+    {
+      "attributed_bytes": 4293095424,
+      "baseline_p99_bytes": 8589934591,
+      "bytes_written": 28285472768,
+      "hour": "2026-11-24T01:00:00Z",
+      "sample_count": 240,
+      "state": "normal"
+    }
+  ],
+  "ok": true,
+  "output_scope": "compact",
+  "returned_count": 20,
+  "since": "2026-11-23T21:07:52.845423Z",
+  "truncated": true
+}

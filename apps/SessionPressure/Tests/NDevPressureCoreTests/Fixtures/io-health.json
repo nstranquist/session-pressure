@@ -1,0 +1,38 @@
+{
+  "action": "io.health",
+  "available": true,
+  "data_dir": "/redacted",
+  "history_appended": true,
+  "ok": true,
+  "persisted": true,
+  "snapshot": {
+    "available": true,
+    "available_spare_percent": 100,
+    "available_spare_threshold_percent": 99,
+    "captured_at": "2026-11-24T21:07:52.90695Z",
+    "controller_busy_minutes": 0,
+    "critical_warning": 0,
+    "data_units_read": 43981458,
+    "data_units_written": 46474968,
+    "error_info_log_entries": 0,
+    "firmware": "241.40.4",
+    "host_bytes_read": 22518506496000,
+    "host_bytes_written": 23795183616000,
+    "host_read_commands": 1057142928,
+    "host_write_commands": 1303321614,
+    "media_errors": 0,
+    "model": "APPLE SSD AP1024Z",
+    "percentage_used": 2,
+    "power_cycles": 149,
+    "power_on_hours": 145,
+    "schema_version": 1,
+    "serial": "redacted",
+    "source": "iokit.NVMeSMARTLib",
+    "temperature_celsius": 44.9,
+    "unreliable_fields": [
+      "controller_busy_minutes",
+      "power_on_hours"
+    ],
+    "unsafe_shutdowns": 15
+  }
+}

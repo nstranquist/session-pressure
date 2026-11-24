@@ -176,7 +176,9 @@ struct DiskWritesView: View {
                     MetricCard(
                         title: "Last 15 minutes",
                         value: formatBytes(Double(summary.window15mBytes)),
-                        subtitle: "\(String(format: "%.2f", summary.baselineRatio))× quiet p99",
+                        subtitle: summary.baselineP99Bytes15m > 0
+                            ? "\(String(format: "%.2f", summary.baselineRatio))× quiet p99"
+                            : "no quiet baseline yet",
                         accent: stateColor,
                         help: PressureHelp.diskWriteBaseline
                     )
@@ -197,7 +199,9 @@ struct DiskWritesView: View {
                     }
                     MetricCard(
                         title: "Quiet p99 / 15m",
-                        value: formatBytes(Double(summary.baselineP99Bytes15m)),
+                        // The producer reports 0 until a nonzero quiet
+                        // baseline exists (nonzero_baseline_insufficient).
+                        value: summary.baselineP99Bytes15m > 0 ? formatBytes(Double(summary.baselineP99Bytes15m)) : "None yet",
                         subtitle: "\(summary.baselineSamples) samples · \(summary.context)",
                         help: PressureHelp.diskWriteBaseline
                     )
@@ -287,6 +291,15 @@ struct DiskWritesView: View {
                         y: .value("Written", Double(point.bytesWritten))
                     )
                     .foregroundStyle(color(for: point.state ?? .unknown).gradient)
+                }
+                .chartXAxis {
+                    // Hour-only labels: a date and hour label at the last
+                    // mark ran past the plot edge and was cut to "Nov 24…".
+                    AxisMarks(values: .stride(by: .hour, count: 6)) {
+                        AxisGridLine()
+                        AxisTick()
+                        AxisValueLabel(format: .dateTime.hour())
+                    }
                 }
                 .chartYAxis {
                     AxisMarks { value in

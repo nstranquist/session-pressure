@@ -1,0 +1,137 @@
+{
+  "action": "io.status",
+  "disk_write_policy": {
+    "baseline_retention_days": 14,
+    "enabled": true,
+    "notifications_enabled": false,
+    "profile": "quiet-adaptive-v1",
+    "sample_interval_seconds": 15,
+    "trace_max_duration_seconds": 30
+  },
+  "ok": true,
+  "output_scope": "full",
+  "report": {
+    "available_count": 4,
+    "returned_count": 4,
+    "summary": {
+      "accessible_pid_count": 597,
+      "attribution_available": true,
+      "attribution_scope": "all_disk_io_best_effort",
+      "burst_window_bytes": 271314944,
+      "bytes_24h": 3226464727040,
+      "captured_at": "2026-11-24T21:07:52.781921Z",
+      "confidence": "learning",
+      "context": "build",
+      "current_bytes_per_second": 270461907.1448651,
+      "device_count": 1,
+      "device_scope": "internal_ssd",
+      "measurement_window_seconds": 1.003154,
+      "model_version": "quiet-adaptive-v1",
+      "reason_codes": [
+        "nonzero_baseline_insufficient",
+        "absolute_write_burst",
+        "process_attribution_partial"
+      ],
+      "schema_version": 1,
+      "source": "iokit.IOBlockStorageDriver",
+      "state": "high",
+      "swap_out_bytes_15m": 887095296,
+      "top_writer": {
+        "agent_process_count": 0,
+        "bytes_per_second": 259229238.98025626,
+        "category": "other",
+        "executable": "nicos-system-bac",
+        "process_count": 1,
+        "window_bytes": 260046848
+      },
+      "total_pid_count": 913,
+      "unscored_gap_bytes": 39177121792,
+      "window_15m_bytes": 200106364928,
+      "writer_available_count": 4
+    },
+    "truncated": false,
+    "writers": [
+      {
+        "agent_process_count": 0,
+        "bytes_per_second": 259229238.98025626,
+        "category": "other",
+        "executable": "nicos-system-bac",
+        "pid": 48128,
+        "process_count": 1,
+        "process_start_id": 6716420027055,
+        "window_bytes": 260046848,
+        "work_class": "uncoordinated"
+      },
+      {
+        "agent_process_count": 1,
+        "bytes_per_second": 40831.21833736395,
+        "category": "agent",
+        "executable": "claude",
+        "owner_kind": "agent",
+        "pid": 58407,
+        "process_count": 1,
+        "process_start_id": 6513523626671,
+        "window_bytes": 40960,
+        "work_class": "uncoordinated"
+      },
+      {
+        "agent_process_count": 0,
+        "bytes_per_second": 4083.121833736395,
+        "category": "other",
+        "executable": "nicos-delivery-p",
+        "pid": 8422,
+        "process_count": 1,
+        "process_start_id": 6677387649555,
+        "window_bytes": 4096,
+        "work_class": "uncoordinated"
+      },
+      {
+        "agent_process_count": 0,
+        "bytes_per_second": 4083.121833736395,
+        "category": "other",
+        "executable": "precommithook",
+        "pid": 20034,
+        "process_count": 1,
+        "process_start_id": 6735518911062,
+        "window_bytes": 4096,
+        "work_class": "uncoordinated"
+      }
+    ]
+  },
+  "summary": {
+    "accessible_pid_count": 597,
+    "attribution_available": true,
+    "attribution_scope": "all_disk_io_best_effort",
+    "burst_window_bytes": 271314944,
+    "bytes_24h": 3226464727040,
+    "captured_at": "2026-11-24T21:07:52.781921Z",
+    "confidence": "learning",
+    "context": "build",
+    "current_bytes_per_second": 270461907.1448651,
+    "device_count": 1,
+    "device_scope": "internal_ssd",
+    "measurement_window_seconds": 1.003154,
+    "model_version": "quiet-adaptive-v1",
+    "reason_codes": [
+      "nonzero_baseline_insufficient",
+      "absolute_write_burst",
+      "process_attribution_partial"
+    ],
+    "schema_version": 1,
+    "source": "iokit.IOBlockStorageDriver",
+    "state": "high",
+    "swap_out_bytes_15m": 887095296,
+    "top_writer": {
+      "agent_process_count": 0,
+      "bytes_per_second": 259229238.98025626,
+      "category": "other",
+      "executable": "nicos-system-bac",
+      "process_count": 1,
+      "window_bytes": 260046848
+    },
+    "total_pid_count": 913,
+    "unscored_gap_bytes": 39177121792,
+    "window_15m_bytes": 200106364928,
+    "writer_available_count": 4
+  }
+}

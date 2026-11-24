@@ -58,6 +58,9 @@ ndev --json session pressure board --full --live --include all
 ```
 
 then scrub host paths and session ids before committing.
+Every other recording has a note beside it with the exact command and the
+edits made (`Fixtures/io.md`, `Fixtures/runner-capacity.md`). Write one for
+each new recording.
 
 ## Catalog
 

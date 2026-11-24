@@ -47,7 +47,7 @@ enum SceneCatalog {
                 : ProcessIncidentsView(read: { _ in try SceneFixtures.decode(ProcessIncidentEnvelope.self, "process-incidents").report })
             return AnyView(view.environmentObject(store))
         },
-        page("disk-writes", .diskWrites, "Disk Writes (fixtures: no recorded disk-write payload yet)", fixtures: ["board-full"]) { _ in AnyView(DiskWritesView()) },
+        page("disk-writes", .diskWrites, "Disk Writes with a recorded live sample, 24 h history and SMART read", fixtures: ["board-full", "io-status", "io-history", "io-health"]) { _ in AnyView(DiskWritesView()) },
         page("storage-disk", .storage, "Storage, disk reclaim tab", fixtures: ["board-full", "storage-providers"]) { _ in AnyView(StorageView()) },
         Scene(name: "storage-idle", section: .storage, summary: "Storage, idle trees tab", minWidth: pageWidth, fixtures: ["board-full", "storage-providers"]) { source in
             let store = try await SceneStores.pressure(source, for: .storage)
@@ -90,7 +90,7 @@ enum SceneCatalog {
         },
         page("policy", .policy, "Policy from a full recorded board", fixtures: ["board-full"]) { _ in AnyView(PolicyView()) },
         page("monitor", .monitor, "Monitor from a full recorded board", fixtures: ["board-full"]) { _ in AnyView(MonitorView()) },
-        page("telemetry", .telemetry, "Telemetry (fixtures: no recorded telemetry payload yet)", fixtures: ["board-full"]) { _ in AnyView(TelemetryView()) },
+        page("telemetry", .telemetry, "Telemetry with 40 recorded events; no host has recorded a relief action", fixtures: ["board-full"]) { _ in AnyView(TelemetryView()) },
         Scene(name: "notifications", section: nil, summary: "Bell popover with two runner capacity alerts", minWidth: NotificationPopoverBody.width, fixtures: ["board-full", "runner-capacity"], height: 420) { source in
             let watch = source == .fixtures
                 ? RunnerAlertWatch(fetch: { _ in try SceneFixtures.runnerCapacityWithAlerts() }, enabled: { true }, notify: { .off })
@@ -241,6 +241,14 @@ enum SceneStores {
             store.storageProviders = storage.providers
             store.storageInventory = storage.storage ?? store.board.snapshot.storage
             store.storagePolicy = storage.storagePolicy
+            // Disk Writes after its first live sample and a "Read SMART".
+            let io = try SceneFixtures.decode(DiskWriteStatusEnvelope.self, "io-status")
+            store.diskWriteSummary = io.report?.summary ?? io.summary
+            store.diskWriters = io.report?.writers ?? []
+            store.diskWritePolicy = io.diskWritePolicy
+            store.diskWriteHistory = try SceneFixtures.decode(DiskWriteHistoryEnvelope.self, "io-history").history
+            store.diskHistoryLoadedAt = Date()
+            store.diskHealth = try SceneFixtures.decode(DiskHealthEnvelope.self, "io-health").snapshot
             return store
         case .live:
             let client = try ClientFactory.make()
