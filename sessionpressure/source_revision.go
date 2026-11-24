@@ -5,6 +5,8 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+
+	"github.com/nstranquist/session-pressure/frontdoor"
 )
 
 // A host runs several binaries built from this module: the CLI, the resident
@@ -26,7 +28,7 @@ const (
 
 	// FrontDoorRevisionEnv carries the revision linked into a wrapper that
 	// execs this CLI, so artifact status can compare all three binaries.
-	FrontDoorRevisionEnv = "SESSION_PRESSURE_FRONT_DOOR_REVISION"
+	FrontDoorRevisionEnv = frontdoor.RevisionEnv
 	// PromoteCommandEnv lets a host wrapper name its full promotion command.
 	// Without it, hints fall back to `session-pressure monitor install`.
 	PromoteCommandEnv = "SESSION_PRESSURE_PROMOTE_COMMAND"

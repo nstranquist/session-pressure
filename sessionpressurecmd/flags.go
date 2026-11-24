@@ -23,6 +23,7 @@ type Flags struct {
 func Main(jsonOutput bool, args []string) int {
 	started := time.Now()
 	args = StripSessionPressurePrefix(args)
+	sessionpressure.RecordFrontDoorFromEnv(os.Getenv)
 	flags := &Flags{JSON: jsonOutput}
 	code := cmdSessionPressure(flags, args)
 	if err := telemetry.RecordCommandResult(sessionpressure.CommandLeaf(args), started, code, flags.gateNotSatisfied); err != nil {

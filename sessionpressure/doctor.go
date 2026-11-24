@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/nstranquist/session-pressure/frontdoor"
 )
 
 // PressureDoctor is the compact agent/operator health envelope for
@@ -25,6 +27,7 @@ type PressureDoctor struct {
 	CoverageStatus     string                   `json:"coverage_status,omitempty"`
 	SourceRevisions    *ArtifactSourceRevisions `json:"source_revisions,omitempty"`
 	SourceLag          *SourceLag               `json:"source_lag,omitempty"`
+	FrontDoor          *frontdoor.Status        `json:"front_door,omitempty"`
 	Fixes              []string                 `json:"fixes,omitempty"`
 	Warnings           []string                 `json:"warnings,omitempty"`
 	SwapDerate         *WorkSwapDerateCost      `json:"swap_derate,omitempty"`
@@ -87,6 +90,8 @@ type PressureDoctorInput struct {
 	SourceRevisions *ArtifactSourceRevisions
 	// Optional: installed-vs-source-HEAD commit lag.
 	SourceLag *SourceLag
+	// Optional: the recorded front door (frontdoor.Inspect).
+	FrontDoor *frontdoor.Status
 	// Optional: 24h swap-thrash derate cost. Loaded only when the latch is
 	// set or held in the window, so a calm host pays nothing for it.
 	SwapDerate *WorkSwapDerateCost
@@ -217,6 +222,11 @@ func BuildPressureDoctor(in PressureDoctorInput) PressureDoctor {
 		}
 	}
 
+	if in.FrontDoor != nil {
+		copied := *in.FrontDoor
+		doc.FrontDoor = &copied
+	}
+
 	// ok: monitor healthy and no pending recovery; observe-only is fine for ok.
 	doc.OK = health.MonitorHealthy && in.RecoveryErr == nil && !in.HasRecovery
 	return doc
@@ -310,6 +320,7 @@ func LoadPressureDoctorFromDir(ctx context.Context, dir string, repoRoot string)
 		Coverage:        coverage,
 		SourceRevisions: &revisions,
 		SourceLag:       &sourceLag,
+		FrontDoor:       frontdoor.Inspect(dir),
 	}), nil
 }
 

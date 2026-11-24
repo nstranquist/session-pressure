@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/nstranquist/session-pressure/frontdoor"
 )
 
 // Nested work runs.
@@ -74,7 +76,7 @@ func withWorkOperationEnv(environ []string, operationID string) []string {
 func withoutPressureWrapperMarker(environ []string) []string {
 	out := make([]string, 0, len(environ))
 	for _, value := range environ {
-		if name, _, found := strings.Cut(value, "="); found && name == "NDEV_PRESSURE_WRAPPER" {
+		if name, _, found := strings.Cut(value, "="); found && name == frontdoor.MarkerEnv {
 			continue
 		}
 		out = append(out, value)

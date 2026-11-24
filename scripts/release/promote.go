@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/nstranquist/session-pressure/frontdoor"
 )
 
 type promoteOptions struct {
@@ -27,35 +29,37 @@ type promoteOptions struct {
 	SkipApp         bool
 	SkipMonitor     bool
 	SkipDoctor      bool
+	SkipFrontDoor   bool
 	VerifyLifecycle bool
 	DryRun          bool
 	JSONOutput      bool
 }
 
 type promoteReceipt struct {
-	OK              bool         `json:"ok"`
-	DryRun          bool         `json:"dry_run"`
-	Headless        bool         `json:"headless"`
-	Repo            string       `json:"repo"`
-	Ref             string       `json:"ref"`
-	TargetRevision  string       `json:"target_revision"`
-	HeadRevision    string       `json:"head_revision"`
-	BundleSource    string       `json:"bundle_source"`
-	Prefix          string       `json:"prefix"`
-	ExpectedCurrent string       `json:"expected_current"`
-	InstalledCLI    string       `json:"installed_cli,omitempty"`
-	MonitorPromoted bool         `json:"monitor_promoted"`
-	AppPromoted     bool         `json:"app_promoted"`
-	AppDestination  string       `json:"app_destination,omitempty"`
-	ExpectedApp     string       `json:"expected_app,omitempty"`
-	InstalledApp    *appIdentity `json:"installed_app,omitempty"`
-	DoctorChecked   bool         `json:"doctor_checked"`
-	DoctorOK        bool         `json:"doctor_ok,omitempty"`
-	SourceLagStatus string       `json:"source_lag_status,omitempty"`
-	CommitsBehind   int          `json:"commits_behind,omitempty"`
-	LifecycleOK     bool         `json:"lifecycle_ok,omitempty"`
-	Steps           []string     `json:"steps"`
-	CompletedAt     time.Time    `json:"completed_at"`
+	OK              bool              `json:"ok"`
+	DryRun          bool              `json:"dry_run"`
+	Headless        bool              `json:"headless"`
+	Repo            string            `json:"repo"`
+	Ref             string            `json:"ref"`
+	TargetRevision  string            `json:"target_revision"`
+	HeadRevision    string            `json:"head_revision"`
+	BundleSource    string            `json:"bundle_source"`
+	Prefix          string            `json:"prefix"`
+	ExpectedCurrent string            `json:"expected_current"`
+	InstalledCLI    string            `json:"installed_cli,omitempty"`
+	MonitorPromoted bool              `json:"monitor_promoted"`
+	AppPromoted     bool              `json:"app_promoted"`
+	AppDestination  string            `json:"app_destination,omitempty"`
+	ExpectedApp     string            `json:"expected_app,omitempty"`
+	InstalledApp    *appIdentity      `json:"installed_app,omitempty"`
+	DoctorChecked   bool              `json:"doctor_checked"`
+	DoctorOK        bool              `json:"doctor_ok,omitempty"`
+	SourceLagStatus string            `json:"source_lag_status,omitempty"`
+	CommitsBehind   int               `json:"commits_behind,omitempty"`
+	FrontDoor       *frontDoorReceipt `json:"front_door,omitempty"`
+	LifecycleOK     bool              `json:"lifecycle_ok,omitempty"`
+	Steps           []string          `json:"steps"`
+	CompletedAt     time.Time         `json:"completed_at"`
 }
 
 func promote(args []string) error {
@@ -76,7 +80,8 @@ func promote(args []string) error {
 	f.BoolVar(&opts.AllowRollback, "allow-rollback", false, "explicitly permit an older release after checking current authority")
 	f.BoolVar(&opts.SkipApp, "skip-app", false, "skip macOS desktop app build and headless install")
 	f.BoolVar(&opts.SkipMonitor, "skip-monitor", false, "skip LaunchAgent resident monitor install")
-	f.BoolVar(&opts.SkipDoctor, "skip-doctor", false, "skip post-install doctor verification")
+	f.BoolVar(&opts.SkipDoctor, "skip-doctor", false, "skip post-install doctor verification (also skips the front door, which doctor names)")
+	f.BoolVar(&opts.SkipFrontDoor, "skip-front-door", false, "do not rebuild or verify the recorded front door")
 	f.BoolVar(&opts.VerifyLifecycle, "verify-lifecycle", false, "run scripts/verify-installed-lifecycle.py in isolated temp state")
 	f.BoolVar(&opts.DryRun, "dry-run", false, "resolve clean target and authorities without mutating installed artifacts")
 	f.BoolVar(&opts.JSONOutput, "json", false, "emit structured JSON receipt")
@@ -206,6 +211,9 @@ func runPromote(opts promoteOptions) (promoteReceipt, error) {
 		}
 		if !opts.SkipDoctor {
 			receipt.Steps = append(receipt.Steps, "verify-doctor-source-lag")
+			if !opts.SkipFrontDoor {
+				receipt.Steps = append(receipt.Steps, "republish-recorded-front-door", "verify-doctor-through-front-door")
+			}
 		}
 		if opts.VerifyLifecycle {
 			receipt.Steps = append(receipt.Steps, "verify-installed-lifecycle")
@@ -285,41 +293,40 @@ func runPromote(opts promoteOptions) (promoteReceipt, error) {
 	}
 
 	if !opts.SkipDoctor {
-		docCmd := exec.Command(cliBin, "--json", "doctor")
-		docCmd.Env = append(os.Environ(), "SESSION_PRESSURE_SOURCE_REPO="+repoRoot)
-		raw, err := docCmd.CombinedOutput()
+		// Run the installed CLI directly, without the variables a wrapper
+		// passes down: an inherited front-door revision describes whatever
+		// wrapped this promotion, not what is installed. The front door gets
+		// its own check below.
+		env := append(frontdoor.WithoutWrapperEnv(os.Environ()), "SESSION_PRESSURE_SOURCE_REPO="+repoRoot)
+		report, err := runDoctor(execRunner, []string{cliBin, "--json", "doctor"}, env)
 		if err != nil {
-			return promoteReceipt{}, fmt.Errorf("doctor verification failed: %w: %s", err, strings.TrimSpace(string(raw)))
-		}
-		var docPayload struct {
-			OK     bool `json:"ok"`
-			Doctor struct {
-				SourceRevisions *struct {
-					Mismatch bool `json:"mismatch"`
-				} `json:"source_revisions"`
-				SourceLag *struct {
-					Checked       bool   `json:"checked"`
-					Status        string `json:"status"`
-					CommitsBehind int    `json:"commits_behind"`
-				} `json:"source_lag"`
-			} `json:"doctor"`
-		}
-		if err := json.Unmarshal(raw, &docPayload); err != nil {
-			return promoteReceipt{}, fmt.Errorf("decode doctor verification: %w", err)
+			return promoteReceipt{}, err
 		}
 		receipt.DoctorChecked = true
-		receipt.DoctorOK = docPayload.OK
-		if docPayload.Doctor.SourceRevisions != nil && docPayload.Doctor.SourceRevisions.Mismatch {
-			return promoteReceipt{}, errors.New("post-install verification failed: executing binaries still disagree on source revision")
+		receipt.DoctorOK = report.OK
+		if report.Doctor.SourceRevisions != nil && report.Doctor.SourceRevisions.Mismatch {
+			return promoteReceipt{}, fmt.Errorf("post-install verification failed: installed binaries disagree on source revision (cli=%s helper=%s)",
+				shortSHA(report.Doctor.SourceRevisions.CLI), shortSHA(report.Doctor.SourceRevisions.InstalledHelper))
 		}
-		if docPayload.Doctor.SourceLag != nil {
-			receipt.SourceLagStatus = docPayload.Doctor.SourceLag.Status
-			receipt.CommitsBehind = docPayload.Doctor.SourceLag.CommitsBehind
-			if targetRev == headRev && docPayload.Doctor.SourceLag.Checked && docPayload.Doctor.SourceLag.CommitsBehind > 0 {
-				return promoteReceipt{}, fmt.Errorf("post-install verification failed: installed binary is still %d commit(s) behind HEAD", docPayload.Doctor.SourceLag.CommitsBehind)
+		if lag := report.Doctor.SourceLag; lag != nil {
+			receipt.SourceLagStatus = lag.Status
+			receipt.CommitsBehind = lag.CommitsBehind
+			if targetRev == headRev && lag.Checked && lag.CommitsBehind > 0 {
+				return promoteReceipt{}, fmt.Errorf("post-install verification failed: installed binary is still %d commit(s) behind HEAD", lag.CommitsBehind)
 			}
 		}
 		receipt.Steps = append(receipt.Steps, "verify-doctor-source-lag")
+
+		if report.Doctor.FrontDoor != nil && !opts.SkipFrontDoor {
+			frontDoor, err := promoteFrontDoor(execRunner, *report.Doctor.FrontDoor, targetRev, headRev, env)
+			receipt.FrontDoor = &frontDoor
+			if err != nil {
+				return promoteReceipt{}, err
+			}
+			if frontDoor.Status == frontDoorRepublished {
+				receipt.Steps = append(receipt.Steps, "republish-recorded-front-door", "verify-doctor-through-front-door")
+			}
+		}
 	}
 
 	if opts.VerifyLifecycle {

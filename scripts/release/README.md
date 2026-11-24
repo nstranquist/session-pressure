@@ -22,8 +22,35 @@ revision) and `--expected-app` (app bundle digest) before building, clones
 committed `HEAD` into a clean temporary directory outside the checkout so dirty
 parallel edits never contaminate a release, installs the CLI and resident
 helper under their kernel locks, builds and installs the signed macOS app
-headlessly (no `open`, no focus steal), and verifies `session-pressure --json
-doctor` reports zero revision mismatch and zero commit lag.
+headlessly (no `open`, no focus steal), rebuilds the recorded front door
+(below), and verifies `session-pressure --json doctor` reports zero revision
+mismatch and zero commit lag.
+
+### Front door
+
+A host wrapper that execs the CLI and also links this module in-process (a
+"front door", on the primary Mac `ndev`) has its own build. Promotion
+rebuilds it too:
+
+1. The wrapper names itself on every call it forwards
+   (`SESSION_PRESSURE_FRONT_DOOR`, package `frontdoor`): the argv that reaches
+   the CLI through it and the argv that rebuilds it from committed source.
+   The CLI records that in `front-door.json` in its state directory, and
+   `doctor` reports it as `front_door`.
+2. The doctor check runs the installed CLI directly, without the wrapper
+   variables it may have inherited. An inherited front-door revision names
+   whatever wrapped the promotion, not what is installed.
+3. When `doctor` reports a front door, promotion runs its rebuild, then runs
+   `doctor` through it and requires that it links the promoted revision and
+   that the CLI, front door and helper agree. The receipt's `front_door`
+   records the result.
+
+A front door whose executable is gone, an unreadable record, or a `--ref`
+other than `HEAD` (a front door builds the sibling checkout's `HEAD`) is
+reported in `front_door.status` and does not fail the promotion.
+`--skip-front-door` leaves the front door alone. `--skip-doctor` also skips
+it, because doctor is what names it. A host with no front door is
+unaffected. To forget a removed front door, delete `front-door.json`.
 
 Pass `--verify-lifecycle` (`RELEASE_EXTRA_FLAGS="--verify-lifecycle"`) to also
 run `scripts/verify-installed-lifecycle.py` in isolated private state after
