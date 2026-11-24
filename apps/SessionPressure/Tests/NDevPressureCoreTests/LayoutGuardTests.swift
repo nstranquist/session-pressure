@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import NDevPressure
 
 /// macOS 26 runs the NavigationSplitView detail column under the floating
 /// sidebar. `HSplitView` and `VSplitView` are `NSSplitView`s that lose the
@@ -47,5 +48,28 @@ struct LayoutGuardTests {
         }
         #expect(scanned > 10, "expected to scan the app sources at \(appSources.path)")
         #expect(found.isEmpty, "use ResizableSplit, not \(found.joined(separator: ", "))")
+    }
+}
+
+@Suite("Split layout")
+struct SplitLayoutTests {
+    @Test("a wide container keeps the requested width within range and the flexible minimum")
+    func wideContainer() {
+        let w = SplitLayout.widths(requested: 400, range: 320...480, flexibleMin: 480, available: 1200)
+        #expect(w == SplitLayout.Widths(sized: 400, flexibleMin: 480))
+        // The sized pane stops growing where the flexible pane would drop below its minimum.
+        #expect(SplitLayout.widths(requested: 480, range: 320...480, flexibleMin: 480, available: 900).sized == 419)
+        #expect(SplitLayout.widths(requested: 100, range: 320...480, flexibleMin: 480, available: 1200).sized == 320)
+    }
+
+    @Test("a container narrower than both minimums shrinks both panes and never overflows", arguments: [0.0, 120, 480, 700, 800])
+    func narrowContainer(available: CGFloat) {
+        let w = SplitLayout.widths(requested: 480, range: 320...480, flexibleMin: 480, available: available)
+        #expect(w.sized + 1 + w.flexibleMin <= max(available, 1))
+        #expect(w.sized >= 0 && w.flexibleMin >= 0)
+        if available > 1 {
+            // Proportional to the minimums: 320 : 480.
+            #expect(abs(w.sized / max(w.flexibleMin, 1) - 320.0 / 480.0) < 0.02)
+        }
     }
 }

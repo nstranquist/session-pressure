@@ -1,4 +1,4 @@
-.PHONY: build test run install install-headless clean icon verify verify-signing
+.PHONY: build test render run install install-headless clean icon verify verify-signing
 
 APP_NAME := NDev Pressure
 EXECUTABLE := NDevPressure
@@ -56,6 +56,22 @@ icon: Resources/AppIcon.svg
 
 test:
 	swift test
+
+# Draw app scenes to PNG without a window: nothing opens on the desktop.
+#   make render [SCENES="work-queue hetzner"] [LIVE=1] [APPEARANCE=light]
+#               [WIDTH=1000] [HEIGHT=900] [SCALE=2] [RENDER_DIR=.build/scenes]
+# Scenes: Tests/NDevPressureCoreTests/Support/Scenes.swift. LIVE=1 reads the
+# installed helper instead of the recorded fixtures. Each run overwrites its
+# PNGs; manifest.json lists exactly the scenes this run drew, with size,
+# needed width, data source and source revision.
+RENDER_DIR ?= .build/scenes
+render:
+	SCENE_RENDER_DIR="$(abspath $(RENDER_DIR))" SCENES="$(SCENES)" \
+	  SCENE_SOURCE="$(if $(LIVE),live,fixtures)" SCENE_APPEARANCE="$(or $(APPEARANCE),dark)" \
+	  SCENE_WIDTH="$(WIDTH)" SCENE_HEIGHT="$(HEIGHT)" SCENE_SCALE="$(SCALE)" \
+	  SCENE_REVISION="$$(git rev-parse --short HEAD)$$(git diff --quiet HEAD -- . || echo -dirty)" \
+	  swift test --filter RenderScenesTests
+	@echo "  Scenes: $(abspath $(RENDER_DIR))/manifest.json"
 
 install:
 	@expected="$$("$(RELEASE_TOOL)" app-status --app "$(INSTALLED_APP)" --digest-only)" && \

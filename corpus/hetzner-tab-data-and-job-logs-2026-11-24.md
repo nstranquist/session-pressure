@@ -74,5 +74,6 @@ Measured live against runner-3 before the change:
 
 ## Open
 
-- The render harness lives in `/tmp/hz/render`. It could become a repo tool
-  for windowless view checks.
+- Done in WORK-SP-14: the `/tmp/hz/render` harness became the repo's
+  windowless view probe. `make render SCENES="hetzner hetzner-job-log"`
+  draws this tab (`windowless-view-probe-2026-11-24.md`).

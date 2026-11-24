@@ -217,38 +217,3 @@ struct RunnerCapacityStoreTests {
         #expect(RunnerCapacityStore.describe("other_code") == "other_code")
     }
 }
-
-/// Offscreen evidence render: no window is created, so it never touches the
-/// operator's desktop. Runs only when CAPACITY_SNAPSHOT_PATH is set;
-/// CAPACITY_SNAPSHOT_FIXTURE selects another recorded payload.
-@Suite("Runner capacity offscreen render")
-@MainActor
-struct RunnerCapacityRenderTests {
-    @Test("renders the capacity card to PNG")
-    func render() async throws {
-        let env = ProcessInfo.processInfo.environment
-        guard let out = env["CAPACITY_SNAPSHOT_PATH"] else { return }
-        let envelope: RunnerCapacityEnvelope
-        if let path = env["CAPACITY_SNAPSHOT_FIXTURE"] {
-            envelope = try PressureJSON.decode(RunnerCapacityEnvelope.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
-        } else {
-            envelope = try RunnerCapacityContractTests.recorded()
-        }
-        let window = RunnerCapacityWindow(rawValue: envelope.capacity.window) ?? .day
-        let store = RunnerCapacityStore(fetch: { _ in envelope })
-        await store.setWindow(window)
-        await store.refresh()
-        if let host = env["CAPACITY_SNAPSHOT_HOST"] { store.selectedHost = host }
-        if env["CAPACITY_SNAPSHOT_FOCUS_ALERT"] != nil { store.focusedAlert = store.report?.alerts.first(where: { $0.since != nil && $0.host == store.selected?.id })?.id }
-        let card = RunnerCapacityCard(store: store)
-            .frame(width: 1100)
-            .padding(16)
-            .background(Color(nsColor: .windowBackgroundColor))
-        let renderer = ImageRenderer(content: card)
-        renderer.scale = 2
-        let image = try #require(renderer.nsImage)
-        let tiff = try #require(image.tiffRepresentation)
-        let png = try #require(NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]))
-        try png.write(to: URL(fileURLWithPath: out))
-    }
-}

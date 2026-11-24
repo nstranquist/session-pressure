@@ -2,6 +2,18 @@ import AppKit
 import SwiftUI
 import NDevPressureCore
 
+/// Main window limits. The scene gate in the tests derives the narrowest
+/// detail pane from these, so a page that cannot fit it fails `swift test`.
+enum WindowLayout {
+    static let minWidth: CGFloat = 980
+    static let minHeight: CGFloat = 640
+    static let sidebarMinWidth: CGFloat = 200
+    static let sidebarIdealWidth: CGFloat = 220
+    static let sidebarMaxWidth: CGFloat = 280
+    /// The detail pane in the narrowest window with the widest sidebar.
+    static var narrowestDetailWidth: CGFloat { minWidth - sidebarMaxWidth }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var store: PressureStore
     @Environment(\.scenePhase) private var scenePhase
@@ -23,11 +35,11 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             sidebar
-                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
+                .navigationSplitViewColumnWidth(min: WindowLayout.sidebarMinWidth, ideal: WindowLayout.sidebarIdealWidth, max: WindowLayout.sidebarMaxWidth)
         } detail: {
             detail
         }
-        .frame(minWidth: 980, minHeight: 640)
+        .frame(minWidth: WindowLayout.minWidth, minHeight: WindowLayout.minHeight)
         .toolbar { toolbar }
         .task { store.start() }
         .onAppear {

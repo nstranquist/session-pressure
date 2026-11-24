@@ -447,7 +447,7 @@ struct NotificationBell: View {
         .popover(isPresented: $showingPopover) {
             NotificationPopoverBody()
                 .environmentObject(store)
-                .frame(width: 320)
+                .frame(width: NotificationPopoverBody.width)
         }
         .onChange(of: showingPopover) { _, isShowing in
             if !isShowing && !popoverIDs.isEmpty {
@@ -475,6 +475,9 @@ struct NotificationBell: View {
 }
 
 struct NotificationPopoverBody: View {
+    /// The bell popover's width. The scene gate checks the body fits it.
+    nonisolated static let width: CGFloat = 320
+
     @EnvironmentObject private var store: PressureStore
     @Environment(\.dismiss) private var dismiss
 
@@ -646,6 +649,28 @@ struct CapacityBar: View {
 /// area. `HSplitView` is an `NSSplitView` that ignores that inset, so its
 /// leading pane started under the sidebar and the operator saw a blank pane.
 /// An `HStack` respects the inset.
+/// Pane widths for `ResizableSplit`. The divider takes 1 pt.
+enum SplitLayout {
+    struct Widths: Equatable {
+        var sized: CGFloat
+        var flexibleMin: CGFloat
+    }
+
+    /// When both minimums fit, the sized pane takes `requested` within its
+    /// range and leaves the flexible pane its minimum. When they do not fit
+    /// (a narrow window), both panes shrink in proportion to their minimums,
+    /// so the split never grows past its container and cuts off a pane.
+    static func widths(requested: CGFloat, range: ClosedRange<CGFloat>, flexibleMin: CGFloat, available: CGFloat) -> Widths {
+        let usable = max(available - 1, 0)
+        guard range.lowerBound + flexibleMin > usable else {
+            let ceiling = min(range.upperBound, usable - flexibleMin)
+            return Widths(sized: min(max(requested, range.lowerBound), ceiling), flexibleMin: flexibleMin)
+        }
+        let sized = (usable * range.lowerBound / (range.lowerBound + flexibleMin)).rounded(.down)
+        return Widths(sized: sized, flexibleMin: usable - sized)
+    }
+}
+
 struct ResizableSplit<Leading: View, Trailing: View>: View {
     enum Side { case leading, trailing }
 
@@ -664,30 +689,29 @@ struct ResizableSplit<Leading: View, Trailing: View>: View {
 
     var body: some View {
         GeometryReader { geo in
-            let width = clamped(sizedWidth, available: geo.size.width)
+            let widths = layout(sizedWidth, available: geo.size.width)
             HStack(spacing: 0) {
-                pane(leading(), side: .leading, width: width)
+                pane(leading(), side: .leading, widths: widths, available: geo.size.width)
                 if showsTrailing {
                     handle(available: geo.size.width)
-                    pane(trailing(), side: .trailing, width: width)
+                    pane(trailing(), side: .trailing, widths: widths, available: geo.size.width)
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func pane<Content: View>(_ content: Content, side: Side, width: CGFloat) -> some View {
+    private func pane<Content: View>(_ content: Content, side: Side, widths: SplitLayout.Widths, available: CGFloat) -> some View {
         if side == sized && showsTrailing {
-            content.frame(width: width).frame(maxHeight: .infinity)
+            content.frame(width: widths.sized).frame(maxHeight: .infinity)
         } else {
-            content.frame(minWidth: flexibleMinWidth, maxWidth: .infinity, maxHeight: .infinity)
+            let minimum = showsTrailing ? widths.flexibleMin : min(flexibleMinWidth, available)
+            content.frame(minWidth: minimum, maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    private func clamped(_ value: CGFloat, available: CGFloat) -> CGFloat {
-        // The flexible pane keeps its minimum before the sized pane grows.
-        let ceiling = max(sizedRange.lowerBound, min(sizedRange.upperBound, available - flexibleMinWidth - 1))
-        return min(max(value, sizedRange.lowerBound), ceiling)
+    private func layout(_ value: CGFloat, available: CGFloat) -> SplitLayout.Widths {
+        SplitLayout.widths(requested: value, range: sizedRange, flexibleMin: flexibleMinWidth, available: available)
     }
 
     private func handle(available: CGFloat) -> some View {
@@ -706,10 +730,10 @@ struct ResizableSplit<Leading: View, Trailing: View>: View {
                     .gesture(
                         DragGesture(minimumDistance: 1, coordinateSpace: .global)
                             .onChanged { value in
-                                let start = dragStartWidth ?? clamped(sizedWidth, available: available)
+                                let start = dragStartWidth ?? layout(sizedWidth, available: available).sized
                                 dragStartWidth = start
                                 let delta = sized == .leading ? value.translation.width : -value.translation.width
-                                sizedWidth = clamped(start + delta, available: available)
+                                sizedWidth = layout(start + delta, available: available).sized
                             }
                             .onEnded { _ in dragStartWidth = nil }
                     )

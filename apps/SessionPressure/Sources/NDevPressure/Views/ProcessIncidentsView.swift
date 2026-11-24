@@ -2,7 +2,14 @@ import SwiftUI
 import NDevPressureCore
 
 struct ProcessIncidentsView: View {
+    /// Reads incident history for a helper binary path (nil: the default).
+    typealias Read = @MainActor (_ binaryPath: String?) async throws -> ProcessIncidentReport?
+    static let liveRead: Read = { path in
+        try await ClientFactory.make(binaryPath: path).processIncidents().report
+    }
+
     @EnvironmentObject private var store: PressureStore
+    private let read: Read
     @State private var report: ProcessIncidentReport?
     @State private var selectedID: String?
     @State private var pending: ProcessIncident?
@@ -12,6 +19,10 @@ struct ProcessIncidentsView: View {
     @State private var error: String?
     @State private var refreshedAt: Date?
     @State private var listWidth: CGFloat = 360
+
+    init(read: @escaping Read = Self.liveRead) {
+        self.read = read
+    }
 
     private var incidents: [ProcessIncident] { report?.incidents ?? [] }
     private var selected: ProcessIncident? { incidents.first { $0.id == selectedID } }
@@ -137,8 +148,7 @@ struct ProcessIncidentsView: View {
         refreshing = true
         defer { refreshing = false }
         do {
-            let client = try ClientFactory.make(binaryPath: store.binaryPath.isEmpty ? nil : store.binaryPath)
-            report = try await client.processIncidents().report
+            report = try await read(store.binaryPath.isEmpty ? nil : store.binaryPath)
             refreshedAt = Date(); error = nil
             if !incidents.contains(where: { $0.id == selectedID }) { selectedID = incidents.first?.id }
         } catch { self.error = error.localizedDescription }
