@@ -248,7 +248,13 @@ func nativeDiskProcessCounters(ctx context.Context) (diskProcessSnapshot, error)
 		if darwinLibproc.pidRusageV2(int32(pid), darwinRusageInfoVersion2, &usage) != 0 || usage.ProcessStart == 0 {
 			continue
 		}
-		executable := privacySafeExecutable(darwinCString(rows[index].Proc.P_comm[:]))
+		name := darwinCString(rows[index].Proc.P_comm[:])
+		if len(name) == diskWriteKernelNameBytes {
+			// Possibly cut by the kernel: about 35 of 1,000 processes, one
+			// path read each per pass.
+			name = diskWriterFullName(name, darwinProcessPath(pid))
+		}
+		executable := privacySafeExecutable(name)
 		result.Counters = append(result.Counters, diskProcessCounter{
 			PID: pid, StartID: usage.ProcessStart, Executable: executable,
 			BytesWritten: usage.DiskIOBytesWritten, AgentOwned: hostConsumerCategoryWithCatalog(executable, catalog) == "agent",

@@ -127,7 +127,44 @@ did show only its empty states.
     yet".
   - The hourly chart's last date and hour axis label ran past the plot
     and was cut to "Nov 24…". The axis now has hour-only labels every 6 h.
-- Not fixed here: writer names come from the kernel's 16-character
-  process name (`nicos-system-bac`, `nicos-delivery-p`). A full name needs
-  a producer change.
+- Writer names were cut to the kernel's 16-character process name
+  (`nicos-system-bac`, `nicos-delivery-p`). Fixed in WORK-SP-16 (below).
 - `swift test`: 175 tests in 32 suites pass.
+
+## Follow-up: full disk-writer names (WORK-SP-16)
+
+The kernel keeps a process name in `p_comm`, 16 bytes (MAXCOMLEN), so
+`nicos-system-backup` showed as `nicos-system-bac` in writer rows, history,
+the CLI and alerts. The fix is in the producer, not the app.
+
+- `diskWriterFullName` (`sessionpressure/disk_write_names.go`): when the
+  short name is exactly 16 bytes and the `proc_pidpath` base name is longer
+  and starts with it, the writer takes the base name. A shorter name, an
+  unreadable path, or a base name that does not start with the short name
+  (a process that renamed itself) keeps the short name.
+- Cost: only 16-byte names need a path read. About 35 of 980 processes on
+  the primary Mac, once per pass (about once a minute). No cache.
+- Ownership guard (`processPassLocked`, `disk_write.go`): the process
+  sampler also names processes from `p_comm`, and its owner name overrode
+  the counter name, which put the cut name back. The override now skips
+  an owner name that is the cut form of the counter's full name. Agent
+  identity still wins (`2.1.220` is still `claude`). The sampler keeps cut
+  names on purpose: memory views group all Chrome helpers under
+  `Google_Chrome_He`.
+- Baseline history: no migration. Per-writer models (`executableModels`)
+  feed only the writer's diagnostic `baseline_ratio`. Device alerts use the
+  summary-level baseline, which does not depend on writer names. Old
+  cut-name keys age out through the 14-day retention and the 32-model
+  trim. A runtime key rename would also be undone on restart, because the
+  models are rebuilt from persisted hour records under the old keys.
+- `Fixtures/io-status.json` was re-recorded from the fixed build (see
+  `Fixtures/io.md`). It holds `Google_Chrome_Helper_(Aperitif)`, a 31-byte
+  name that the kernel cut to `Google_Chrome_He`. `DiskWriteContractTests`
+  fails if the fixture holds the cut form again.
+- Proof: `go test ./sessionpressure/` passes, with
+  `TestDiskWriterFullNameUsesPathOnlyForCutNames`,
+  `TestDiskWriterNameIsCutOf` and
+  `TestDiskWriteOwnershipKeepsFullWriterNames`. With the ownership guard
+  removed, the last test fails. `make render SCENES=disk-writes WIDTH=700`
+  draws the 31-byte name on one line beside its rate and Trace paths
+  button. `swift test`: 176 tests in 32 suites pass.

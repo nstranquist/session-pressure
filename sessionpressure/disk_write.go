@@ -868,7 +868,7 @@ func (observer *DiskWriteObserver) processPassLocked(at time.Time, elapsed time.
 	for _, process := range processes.Counters {
 		key := diskProcessKey{PID: process.PID, StartID: process.StartID}
 		if owner, ok := observer.ownership[key]; ok {
-			if owner.Executable != "" && owner.Executable != "unknown" {
+			if owner.Executable != "" && owner.Executable != "unknown" && !diskWriterNameIsCutOf(owner.Executable, privacySafeExecutable(process.Executable)) {
 				process.Executable = owner.Executable
 			}
 			process.AgentOwned = process.AgentOwned || owner.AgentOwned

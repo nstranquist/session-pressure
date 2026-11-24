@@ -10,11 +10,19 @@ struct DiskWriteContractTests {
     func status() throws {
         let status = try SceneFixtures.decode(DiskWriteStatusEnvelope.self, "io-status")
         let summary = try #require(status.report?.summary)
-        #expect(summary.state == .high)
-        #expect(summary.topWriter?.executable == "nicos-system-bac")
-        #expect(status.report?.writers.count == 4)
-        #expect(status.report?.writers.first?.pid != nil)
+        let writers = try #require(status.report?.writers)
+        #expect(summary.state == .learning)
+        #expect(summary.topWriter?.executable == "scp")
+        #expect(writers.count == 5)
+        #expect(writers.first?.pid != nil)
         #expect(status.diskWritePolicy?.profile == "quiet-adaptive-v1")
+    }
+
+    @Test("writers carry full program names, not the kernel's 16-character cut")
+    func fullWriterNames() throws {
+        let writers = try #require(try SceneFixtures.decode(DiskWriteStatusEnvelope.self, "io-status").report?.writers)
+        #expect(writers.contains { $0.executable == "Google_Chrome_Helper_(Aperitif)" })
+        #expect(!writers.contains { $0.executable == "Google_Chrome_He" })
     }
 
     @Test("io history decodes every recorded hour")
