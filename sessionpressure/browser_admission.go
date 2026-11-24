@@ -50,6 +50,12 @@ const (
 	// 2026-11-17): headless-shell 290 MB, Chrome for Testing 928 MB.
 	browserHeadlessShellSessionMB    = 290
 	browserChromeForTestingSessionMB = 928
+	// browserAttachSessionMB bounds the short-lived client cost of an
+	// attach-only command against an already-open browser session (click,
+	// snapshot, eval, screenshot). Charging 928 MB per attach and keeping it
+	// charged after release accumulated 76 GB of phantom charge in 50 s on
+	// 2026-11-24 and stalled agents for 4-16 s per call.
+	browserAttachSessionMB = 64
 
 	browserAdmissionLedgerName = "browser-admissions.json"
 	browserAdmissionLockName   = "browser-admission"
@@ -61,6 +67,45 @@ const (
 	browserAdmissionRetry     = 2 * time.Second
 	browserAdmissionMaxRows   = 512
 )
+
+// browserAttachOnlySubcommands lists `ndev browser <subcommand>` operations
+// that talk to an already-open browser session and exit without spawning a
+// detached browser process. Commands that can launch a browser (open,
+// local-demo, exec, run, script, or unknown/external commands) stay false and
+// keep full detached-session memory accounting.
+var browserAttachOnlySubcommands = map[string]bool{
+	"a11y": true, "attr": true, "ax": true, "back": true, "check": true,
+	"clear": true, "click": true, "console": true, "cookies": true, "css": true,
+	"dialog": true, "dom": true, "emulate": true, "eval": true, "fill": true,
+	"focus": true, "forward": true, "frame": true, "goto": true, "har": true,
+	"hover": true, "html": true, "inspect": true, "locator": true, "metrics": true,
+	"navigate": true, "network": true, "pdf": true, "perf": true, "press": true,
+	"query": true, "reload": true, "resize": true, "screenshot": true, "scroll": true,
+	"select": true, "snapshot": true, "storage": true, "tabs": true, "text": true,
+	"title": true, "trace": true, "type": true, "uncheck": true, "upload": true,
+	"url": true, "viewport": true, "wait": true,
+}
+
+// isAttachOnlyBrowserCommand reports whether command is a short-lived
+// attach-only browser subcommand that does not spawn a detached browser.
+func isAttachOnlyBrowserCommand(command []string) bool {
+	if len(command) < 3 {
+		return false
+	}
+	base := strings.ToLower(filepath.Base(command[0]))
+	if base != "ndev" && base != "ndev-go" {
+		return false
+	}
+	index := 1
+	for index < len(command) && strings.HasPrefix(command[index], "-") {
+		index++
+	}
+	if index+1 >= len(command) || command[index] != "browser" {
+		return false
+	}
+	sub := strings.ToLower(strings.TrimSpace(command[index+1]))
+	return browserAttachOnlySubcommands[sub]
+}
 
 // NormalizeBrowserRuntime maps runtime spellings to the two cost classes.
 func NormalizeBrowserRuntime(runtime string) string {
@@ -88,6 +133,13 @@ func browserSessionCostMB(runtime string, predictedMB int64) int64 {
 	return max(BrowserRuntimeSessionMB(runtime), predictedMB)
 }
 
+func browserSessionCostMBForCommand(runtime string, predictedMB int64, attachOnly bool) int64 {
+	if attachOnly {
+		return max(browserAttachSessionMB, predictedMB)
+	}
+	return browserSessionCostMB(runtime, predictedMB)
+}
+
 // BrowserAdmissionEntry is one admitted browser command.
 type BrowserAdmissionEntry struct {
 	PID     int       `json:"pid"`
@@ -98,12 +150,19 @@ type BrowserAdmissionEntry struct {
 	// Zero while it still waits in the work queue.
 	StartedAt time.Time `json:"started_at,omitzero"`
 	Released  bool      `json:"released,omitempty"`
+	// AttachOnly marks a short-lived command that talks to an existing browser
+	// session and never spawns a detached browser. Once Released, its charge
+	// clears immediately instead of lingering for the resident sample interval.
+	AttachOnly bool `json:"attach_only,omitempty"`
 }
 
 // chargedAgainst reports whether a sample taken at sampledAt cannot yet
 // include this admission's memory. A queued command has not started its
 // browser, so no sample includes it.
 func (entry BrowserAdmissionEntry) chargedAgainst(sampledAt time.Time) bool {
+	if entry.AttachOnly && entry.Released {
+		return false
+	}
 	if entry.StartedAt.IsZero() {
 		return !entry.Released || sampledAt.IsZero() || entry.At.After(sampledAt.Add(-browserAdmissionSampleSkew))
 	}
@@ -176,7 +235,7 @@ func pruneBrowserAdmissions(entries []BrowserAdmissionEntry, now time.Time, aliv
 		if !entry.Released && !alive(entry.PID) {
 			entry.Released = true
 		}
-		if entry.Released && now.Sub(entry.At) > browserAdmissionRetention {
+		if entry.Released && (entry.AttachOnly || now.Sub(entry.At) > browserAdmissionRetention) {
 			continue
 		}
 		kept = append(kept, entry)
@@ -216,20 +275,32 @@ func writeBrowserAdmissions(path string, entries []BrowserAdmissionEntry) error 
 
 // browserAdmitter evaluates and records browser admissions for one command.
 type browserAdmitter struct {
-	dir         string
-	coordinator *WorkCoordinator
-	runtime     string
-	cost        int64
-	pid         int
-	now         func() time.Time
-	alive       func(int) bool
-	headroom    func(ctx context.Context, now time.Time) (MemoryHeadroom, error)
+	dir           string
+	coordinator   *WorkCoordinator
+	runtime       string
+	cost          int64
+	attachOnly    bool
+	pid           int
+	now           func() time.Time
+	alive         func(int) bool
+	headroom      func(ctx context.Context, now time.Time) (MemoryHeadroom, error)
+	onHold        func(dimension, reason string)
+	onRelease     func()
+	lastBlocker   WorkBlocker
+	lastDimension string
+	lastReason    string
 }
 
 func newBrowserAdmitter(coordinator *WorkCoordinator, runtime string, predictedMB int64) *browserAdmitter {
+	return newBrowserAdmitterForCommand(coordinator, runtime, predictedMB, nil)
+}
+
+func newBrowserAdmitterForCommand(coordinator *WorkCoordinator, runtime string, predictedMB int64, command []string) *browserAdmitter {
+	attachOnly := isAttachOnlyBrowserCommand(command)
 	return &browserAdmitter{
 		dir: coordinator.Dir, coordinator: coordinator, runtime: NormalizeBrowserRuntime(runtime),
-		cost: browserSessionCostMB(runtime, predictedMB), pid: os.Getpid(), now: time.Now, alive: browserProcessAlive,
+		cost: browserSessionCostMBForCommand(runtime, predictedMB, attachOnly), attachOnly: attachOnly,
+		pid: os.Getpid(), now: time.Now, alive: browserProcessAlive,
 		headroom: func(_ context.Context, now time.Time) (MemoryHeadroom, error) {
 			snapshot, ok := NewTelemetryStore(coordinator.Dir).ReadLatest()
 			return browserMemoryHeadroom(snapshot, ok, now), nil
@@ -307,7 +378,10 @@ func (admitter *browserAdmitter) tryAcquire(ctx context.Context) (BrowserCapacit
 		decision = decideBrowserCapacity(headroom, entries, admitter.runtime, admitter.cost)
 		if decision.Admit {
 			admittedAt = now
-			entries = append(entries, BrowserAdmissionEntry{PID: admitter.pid, Runtime: decision.Runtime, CostMB: decision.CostMB, At: now})
+			entries = append(entries, BrowserAdmissionEntry{
+				PID: admitter.pid, Runtime: decision.Runtime, CostMB: decision.CostMB,
+				At: now, AttachOnly: admitter.attachOnly,
+			})
 		}
 		return writeBrowserAdmissions(path, entries)
 	})
@@ -348,12 +422,25 @@ type browserGate struct {
 // false it decides once, as before. Each blocked check emits a progress line
 // on stderr (deduplicated by the reporter). The returned release must run
 // when the command ends.
+func browserGateDimension(blocker WorkBlocker) string {
+	if blocker == WorkBlockerBrowserPaused {
+		return "cpu"
+	}
+	return "memory"
+}
+
 func waitForBrowserAdmission(ctx context.Context, wait bool, control func(context.Context) error, admitter *browserAdmitter, reporter *workProgressReporter, retry time.Duration) (*browserAdmission, error) {
 	if retry <= 0 {
 		retry = browserAdmissionRetry
 	}
 	started := time.Now()
 	var last browserGate
+	held := false
+	defer func() {
+		if held && admitter != nil && admitter.onRelease != nil {
+			admitter.onRelease()
+		}
+	}()
 	for {
 		gate, admission, err := browserAdmissionOnce(ctx, control, admitter)
 		if err != nil {
@@ -363,10 +450,20 @@ func waitForBrowserAdmission(ctx context.Context, wait bool, control func(contex
 			return admission, nil
 		}
 		last = gate
+		dimension := browserGateDimension(gate.blocker)
+		if admitter != nil && admitter.lastBlocker == "" {
+			admitter.lastBlocker = gate.blocker
+			admitter.lastDimension = dimension
+			admitter.lastReason = gate.reason
+		}
 		if !wait {
 			return nil, errors.New(gate.reason)
 		}
-		reporter.emit(WorkProgress{Stage: "waiting", Blocker: gate.blocker, Reason: gate.reason, NextCheckSeconds: retry.Seconds()})
+		if admitter != nil && admitter.onHold != nil {
+			admitter.onHold(dimension, gate.reason)
+			held = true
+		}
+		reporter.emit(WorkProgress{Stage: "waiting", Blocker: gate.blocker, PressureDimension: dimension, Reason: gate.reason, NextCheckSeconds: retry.Seconds()})
 		timer := time.NewTimer(retry)
 		select {
 		case <-ctx.Done():

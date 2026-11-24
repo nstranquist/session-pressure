@@ -505,6 +505,10 @@ type workAdmissionGate struct {
 	// gate keeps working without observability rather than failing the run.
 	hold    func(dimension, reason string)
 	release func()
+	// capacityNotifyDir enables early wake-up in waitForWorkAdmission when a
+	// lease finishes and signals work-capacity.notify instead of waiting a
+	// full 15 s retry interval.
+	capacityNotifyDir string
 	// sharedLatch folds this waiter's observation into one host-wide latch. It is
 	// nil in unit tests and whenever coordinator state is unwritable, in which
 	// case the gate falls back to its private counters and simply loses sharing.
@@ -1187,11 +1191,8 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	if retentionDays < 1 {
 		retentionDays = 14
 	}
-	if err := eventStore.Prune(retentionDays); err != nil {
+	if err := maybePruneWorkArtifacts(coordinator.Dir, eventStore, retentionDays, streams.Stderr); err != nil {
 		return 1, fmt.Errorf("prune work event telemetry: %w", err)
-	}
-	if pruneErr := pruneWorkOutput(coordinator.Dir, time.Hour); pruneErr != nil {
-		fmt.Fprintln(streams.Stderr, "ndev session pressure: prune work output preview:", pruneErr)
 	}
 	commandDigest := CommandShapeDigest(resolvedExecutable, len(options.Command)-1)
 	toolFamily := WorkToolFamily(options.Command)
@@ -1244,10 +1245,17 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		event.SelectorSchemaVersion = workSelectorSchemaVersion
 		return eventStore.AppendDurable(event)
 	}
+	// Construct the memory probe before browser admission so both share a
+	// single 72h SQLite peak-RSS scan instead of querying twice per run.
+	shadowMemory := &shadowMemoryProbe{dir: coordinator.Dir, class: options.Class, workload: options.Workload,
+		key: placementKey, interactive: options.Interactive, weight: weight, fastLane: coordinator.limits().FastLaneMaxWeight}
 	// Browser work waits for the browser control and for memory headroom
 	// that fits one more session of its runtime. The wait spends the same
 	// --wait budget as the work queue below.
 	var browserAdmitted *browserAdmission
+	var browserBlocker WorkBlocker
+	var browserDimension string
+	var browserReason string
 	if options.Class == WorkClassBrowser {
 		browserStarted := time.Now()
 		browserCtx, browserCancel := context.Background(), context.CancelFunc(func() {})
@@ -1255,8 +1263,20 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 			browserCtx, browserCancel = context.WithTimeout(browserCtx, options.Wait)
 		}
 		browserCtx, stopBrowserSignals := signal.NotifyContext(browserCtx, workTerminationSignals()...)
-		predicted, _ := readPeakRSSHistory(coordinator.Dir, browserStarted).predict(options.Class, options.Workload, placementKey)
-		admitter := newBrowserAdmitter(coordinator, os.Getenv(BrowserRuntimeEnv), predicted)
+		predicted, _ := shadowMemory.prediction(browserStarted)
+		admitter := newBrowserAdmitterForCommand(coordinator, os.Getenv(BrowserRuntimeEnv), predicted, options.Command)
+		admitter.onHold = func(dimension, reason string) {
+			holdCtx, holdCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer holdCancel()
+			_ = coordinator.HoldAdmission(holdCtx, operationID, options.Class, WorkAdmissionObservation{
+				Dimension: dimension, Reason: reason,
+			})
+		}
+		admitter.onRelease = func() {
+			releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer releaseCancel()
+			_ = coordinator.ReleaseAdmission(releaseCtx, operationID)
+		}
 		admitted, err := waitForBrowserAdmission(browserCtx, options.Wait > 0, CheckBrowserWork, admitter, reporter, 0)
 		stopBrowserSignals()
 		browserCancel()
@@ -1264,6 +1284,9 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 			return 14, workRefusal(WorkRefusalBrowser, err)
 		}
 		browserAdmitted = admitted
+		browserBlocker = admitter.lastBlocker
+		browserDimension = admitter.lastDimension
+		browserReason = admitter.lastReason
 		defer browserAdmitted.Release()
 		if options.Wait > 0 {
 			options.Wait = max(time.Millisecond, options.Wait-time.Since(browserStarted))
@@ -1275,19 +1298,22 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	}
 	initialAdmission := admissionCheck()
 	initialPressureReason := ""
+	initialPressureDimension := pressureDimension(initialAdmission)
 	initialBlocker := WorkBlockerNone
 	if !initialAdmission.Allowed {
 		initialPressureReason = AdmissionReason(initialAdmission)
 		initialBlocker = WorkBlockerPressure
+	} else if browserBlocker != "" {
+		initialBlocker = browserBlocker
+		initialPressureDimension = browserDimension
+		initialPressureReason = browserReason
 	}
 	queuedEvent := WorkEvent{
 		Event: WorkEventQueued, PID: coordinator.PID, Blocker: initialBlocker,
 		Capacity: initialStatus.Capacity, Used: initialStatus.Used, Available: initialStatus.Available,
-		PressureLevel: initialAdmission.Level, PressureDimension: pressureDimension(initialAdmission), PressureReason: initialPressureReason,
+		PressureLevel: initialAdmission.Level, PressureDimension: initialPressureDimension, PressureReason: initialPressureReason,
 	}
 	applyCoordinatedWorkEvidence(&queuedEvent, initialAdmission, queuedEvent.PressureDimension)
-	shadowMemory := &shadowMemoryProbe{dir: coordinator.Dir, class: options.Class, workload: options.Workload,
-		key: placementKey, interactive: options.Interactive, weight: weight, fastLane: coordinator.limits().FastLaneMaxWeight}
 	shadowMemory.decide(initialAdmission, initialStatus.Leases, time.Now()).apply(&queuedEvent)
 	// The resource candidate (WORK-1065) shares the memory probe's history.
 	// Portable means the caller did not pin local placement and the tool
@@ -1364,6 +1390,9 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		if admissionGate != nil {
 			deferredLevel, deferredDimension, deferredReason = admissionGate.deferredLevel, admissionGate.deferredDimension, admissionGate.deferredReason
 		}
+		if deferredDimension == "" && browserBlocker != "" {
+			deferredDimension, deferredReason = browserDimension, browserReason
+		}
 		err := appendEvent(WorkEvent{
 			Event: eventType, LeaseID: leaseRecordID(lease), PID: leaseRecordPID(lease),
 			WaitMilliseconds: max(int64(0), waitMS), RuntimeMillis: max(int64(0), runtimeMS), ExitCode: exitCode, Outcome: outcome,
@@ -1429,6 +1458,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 			defer releaseCancel()
 			_ = coordinator.ReleaseAdmission(releaseCtx, operationID)
 		},
+		capacityNotifyDir: coordinator.Dir,
 		sharedLatch: func(observation WorkAdmissionObservation) (WorkAdmissionLatch, error) {
 			latchCtx, latchCancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer latchCancel()
@@ -1544,8 +1574,14 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		admissionGate.recordDeferral(postLeaseAdmission, postLeaseDecision.Dimension, postLeaseDecision.Reason)
 	}
 	experiencedBlocker := firstQueueBlocker
+	acquiredPressureDimension := admissionGate.deferredDimension
+	acquiredPressureReason := admissionGate.deferredReason
 	if experiencedBlocker == "" && admissionGate.deferredDimension != "" {
 		experiencedBlocker = WorkBlockerPressure
+	} else if experiencedBlocker == "" && browserBlocker != "" {
+		experiencedBlocker = browserBlocker
+		acquiredPressureDimension = browserDimension
+		acquiredPressureReason = browserReason
 	}
 	acquiredAt = time.Now().UTC()
 	queueWaitMS = max(int64(0), acquiredAt.Sub(admissionReadyAt).Milliseconds())
@@ -1553,7 +1589,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 		Event: WorkEventAcquired, LeaseID: lease.Record().ID, PID: lease.Record().PID,
 		Capacity: status.Capacity, Used: status.Used, Available: status.Available,
 		Blocker: experiencedBlocker, QueuePosition: waiterPosition(firstQueueStatus, operationID), QueueDepth: firstQueueStatus.QueueDepth,
-		PressureLevel: admissionGate.deferredLevel, PressureDimension: admissionGate.deferredDimension, PressureReason: admissionGate.deferredReason,
+		PressureLevel: admissionGate.deferredLevel, PressureDimension: acquiredPressureDimension, PressureReason: acquiredPressureReason,
 		CoordinatedWorkAttributionAvailable: admissionGate.coordinatedWorkAttributionAvailable,
 		CoordinatedWorkCPUAvailable:         admissionGate.coordinatedWorkCPUAvailable,
 		CoordinatedWorkCPUPercent:           admissionGate.coordinatedWorkCPUPercent,
@@ -2120,6 +2156,33 @@ func shouldEmitStorageDeadlockAdvice(elapsed time.Duration, alreadyEmitted bool,
 	return elapsed >= storageDeadlockAdviceAfter
 }
 
+const (
+	workPruneInterval      = 10 * time.Minute
+	workPruneStampName     = "work-prune.stamp"
+	workAdmissionWakeFloor = 250 * time.Millisecond
+)
+
+// maybePruneWorkArtifacts runs event retention pruning and work-output cleanup
+// at most once per workPruneInterval across all processes sharing dir. Without
+// this throttle, high-frequency commands (for example ndev browser attaches)
+// walk the shard and output directories on every invocation.
+func maybePruneWorkArtifacts(dir string, eventStore *WorkEventStore, retentionDays int, stderr io.Writer) error {
+	if dir != "" {
+		stampPath := filepath.Join(dir, workPruneStampName)
+		if info, err := os.Stat(stampPath); err == nil && time.Since(info.ModTime()) < workPruneInterval {
+			return nil
+		}
+		_ = atomicWrite(stampPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0600)
+	}
+	if err := eventStore.Prune(retentionDays); err != nil {
+		return err
+	}
+	if pruneErr := pruneWorkOutput(dir, time.Hour); pruneErr != nil && stderr != nil {
+		fmt.Fprintln(stderr, "ndev session pressure: prune work output preview:", pruneErr)
+	}
+	return nil
+}
+
 func waitForWorkAdmission(ctx context.Context, wait bool, admissionCheck func() Admission, retryInterval time.Duration, gate *workAdmissionGate, initial *Admission, reporter *workProgressReporter) (Admission, error) {
 	waitStarted := time.Now()
 	deadlockAdviceEmitted := false
@@ -2130,6 +2193,13 @@ func waitForWorkAdmission(ctx context.Context, wait bool, admissionCheck func() 
 	defer func() {
 		if held {
 			gate.releaseHold()
+		}
+	}()
+	var capacityChanged <-chan struct{}
+	var stopCapacityWatch func()
+	defer func() {
+		if stopCapacityWatch != nil {
+			stopCapacityWatch()
 		}
 	}()
 	for {
@@ -2173,6 +2243,9 @@ func waitForWorkAdmission(ctx context.Context, wait bool, admissionCheck func() 
 		if decision.RetryInterval > 0 && (interval <= 0 || decision.RetryInterval < interval) {
 			interval = decision.RetryInterval
 		}
+		if capacityChanged == nil && gate != nil && gate.capacityNotifyDir != "" && (decision.Dimension == "memory" || decision.Dimension == ResourceDimensionMemory || decision.Dimension == "cpu") {
+			capacityChanged, stopCapacityWatch = watchWorkCapacity(gate.capacityNotifyDir)
+		}
 		reason := decision.Reason
 		if deadlockAdviceEmitted && decision.Dimension == "storage" {
 			if advice := storageDeadlockAdviceFromAdmission(admission); advice != "" {
@@ -2190,6 +2263,27 @@ func waitForWorkAdmission(ctx context.Context, wait bool, admissionCheck func() 
 				<-timer.C
 			}
 			return admission, fmt.Errorf("wait for host pressure admission: %w", ctx.Err())
+		case <-capacityChanged:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			// Brief floor prevents tight re-check loops when unrelated state
+			// updates touch the notify file while headroom is still tight.
+			floor := min(workAdmissionWakeFloor, interval)
+			if floor > 0 {
+				debounce := time.NewTimer(floor)
+				select {
+				case <-ctx.Done():
+					if !debounce.Stop() {
+						<-debounce.C
+					}
+					return admission, fmt.Errorf("wait for host pressure admission: %w", ctx.Err())
+				case <-debounce.C:
+				}
+			}
 		case <-timer.C:
 		}
 	}

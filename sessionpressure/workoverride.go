@@ -73,27 +73,23 @@ type WorkOverrideResult struct {
 // also admitted past the weighted ceiling - but never past the host-pressure
 // gate, which runs before selection and is untouched by the toggle.
 func (coordinator *WorkCoordinator) selectStateWaiter(state workState, used, capacity int, now time.Time, green workGreenExpressWindow) workSelection {
+	return coordinator.selectStateWaiterWithBudget(state, used, capacity, now, green, workResourceFitBudget{})
+}
+
+func (coordinator *WorkCoordinator) selectStateWaiterWithBudget(state workState, used, capacity int, now time.Time, green workGreenExpressWindow, budget workResourceFitBudget) workSelection {
 	if state.OverrideOperationID != "" {
-		if selection, found := selectOverriddenWorkWaiter(state.Waiters, used, capacity, state.OverrideOperationID, coordinator.limits().AllowOverrideBeyondCapacity); found {
+		if selection, found := selectOverriddenWorkWaiterWithBudget(state.Waiters, used, capacity, state.OverrideOperationID, coordinator.limits().AllowOverrideBeyondCapacity, budget); found {
 			return selection
 		}
 	}
-	return preferInteractiveWaiter(state.Waiters, coordinator.selectWaiter(state.Waiters, used, capacity, now, green, expressLeasedWeight(state.Leases)), used, capacity)
+	return preferInteractiveWaiterWithBudget(state.Waiters, coordinator.selectWaiterWithBudget(state.Waiters, used, capacity, now, green, expressLeasedWeight(state.Leases), budget), used, capacity, budget)
 }
 
-// preferInteractiveWaiter lets work from an attended agent chat go ahead of
-// background work. It runs after operator pins and after the ordinary policy,
-// and it changes only who goes next:
-//
-//   - a protected head (drain, bypass limit, bypass age, pressure
-//     reservation, exclusive capacity) keeps its reservation.
-//   - the chosen waiter must fit the remaining weighted capacity; no
-//     overcommit, no green ride-through, no beyond-capacity override.
-//   - parked pressure reservations are skipped.
-//   - passing the head charges it one bypass, so the existing protection
-//     rules (four bypasses, or 30 s after the first) bound how long
-//     background work can be passed.
 func preferInteractiveWaiter(waiters []WorkWaiterRecord, selection workSelection, used, capacity int) workSelection {
+	return preferInteractiveWaiterWithBudget(waiters, selection, used, capacity, workResourceFitBudget{})
+}
+
+func preferInteractiveWaiterWithBudget(waiters []WorkWaiterRecord, selection workSelection, used, capacity int, budget workResourceFitBudget) workSelection {
 	if selection.ProtectedOperationID != "" {
 		return selection
 	}
@@ -106,7 +102,7 @@ func preferInteractiveWaiter(waiters []WorkWaiterRecord, selection workSelection
 		if headIndex < 0 {
 			headIndex = index
 		}
-		if waiters[index].OperationID == selection.SelectedOperationID && waiters[index].Interactive {
+		if waiters[index].OperationID == selection.SelectedOperationID && waiters[index].Interactive && budget.fits(waiters[index].PredictedPeakMB) {
 			return selection
 		}
 		if scanned++; scanned > workSelectorScanLimit {
@@ -126,7 +122,7 @@ func preferInteractiveWaiter(waiters []WorkWaiterRecord, selection workSelection
 		if scanned++; scanned > workSelectorScanLimit {
 			break
 		}
-		if !candidate.Interactive || candidate.Weight > available {
+		if !candidate.Interactive || candidate.Weight > available || !budget.fits(candidate.PredictedPeakMB) {
 			continue
 		}
 		preferred := workSelection{SelectedOperationID: candidate.OperationID, DecisionReason: "interactive_priority"}
@@ -138,12 +134,11 @@ func preferInteractiveWaiter(waiters []WorkWaiterRecord, selection workSelection
 	return selection
 }
 
-// selectOverriddenWorkWaiter reports the overridden waiter's selection. The
-// waiter is always protected (it owns the next reservation); it is selected
-// for admission only when its weight fits the remaining capacity - or, when
-// allowBeyondCapacity is set, unconditionally: the operator has explicitly
-// accepted running past the logical weighted cap.
 func selectOverriddenWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, operationID string, allowBeyondCapacity bool) (workSelection, bool) {
+	return selectOverriddenWorkWaiterWithBudget(waiters, used, capacity, operationID, allowBeyondCapacity, workResourceFitBudget{})
+}
+
+func selectOverriddenWorkWaiterWithBudget(waiters []WorkWaiterRecord, used, capacity int, operationID string, allowBeyondCapacity bool, budget workResourceFitBudget) (workSelection, bool) {
 	for _, waiter := range waiters {
 		if waiter.OperationID != operationID {
 			continue
@@ -153,7 +148,7 @@ func selectOverriddenWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, 
 			DecisionReason:       "priority_override_bounded_drain",
 		}
 		switch {
-		case waiter.Weight <= max(0, capacity-used):
+		case waiter.Weight <= max(0, capacity-used) && budget.fits(waiter.PredictedPeakMB):
 			selection.SelectedOperationID = operationID
 			selection.DecisionReason = "priority_override_selected"
 		case allowBeyondCapacity:

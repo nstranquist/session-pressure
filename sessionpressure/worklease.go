@@ -1216,6 +1216,10 @@ func workWaiterProtection(waiter WorkWaiterRecord, capacity int, now time.Time) 
 // chosen the caller under the same state lock. Green-window evidence is
 // resolved by the caller so selection itself stays pure and replayable.
 func selectWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.Time, green workGreenExpressWindow, expressLeased int) workSelection {
+	return selectWorkWaiterWithBudget(waiters, used, capacity, now, green, expressLeased, workResourceFitBudget{})
+}
+
+func selectWorkWaiterWithBudget(waiters []WorkWaiterRecord, used, capacity int, now time.Time, green workGreenExpressWindow, expressLeased int, budget workResourceFitBudget) workSelection {
 	if len(waiters) == 0 {
 		return workSelection{DecisionReason: "queue_empty"}
 	}
@@ -1249,7 +1253,7 @@ func selectWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.T
 		// without charging the head a bypass; it regains its drain the moment
 		// the ceiling can hold it again.
 		for _, index := range eligible[1:] {
-			if waiters[index].Weight <= available {
+			if waiters[index].Weight <= available && budget.fits(waiters[index].PredictedPeakMB) {
 				return workSelection{SelectedOperationID: waiters[index].OperationID, DecisionReason: "protected_head_exceeds_effective_capacity"}
 			}
 		}
@@ -1257,7 +1261,7 @@ func selectWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.T
 	}
 	if protected {
 		selection := workSelection{ProtectedOperationID: head.OperationID, DecisionReason: "protected_" + reason}
-		if head.Weight <= available {
+		if head.Weight <= available && budget.fits(head.PredictedPeakMB) {
 			selection.SelectedOperationID = head.OperationID
 			return selection
 		}
@@ -1280,7 +1284,7 @@ func selectWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.T
 				if !IsExpressClass(candidate.Class) {
 					continue
 				}
-				if candidate.Weight > available {
+				if candidate.Weight > available || !budget.fits(candidate.PredictedPeakMB) {
 					continue
 				}
 				if expressLeased+candidate.Weight+head.Weight > capacity {
@@ -1301,6 +1305,9 @@ func selectWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.T
 	}
 	for position, index := range eligible {
 		candidate := waiters[index]
+		if !budget.fits(candidate.PredictedPeakMB) {
+			continue
+		}
 		overcommitted := false
 		if candidate.Weight > available {
 			// Verified-green express overcommit: signed slack so stacked
@@ -1328,10 +1335,17 @@ func selectWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.T
 		}
 		return selection
 	}
+	if budget.limited {
+		return workSelection{DecisionReason: "no_waiter_fits_resource_headroom"}
+	}
 	return workSelection{DecisionReason: "no_waiter_fits_capacity"}
 }
 
 func selectFIFOWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.Time, green workGreenExpressWindow) workSelection {
+	return selectFIFOWorkWaiterWithBudget(waiters, used, capacity, now, green, workResourceFitBudget{})
+}
+
+func selectFIFOWorkWaiterWithBudget(waiters []WorkWaiterRecord, used, capacity int, now time.Time, green workGreenExpressWindow, budget workResourceFitBudget) workSelection {
 	if len(waiters) == 0 {
 		return workSelection{DecisionReason: "queue_empty"}
 	}
@@ -1361,6 +1375,9 @@ func selectFIFOWorkWaiter(waiters []WorkWaiterRecord, used, capacity int, now ti
 	protectedOperationID := ""
 	if protected, _ := workWaiterProtection(head, capacity, now); protected {
 		protectedOperationID = head.OperationID
+	}
+	if !budget.fits(head.PredictedPeakMB) {
+		return workSelection{ProtectedOperationID: protectedOperationID, DecisionReason: "fifo_head_exceeds_resource_headroom"}
 	}
 	if used+head.Weight > capacity {
 		// FIFO order is preserved; green only relaxes the express head's
@@ -1393,10 +1410,14 @@ func expressLeasedWeight(leases []WorkLeaseRecord) int {
 }
 
 func (coordinator *WorkCoordinator) selectWaiter(waiters []WorkWaiterRecord, used, capacity int, now time.Time, green workGreenExpressWindow, expressLeased int) workSelection {
+	return coordinator.selectWaiterWithBudget(waiters, used, capacity, now, green, expressLeased, workResourceFitBudget{})
+}
+
+func (coordinator *WorkCoordinator) selectWaiterWithBudget(waiters []WorkWaiterRecord, used, capacity int, now time.Time, green workGreenExpressWindow, expressLeased int, budget workResourceFitBudget) workSelection {
 	if coordinator.schedulingPolicy() == WorkSchedulingPolicy {
-		return selectWorkWaiter(waiters, used, capacity, now, green, expressLeased)
+		return selectWorkWaiterWithBudget(waiters, used, capacity, now, green, expressLeased, budget)
 	}
-	return selectFIFOWorkWaiter(waiters, used, capacity, now, green)
+	return selectFIFOWorkWaiterWithBudget(waiters, used, capacity, now, green, budget)
 }
 
 func materializeWorkProtections(waiters []WorkWaiterRecord, capacity int, now time.Time) {
@@ -2039,11 +2060,12 @@ func (waiter *WorkWaiter) TryAcquireWithCapacity(ctx context.Context, effectiveC
 			used += lease.chargedWeight()
 		}
 		materializeWorkProtections(state.Waiters, limits.Capacity, now)
-		selection := waiter.coordinator.selectStateWaiter(*state, used, effectiveCapacity, now, green)
+		budget := resourceFitBudget(state.Leases, fit, now)
+		selection := waiter.coordinator.selectStateWaiterWithBudget(*state, used, effectiveCapacity, now, green, budget)
 		noteSelectionStart(state.Waiters, selection, waiter.operationID, now)
 		shadowSelection := workSelection{}
 		if waiter.coordinator.schedulingPolicy() == WorkSchedulingPolicyFIFO {
-			shadowSelection = selectWorkWaiter(state.Waiters, used, effectiveCapacity, now, workGreenExpressWindow{}, 0)
+			shadowSelection = selectWorkWaiterWithBudget(state.Waiters, used, effectiveCapacity, now, workGreenExpressWindow{}, 0, budget)
 		}
 		if selection.SelectedOperationID != waiter.operationID {
 			if selection.ProtectedOperationID != "" {
@@ -2051,6 +2073,9 @@ func (waiter *WorkWaiter) TryAcquireWithCapacity(ctx context.Context, effectiveC
 			}
 			if selection.SelectedOperationID != "" {
 				return fmt.Errorf("%w: operation=%s selected_operation=%s reason=%s", ErrWorkFairness, waiter.operationID, selection.SelectedOperationID, selection.DecisionReason)
+			}
+			if budget.limited && !budget.fits(record.PredictedPeakMB) {
+				return fmt.Errorf("%w: class=%s predicted_peak_mb=%d headroom_mb=%d reason=%s", ErrWorkResource, waiter.class, record.PredictedPeakMB, budget.headroomMB, selection.DecisionReason)
 			}
 			return fmt.Errorf("%w: class=%s weight=%d used=%d capacity=%d", ErrWorkCapacity, waiter.class, record.Weight, used, effectiveCapacity)
 		}

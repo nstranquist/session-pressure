@@ -487,7 +487,7 @@ func (probe *shadowResourceProbe) decide(leases []WorkLeaseStatus, now time.Time
 			request.RunningLeases++
 		}
 	}
-	if probe.owners != nil && probe.session != "" && request.RunningLeases > 0 {
+	if probe.owners != nil && probe.session != "" && headroom.Memory.Level == LevelWarning && !request.Interactive && request.RunningLeases >= 2 {
 		request.SessionShare, request.SessionLeases = sessionCostShare(leases, probe.owners(leases), probe.session, history)
 	}
 	return decideResourceAdmission(headroom, request)
@@ -554,6 +554,44 @@ func (coordinator *WorkCoordinator) resourceFitSample() workResourceFitSample {
 	return workResourceFitSample{armed: true, snapshot: snapshot, ok: ok}
 }
 
+// workResourceFitBudget carries the live memory headroom bound for waiter
+// selection inside the coordinator state lock. When limited is false (resource
+// admission unarmed, empty host, or stale sample) every waiter fits.
+type workResourceFitBudget struct {
+	limited    bool
+	headroomMB int64
+}
+
+func (budget workResourceFitBudget) fits(predictedPeakMB int64) bool {
+	if !budget.limited || predictedPeakMB <= 0 {
+		return true
+	}
+	return predictedPeakMB <= budget.headroomMB
+}
+
+// resourceFitBudget computes the live memory headroom available to queued
+// waiters when resource fitting is armed and at least one unparked lease runs.
+func resourceFitBudget(leases []WorkLeaseRecord, sample workResourceFitSample, now time.Time) workResourceFitBudget {
+	if !sample.armed {
+		return workResourceFitBudget{}
+	}
+	statuses := make([]WorkLeaseStatus, 0, len(leases))
+	for _, lease := range leases {
+		if lease.ParkedAt != nil {
+			continue
+		}
+		statuses = append(statuses, WorkLeaseStatus{Class: lease.Class, StartedAt: lease.StartedAt, PredictedPeakMB: lease.PredictedPeakMB, PredictedMedianMB: lease.PredictedMedianMB})
+	}
+	if len(statuses) == 0 {
+		return workResourceFitBudget{}
+	}
+	headroom := computeHeadroom(sample.snapshot, sample.ok, statuses, peakRSSHistory{}, now)
+	if !headroom.SampleFresh {
+		return workResourceFitBudget{}
+	}
+	return workResourceFitBudget{limited: true, headroomMB: headroom.HeadroomMB}
+}
+
 // resourceFit is the memory part of the resource ladder, re-checked inside
 // the state lock against the leases that exist at that moment. It refuses
 // only what the ladder would hold: a start whose predicted peak exceeds
@@ -564,19 +602,15 @@ func resourceFit(leases []WorkLeaseRecord, record WorkLeaseRecord, sample workRe
 	if !sample.armed || record.PredictedPeakMB <= 0 {
 		return nil
 	}
-	statuses := make([]WorkLeaseStatus, 0, len(leases))
+	budget := resourceFitBudget(leases, sample, now)
+	if !budget.limited || budget.fits(record.PredictedPeakMB) {
+		return nil
+	}
+	running := 0
 	for _, lease := range leases {
-		if lease.ParkedAt != nil {
-			continue
+		if lease.ParkedAt == nil {
+			running++
 		}
-		statuses = append(statuses, WorkLeaseStatus{Class: lease.Class, StartedAt: lease.StartedAt, PredictedPeakMB: lease.PredictedPeakMB, PredictedMedianMB: lease.PredictedMedianMB})
 	}
-	if len(statuses) == 0 {
-		return nil
-	}
-	headroom := computeHeadroom(sample.snapshot, sample.ok, statuses, peakRSSHistory{}, now)
-	if !headroom.SampleFresh || record.PredictedPeakMB <= headroom.HeadroomMB {
-		return nil
-	}
-	return fmt.Errorf("%w: class=%s predicted_peak_mb=%d headroom_mb=%d running=%d", ErrWorkResource, record.Class, record.PredictedPeakMB, headroom.HeadroomMB, len(statuses))
+	return fmt.Errorf("%w: class=%s predicted_peak_mb=%d headroom_mb=%d running=%d", ErrWorkResource, record.Class, record.PredictedPeakMB, budget.headroomMB, running)
 }

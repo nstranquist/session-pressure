@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS work_events (
   row_json     BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_work_events_ts ON work_events(ts_unix_nano);
+CREATE INDEX IF NOT EXISTS idx_work_events_event_ts ON work_events(event, ts_unix_nano);
 CREATE INDEX IF NOT EXISTS idx_work_events_operation ON work_events(operation_id, event);
 CREATE INDEX IF NOT EXISTS idx_work_events_operation_ts ON work_events(operation_id, ts_unix_nano);
 CREATE INDEX IF NOT EXISTS idx_work_events_shard ON work_events(shard, line);
@@ -210,6 +211,16 @@ func syncWorkEventShard(db *sql.DB, path string) (imported int64, resultErr erro
 		if errors.Is(err, os.ErrNotExist) {
 			return 0, nil
 		}
+		return 0, err
+	}
+	// Fast read-only check before taking SQLite's BEGIN IMMEDIATE write lock.
+	// Almost every shard in the 14-day retention window is closed and unchanged;
+	// acquiring the database-wide write lock per unchanged shard serialized
+	// concurrent agents on every work run.
+	var cachedOffset int64
+	if err := db.QueryRow(`SELECT offset FROM work_event_shards WHERE name = ?`, name).Scan(&cachedOffset); err == nil && info.Size() == cachedOffset {
+		return 0, nil
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	tx, err := db.Begin()
