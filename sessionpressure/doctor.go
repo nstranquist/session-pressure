@@ -24,6 +24,7 @@ type PressureDoctor struct {
 	LaunchSoftPressure DoctorLaunch             `json:"launch_soft_pressure"`
 	CoverageStatus     string                   `json:"coverage_status,omitempty"`
 	SourceRevisions    *ArtifactSourceRevisions `json:"source_revisions,omitempty"`
+	SourceLag          *SourceLag               `json:"source_lag,omitempty"`
 	Fixes              []string                 `json:"fixes,omitempty"`
 	Warnings           []string                 `json:"warnings,omitempty"`
 	SwapDerate         *WorkSwapDerateCost      `json:"swap_derate,omitempty"`
@@ -84,6 +85,8 @@ type PressureDoctorInput struct {
 	SoftWouldBlock *bool
 	// Optional: executing-binary source revisions (artifact status probe).
 	SourceRevisions *ArtifactSourceRevisions
+	// Optional: installed-vs-source-HEAD commit lag.
+	SourceLag *SourceLag
 	// Optional: 24h swap-thrash derate cost. Loaded only when the latch is
 	// set or held in the window, so a calm host pays nothing for it.
 	SwapDerate *WorkSwapDerateCost
@@ -201,6 +204,18 @@ func BuildPressureDoctor(in PressureDoctorInput) PressureDoctor {
 			doc.Fixes = append(doc.Fixes, PromoteCommand())
 		}
 	}
+	if lag := in.SourceLag; lag != nil {
+		copied := *lag
+		doc.SourceLag = &copied
+		if lag.Checked && (lag.Status == "behind" || lag.Status == "diverged") {
+			if lag.Detail != "" {
+				doc.Warnings = append(doc.Warnings, lag.Detail)
+			}
+			if lag.Remediation != "" {
+				doc.Fixes = append(doc.Fixes, lag.Remediation)
+			}
+		}
+	}
 
 	// ok: monitor healthy and no pending recovery; observe-only is fine for ok.
 	doc.OK = health.MonitorHealthy && in.RecoveryErr == nil && !in.HasRecovery
@@ -271,26 +286,30 @@ func LoadPressureDoctorFromDir(ctx context.Context, dir string, repoRoot string)
 	if cost, ok := loadDoctorSwapDerate(dir, latest, hasLatest, time.Now().UTC()); ok {
 		swapDerate = &cost
 	}
+	revisions := InspectArtifactSourceRevisions(dir)
+	installedRev := revisions.InstalledHelper
+	if installedRev == "" {
+		installedRev = revisions.CLI
+	}
+	sourceLag := InspectSourceLag(ctx, installedRev, repoRoot)
 	return BuildPressureDoctor(PressureDoctorInput{
-		SwapDerate:   swapDerate,
-		Now:          time.Now().UTC(),
-		Dir:          dir,
-		Policy:       policy,
-		Persisted:    persisted,
-		Launchd:      launchd,
-		Latest:       latest,
-		HasLatest:    hasLatest,
-		HasRecovery:  hasRecovery,
-		RecoveryErr:  recoveryErr,
-		Work:         work,
-		WorkErr:      workErr,
-		ExpressGreen: green.Active,
-		RepoRoot:     repoRoot,
-		Coverage:     coverage,
-		SourceRevisions: func() *ArtifactSourceRevisions {
-			revisions := InspectArtifactSourceRevisions(dir)
-			return &revisions
-		}(),
+		SwapDerate:      swapDerate,
+		Now:             time.Now().UTC(),
+		Dir:             dir,
+		Policy:          policy,
+		Persisted:       persisted,
+		Launchd:         launchd,
+		Latest:          latest,
+		HasLatest:       hasLatest,
+		HasRecovery:     hasRecovery,
+		RecoveryErr:     recoveryErr,
+		Work:            work,
+		WorkErr:         workErr,
+		ExpressGreen:    green.Active,
+		RepoRoot:        repoRoot,
+		Coverage:        coverage,
+		SourceRevisions: &revisions,
+		SourceLag:       &sourceLag,
 	}), nil
 }
 

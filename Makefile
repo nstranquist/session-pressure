@@ -1,7 +1,7 @@
 GO ?= go
 PREFIX ?= $(CURDIR)/bin
 
-.PHONY: test race vet fmt build desktop-test desktop-gpui publish-ready secret-scan init
+.PHONY: test race vet fmt build desktop-test desktop-gpui publish-ready secret-scan init release-promote release-promote-dry-run
 
 fmt:
 	$(GO) fmt ./...
@@ -40,3 +40,29 @@ init: build
 
 publish-ready: fmt vet race desktop-test build secret-scan
 	@echo "publish-ready: ok"
+
+# Coherent post-land release + headless install from a clean committed HEAD clone.
+# Pass RELEASE_BUNDLE=/path/to/hetzner-export to skip local Go compilation.
+RELEASE_PREFIX ?= $(HOME)/.local/bin
+RELEASE_APP_DEST ?= /Applications/NDev Pressure.app
+RELEASE_REF ?= HEAD
+RELEASE_BUNDLE ?=
+RELEASE_EXTRA_FLAGS ?=
+
+release-promote:
+	$(GO) run ./scripts/release promote \
+	  --repo "$(CURDIR)" \
+	  --ref "$(RELEASE_REF)" \
+	  --prefix "$(RELEASE_PREFIX)" \
+	  --destination "$(RELEASE_APP_DEST)" \
+	  $(if $(RELEASE_BUNDLE),--bundle "$(RELEASE_BUNDLE)",) \
+	  $(RELEASE_EXTRA_FLAGS)
+
+release-promote-dry-run:
+	$(GO) run ./scripts/release promote \
+	  --repo "$(CURDIR)" \
+	  --ref "$(RELEASE_REF)" \
+	  --prefix "$(RELEASE_PREFIX)" \
+	  --destination "$(RELEASE_APP_DEST)" \
+	  $(if $(RELEASE_BUNDLE),--bundle "$(RELEASE_BUNDLE)",) \
+	  --dry-run --json $(RELEASE_EXTRA_FLAGS)

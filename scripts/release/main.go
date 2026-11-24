@@ -44,8 +44,11 @@ func run(args []string) error {
 	if len(args) > 0 && args[0] == "observe" {
 		return observe(args[1:])
 	}
+	if len(args) > 0 && args[0] == "promote" {
+		return promote(args[1:])
+	}
 	if len(args) == 0 {
-		return errors.New("usage: release build|install|app-status|install-app|app-maintain [flags]")
+		return errors.New("usage: release build|install|promote|app-status|install-app|app-maintain [flags]")
 	}
 	f := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	out := f.String("out", "", "bundle directory")
@@ -87,7 +90,13 @@ func run(args []string) error {
 	}
 }
 func command(name string, args ...string) (string, error) {
+	return commandInDir("", name, args...)
+}
+func commandInDir(dir, name string, args ...string) (string, error) {
 	c := exec.Command(name, args...)
+	if dir != "" {
+		c.Dir = dir
+	}
 	raw, err := c.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%s: %w: %s", name, err, raw)
@@ -159,6 +168,10 @@ func releaseEnvironment(goos, goarch string) ([]string, error) {
 	return append(os.Environ(), "GOWORK=off", "CGO_ENABLED="+cgo, "GOOS="+goos, "GOARCH="+goarch), nil
 }
 func build(out, platform string) error {
+	return buildInDir("", out, platform)
+}
+
+func buildInDir(workDir, out, platform string) error {
 	parts := strings.Split(platform, "/")
 	if len(parts) != 2 || (parts[0] != "darwin" && parts[0] != "linux") || (parts[1] != "arm64" && parts[1] != "amd64") {
 		return errors.New("unsupported platform")
@@ -174,21 +187,21 @@ func build(out, platform string) error {
 	if e != nil {
 		return e
 	}
-	root, e := command("git", "rev-parse", "--show-toplevel")
+	root, e := commandInDir(workDir, "git", "rev-parse", "--show-toplevel")
 	if e != nil {
 		return e
 	}
 	if abs == root || strings.HasPrefix(abs, root+string(os.PathSeparator)) {
 		return errors.New("bundle output must be outside the checkout")
 	}
-	dirty, e := command("git", "status", "--porcelain", "--untracked-files=all")
+	dirty, e := commandInDir(workDir, "git", "status", "--porcelain", "--untracked-files=all")
 	if e != nil {
 		return e
 	}
 	if dirty != "" {
 		return errors.New("release requires a clean committed checkout")
 	}
-	rev, e := command("git", "rev-parse", "HEAD")
+	rev, e := commandInDir(workDir, "git", "rev-parse", "HEAD")
 	if e != nil {
 		return e
 	}
@@ -202,13 +215,16 @@ func build(out, platform string) error {
 			pkg = "./scripts/release"
 		}
 		c := exec.Command("go", "build", "-trimpath", "-buildvcs=true", "-o", filepath.Join(abs, name), pkg)
+		if workDir != "" {
+			c.Dir = workDir
+		}
 		c.Env = buildEnv
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr
 		if e = c.Run(); e != nil {
 			return e
 		}
-		dirty, e = command("git", "status", "--porcelain", "--untracked-files=all")
+		dirty, e = commandInDir(workDir, "git", "status", "--porcelain", "--untracked-files=all")
 		if e != nil {
 			return e
 		}

@@ -44,12 +44,28 @@ func cmdSessionPressureDoctor(g *Flags, args []string) int {
 	if doc.SwapDerate != nil {
 		payload["swap_derate"] = *doc.SwapDerate
 	}
+	if doc.SourceLag != nil {
+		payload["source_lag"] = *doc.SourceLag
+	}
+	lagSummary := ""
+	if doc.SourceLag != nil && doc.SourceLag.Checked {
+		switch doc.SourceLag.Status {
+		case "behind":
+			lagSummary = fmt.Sprintf(" source_lag=behind(%d)", doc.SourceLag.CommitsBehind)
+		case "diverged":
+			lagSummary = fmt.Sprintf(" source_lag=diverged(-%d/+%d)", doc.SourceLag.CommitsBehind, doc.SourceLag.CommitsAhead)
+		case "ahead":
+			lagSummary = fmt.Sprintf(" source_lag=ahead(%d)", doc.SourceLag.CommitsAhead)
+		default:
+			lagSummary = " source_lag=" + doc.SourceLag.Status
+		}
+	}
 	text := fmt.Sprintf(
-		"doctor ok=%v protection=%s monitor_healthy=%v host=%s queue=%d/%d depth=%d express_green=%v soft_block=%v noise_suppressed=%v enforce=%v auto_shed=%v\n",
+		"doctor ok=%v protection=%s monitor_healthy=%v host=%s queue=%d/%d depth=%d express_green=%v soft_block=%v noise_suppressed=%v enforce=%v auto_shed=%v%s\n",
 		doc.OK, doc.ProtectionMode, doc.Monitor.Healthy, doc.Host.Level,
 		doc.Work.Used, doc.Work.Capacity, doc.Work.QueueDepth, doc.Work.ExpressGreen,
 		doc.LaunchSoftPressure.WouldBlock, doc.LaunchSoftPressure.NoiseSuppressed,
-		doc.EnforceAdmission, doc.AutoShedCritical,
+		doc.EnforceAdmission, doc.AutoShedCritical, lagSummary,
 	)
 	for _, warning := range doc.Warnings {
 		text += "  warn: " + warning + "\n"

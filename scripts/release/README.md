@@ -1,5 +1,39 @@
 # Verified release and acceptance
 
+## Single-command post-land promote (clean HEAD, headless)
+
+Promote the CLI bundle (`~/.local/bin/session-pressure`), LaunchAgent resident
+helper, and signed `/Applications/NDev Pressure.app` together from a clean clone
+of committed `HEAD` without stealing desktop focus:
+
+```sh
+# Preview authorities and plan without changing installed artifacts
+make release-promote-dry-run
+
+# Promote from a pre-built Hetzner darwin/arm64 bundle + clean HEAD signed app (preferred on Mac)
+make release-promote RELEASE_BUNDLE=/absolute/export
+
+# Or build and promote everything directly from a clean temporary clone of HEAD
+make release-promote
+```
+
+`session-pressure-release promote` captures both `--expected-current` (CLI
+revision) and `--expected-app` (app bundle digest) before building, clones
+committed `HEAD` into a clean temporary directory outside the checkout so dirty
+parallel edits never contaminate a release, installs the CLI and resident
+helper under their kernel locks, builds and installs the signed macOS app
+headlessly (no `open`, no focus steal), and verifies `session-pressure --json
+doctor` reports zero revision mismatch and zero commit lag.
+
+Pass `--verify-lifecycle` (`RELEASE_EXTRA_FLAGS="--verify-lifecycle"`) to also
+run `scripts/verify-installed-lifecycle.py` in isolated private state after
+promotion. `session-pressure doctor` checks the installed revision against the
+local `session-pressure` git `HEAD` (override with `SESSION_PRESSURE_SOURCE_REPO`,
+or disable with `SESSION_PRESSURE_SOURCE_REPO=off`) and stays silent on packaged
+or non-git hosts.
+
+## Manual runner build and guarded install details
+
 Build Go binaries on the inventory-selected active runner (currently
 runner-3; runner-2 is retired) from a clean committed checkout. Keep runner-1 as explicit
 reserve; use the canonical remote verification wrapper to bind one host:
