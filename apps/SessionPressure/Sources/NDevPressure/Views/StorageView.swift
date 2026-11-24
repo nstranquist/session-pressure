@@ -9,7 +9,7 @@ struct StorageView: View {
     @State private var applyRequest: PressureStore.StorageApplyRequest?
 
     private var snapshot: StorageSnapshot {
-        store.board.snapshot.storage
+        store.storageInventory ?? store.board.snapshot.storage
     }
 
     var body: some View {

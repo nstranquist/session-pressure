@@ -297,6 +297,12 @@ final class PressureStore: ObservableObject {
     @Published var workPlacementError: String?
     @Published var workPlacementLoadedAt: Date?
     private var isWorkPlacementRefreshing = false
+    @Published var workHeadroom: WorkMemoryHeadroom?
+    @Published var workHeadroomError: String?
+    @Published var browserControl: BrowserControlStatus?
+    @Published var browserControlError: String?
+    @Published var isBrowserControlUpdating = false
+    private var browserControlLoadedAt: Date?
     @Published var pendingWorkCancel: WorkInspectReport?
     @Published var pendingWorkReschedule: WorkInspectReport?
 
@@ -388,6 +394,7 @@ final class PressureStore: ObservableObject {
         if let doctor = board.doctor, !doctor.fixes.isEmpty, !(doctor.ok ?? false) { ids.insert("doctor-\(doctor.fixes.count)") }
         if let storage = board.snapshot.storage as StorageSnapshot?, storage.level == .warning || storage.level == .red || storage.level == .critical { ids.insert("storage-\(storage.level.rawValue)") }
         if let healthError = diskHealthError, !healthError.isEmpty { ids.insert("disk-health-error") }
+        if let stall = workPlacement?.activeStall { ids.insert("work-stall-\(stall.operationID)") }
         for alert in runnerWatch.live { ids.insert(alert.id) }
         if runnerWatch.checkFailing { ids.insert("runner-check-failed") }
         return ids
@@ -419,10 +426,14 @@ final class PressureStore: ObservableObject {
             items.append(NotificationItem(id: "doctor-\(doctor.fixes.count)", title: "\(doctor.fixes.count) doctor \(doctor.fixes.count == 1 ? "fix" : "fixes") suggested", detail: doctor.fixes.first, severity: .warning, systemImage: "stethoscope", section: .overview))
         }
         if let storage = board.snapshot.storage as StorageSnapshot?, storage.level == .warning || storage.level == .red || storage.level == .critical {
-            items.append(NotificationItem(id: "storage-\(storage.level.rawValue)", title: "Storage \(storage.level.displayName.lowercased())", detail: storage.reasons.first ?? storage.error ?? "\(PressureFormat.bytes(storage.availableBytes)) free", severity: storage.level, systemImage: "internaldrive", section: .diskWrites))
+            items.append(NotificationItem(id: "storage-\(storage.level.rawValue)", title: "Storage \(storage.level.displayName.lowercased())", detail: storage.reasons.first ?? storage.error ?? "\(PressureFormat.bytes(storage.availableBytes)) free", severity: storage.level, systemImage: "externaldrive.badge.exclamationmark", section: .storage))
         }
         if let healthError = diskHealthError, !healthError.isEmpty {
-            items.append(NotificationItem(id: "disk-health-error", title: "Disk health probe failed", detail: healthError, severity: .warning, systemImage: "exclamationmark.triangle.fill", section: .storage))
+            items.append(NotificationItem(id: "disk-health-error", title: "Disk health probe failed", detail: healthError, severity: .warning, systemImage: "exclamationmark.triangle.fill", section: .diskWrites))
+        }
+        if let stall = workPlacement?.activeStall {
+            let detail = "\(stall.class ?? "work") stalled \(PressureFormat.durationMS(stall.durationMS))\(stall.decisionReason.map { " · \($0)" } ?? "")"
+            items.append(NotificationItem(id: "work-stall-\(stall.operationID)", title: "Work queue stalled", detail: detail, severity: .warning, systemImage: "exclamationmark.octagon.fill", section: .work))
         }
         let runnerSection: Section? = Section.hetzner.isVisible() ? .hetzner : nil
         for alert in runnerWatch.live {
@@ -807,7 +818,45 @@ final class PressureStore: ObservableObject {
             board.sectionErrors["work"] = error.localizedDescription
             lastError = error.localizedDescription
         }
+        await refreshWorkHeadroom()
+        await refreshBrowserControl(force: false)
         await refreshWorkPlacement(force: false)
+    }
+
+    func refreshWorkHeadroom() async {
+        guard let client else { return }
+        do {
+            workHeadroom = try await client.workHeadroom().headroom
+            workHeadroomError = nil
+        } catch {
+            workHeadroomError = error.localizedDescription
+        }
+    }
+
+    func refreshBrowserControl(force: Bool) async {
+        guard let client else { return }
+        let interval = refreshProfile.scaled(10)
+        if !force, let loaded = browserControlLoadedAt, Date().timeIntervalSince(loaded) < interval { return }
+        do {
+            browserControl = try await client.browserControl("status").browser
+            browserControlError = nil
+        } catch {
+            browserControlError = error.localizedDescription
+        }
+        browserControlLoadedAt = Date()
+    }
+
+    func updateBrowserControl(_ action: String) async {
+        guard let client, !isBrowserControlUpdating else { return }
+        isBrowserControlUpdating = true
+        defer { isBrowserControlUpdating = false }
+        do {
+            browserControl = try await client.browserControl(action).browser
+            browserControlError = nil
+            browserControlLoadedAt = Date()
+        } catch {
+            browserControlError = error.localizedDescription
+        }
     }
 
     /// The placement view probes runner hosts over SSH, so it refreshes at
@@ -1184,6 +1233,12 @@ final class PressureStore: ObservableObject {
     func sampleOnce() async {
         await mutate("Sampling once…") { client in
             _ = try await client.monitorOnce()
+        }
+    }
+
+    func clearRecoveryHint() async {
+        await mutate("Clearing recovery hint…") { client in
+            _ = try await client.recoveryClear()
         }
     }
 

@@ -175,7 +175,12 @@ struct MenuBarContent: View {
                 row("Disk writes", "\(writes.state.displayName) · \(PressureFormat.bytes(Int64(clamping: writes.window15mBytes)))/15m")
             }
             if let work = store.board.work {
-                row("Work", "\(work.used)/\(work.capacity) · q \(work.queueDepth)")
+                if work.isResourceAdmission {
+                    let parkedSuffix = work.parkedLeaseCount > 0 ? " · \(work.parkedLeaseCount) parked" : ""
+                    row("Work", "\(work.activeLeaseCount) active\(parkedSuffix) · q \(work.queueDepth)")
+                } else {
+                    row("Work", "\(work.used)/\(work.capacity) · q \(work.queueDepth)")
+                }
             }
             row("Storage", "\(snap.storage.level.shortLabel) · \(PressureFormat.bytes(snap.storage.availableBytes))")
             row("Mode", store.board.policy?.modeLabel ?? "—")

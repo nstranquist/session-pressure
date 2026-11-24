@@ -32,21 +32,29 @@ struct WorkView: View {
                     WorkStallBanner(stall: stall)
                 }
                 if let work {
-                    SectionCard(title: "Shared capacity", systemImage: "cpu") {
-                        CapacityBar(used: work.used, capacity: work.capacity, available: work.available)
-                        if let limits = store.board.policy?.workLimits {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
-                                weightChip("express-test", limits.expressTestWeight)
-                                weightChip("test", limits.testWeight)
-                                weightChip("express-build", limits.expressBuildWeight)
-                                weightChip("build", limits.buildWeight)
-                                weightChip("browser", limits.browserWeight)
-                                weightChip("emulator", limits.emulatorWeight)
-                                weightChip("heavy", limits.heavyWeight)
-                                weightChip("benchmark", limits.benchmarkWeight ?? limits.capacity)
-                                weightChip("bench-exclusive", limits.capacity)
+                    SectionCard(
+                        title: work.isResourceAdmission ? "Resource headroom" : "Shared capacity",
+                        systemImage: work.isResourceAdmission ? "memorychip" : "cpu",
+                        trailing: work.isResourceAdmission ? "resource admission" : nil
+                    ) {
+                        if work.isResourceAdmission {
+                            resourceHeadroomSummary(work)
+                        } else {
+                            CapacityBar(used: work.used, capacity: work.capacity, available: work.available)
+                            if let limits = store.board.policy?.workLimits {
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
+                                    weightChip("express-test", limits.expressTestWeight)
+                                    weightChip("test", limits.testWeight)
+                                    weightChip("express-build", limits.expressBuildWeight)
+                                    weightChip("build", limits.buildWeight)
+                                    weightChip("browser", limits.browserWeight)
+                                    weightChip("emulator", limits.emulatorWeight)
+                                    weightChip("heavy", limits.heavyWeight)
+                                    weightChip("benchmark", limits.benchmarkWeight ?? limits.capacity)
+                                    weightChip("bench-exclusive", limits.capacity)
+                                }
+                                .padding(.top, 8)
                             }
-                            .padding(.top, 8)
                         }
                         HStack(spacing: 8) {
                             if store.workFocusPollActive {
@@ -126,10 +134,15 @@ struct WorkView: View {
                                     .foregroundStyle(PressureTheme.levelColor(.warning))
                                     .padding(.top, 6)
                             }
-                            if work.available > 0 {
+                            if !work.isResourceAdmission && work.available > 0 {
                                 Text("\(work.available) of \(work.capacity) weighted capacity is idle while this work is held.")
                                     .font(.caption.weight(.medium))
                                     .foregroundStyle(PressureTheme.levelColor(.red))
+                                    .padding(.top, 4)
+                            } else if work.isResourceAdmission, let headroom = store.workHeadroom {
+                                Text("Measured memory headroom is \(PressureFormat.mb(Double(max(headroom.headroomMB, 0)))) while \(work.admissionHoldCount) operation(s) wait at the gate.")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(PressureTheme.levelColor(.warning))
                                     .padding(.top, 4)
                             }
                         }
@@ -237,6 +250,40 @@ struct WorkView: View {
         .padding(.bottom, 4)
     }
 
+    @ViewBuilder
+    private func resourceHeadroomSummary(_ work: WorkStatus) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let headroom = store.workHeadroom {
+                let usableTotal = max(headroom.availableMB - headroom.reserveMB, 1)
+                let clampedHeadroom = max(headroom.headroomMB, 0)
+                let fraction = min(1.0, max(0.0, Double(usableTotal - clampedHeadroom) / Double(usableTotal)))
+                HStack(alignment: .firstTextBaseline) {
+                    Text(headroom.sampleFresh ? "\(PressureFormat.mb(Double(clampedHeadroom))) headroom" : "Sample stale")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(headroom.headroomMB <= 0 ? PressureTheme.levelColor(.red) : .primary)
+                    Spacer()
+                    Text("\(work.activeLeaseCount) active · \(work.parkedLeaseCount) parked · q \(work.queueDepth)")
+                        .font(PressureTheme.monoCaption)
+                        .foregroundStyle(.secondary)
+                }
+                ProgressView(value: fraction)
+                    .tint(headroom.headroomMB <= 0 ? PressureTheme.levelColor(.red) : headroom.swapThrashLatched ? PressureTheme.levelColor(.warning) : PressureTheme.levelColor(.normal))
+                Text("avail \(PressureFormat.mb(Double(headroom.availableMB))) − reserve \(PressureFormat.mb(Double(headroom.reserveMB))) − in-flight \(PressureFormat.mb(Double(headroom.inflightMB))) · swap-out \(PressureFormat.swapOutRate(headroom.swapOutMBPerSecond))")
+                    .font(PressureTheme.monoCaption)
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack {
+                    Text("\(work.activeLeaseCount) active · \(work.parkedLeaseCount) parked · q \(work.queueDepth)")
+                        .font(.callout.weight(.semibold))
+                    Spacer()
+                    Text(store.workHeadroomError ?? "Loading memory headroom…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     private func weightChip(_ name: String, _ weight: Int?) -> some View {
         HStack {
             Text(name)
@@ -298,6 +345,12 @@ struct WorkView: View {
             Text("weight \(lease.weight)")
                 .font(PressureTheme.monoCaption)
                 .foregroundStyle(.secondary)
+            if let peak = lease.predictedPeakMB, peak > 0 {
+                Text("~\(PressureFormat.mb(Double(peak)))")
+                    .font(PressureTheme.monoCaption)
+                    .foregroundStyle(.secondary)
+                    .help("Predicted peak memory used for resource-headroom accounting.")
+            }
             if lease.review {
                 Label("review", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption2.weight(.semibold))
@@ -348,6 +401,17 @@ struct WorkView: View {
                 Text("weight \(waiter.weight)")
                     .font(PressureTheme.monoCaption)
                     .foregroundStyle(.secondary)
+                if let peak = waiter.predictedPeakMB, peak > 0 {
+                    Text("~\(PressureFormat.mb(Double(peak)))")
+                        .font(PressureTheme.monoCaption)
+                        .foregroundStyle(.secondary)
+                }
+                if waiter.startExpired {
+                    Text("start expired")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(PressureTheme.levelColor(.warning))
+                        .help("Selected previously without starting within the start bound; deprioritized so other waiters are not blocked.")
+                }
                 Spacer(minLength: 8)
                 if waiter.protected {
                     Label("protected", systemImage: "shield.fill")
@@ -652,6 +716,11 @@ struct WorkDetailDrawer: View {
                         Label("Pinned #\(waiter.overridePosition) in the promotion sequence", systemImage: "bolt.horizontal.fill")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(PressureTheme.levelColor(.warning))
+                    } else if waiter.isPressureReserved {
+                        Label(waiter.pressureParked ? "Parked on host pressure" : "Reserved on host pressure", systemImage: "pause.circle.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(waiter.pressureParked ? Color.secondary : PressureTheme.levelColor(.warning))
+                            .help("This waiter already holds a pressure reservation and waits for host pressure to clear; Run now cannot start it sooner.")
                     } else {
                         Button {
                             Task { await store.overrideWork(waiter: waiter) }

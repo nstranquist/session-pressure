@@ -27,6 +27,38 @@ struct PressureStoreTests {
         #expect(store.notificationCount == 0)
     }
 
+    @Test("storage, disk health, and work stall notifications route to their matching panes")
+    func notificationRoutesMatchDomains() throws {
+        let store = PressureStore()
+        store.board.snapshot.storage = StorageSnapshot(
+            available: true, volumePath: "/", availableBytes: 20_000_000_000,
+            totalBytes: 500_000_000_000, level: .warning
+        )
+        store.diskHealthError = "smartctl unavailable"
+        let placementJSON = """
+        {
+          "window_seconds": 21600,
+          "active_stall": {
+            "duration_ms": 95000,
+            "operation_id": "op-stall-1",
+            "class": "build",
+            "decision_reason": "protected_bounded_drain"
+          }
+        }
+        """
+        store.workPlacement = try PressureJSON.decode(WorkPlacementReport.self, from: Data(placementJSON.utf8))
+
+        let storageAlert = try #require(store.notifications.first { $0.id == "storage-warning" })
+        #expect(storageAlert.section == .storage)
+
+        let diskHealthAlert = try #require(store.notifications.first { $0.id == "disk-health-error" })
+        #expect(diskHealthAlert.section == .diskWrites)
+
+        let stallAlert = try #require(store.notifications.first { $0.id == "work-stall-op-stall-1" })
+        #expect(stallAlert.section == .work)
+        #expect(stallAlert.detail?.contains("protected_bounded_drain") == true)
+    }
+
     @Test("back navigation pushes history and pops on goBack")
     func backNavigationHistory() {
         let store = PressureStore()

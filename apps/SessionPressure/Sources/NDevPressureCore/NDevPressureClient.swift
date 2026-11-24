@@ -420,10 +420,30 @@ public struct NDevPressureClient: Sendable {
     /// Placement view (work queue v2 slice 6). It probes the active runner
     /// hosts over SSH, so callers poll it slower than work status.
     public func workPlacement(window: String = "6h") async throws -> WorkPlacementEnvelope {
-        try await runJSON(
+        if let api: WorkPlacementEnvelope = try await apiProjection(WorkPlacementEnvelope.self, route: "/v1/pressure/work", query: ["view": "placement", "window": window]) {
+            return api
+        }
+        return try await runJSON(
             WorkPlacementEnvelope.self,
             arguments: ["--json", "session", "pressure", "work", "placement", "--window", window],
             timeoutSeconds: 20
+        )
+    }
+
+    public func workHeadroom() async throws -> WorkHeadroomEnvelope {
+        if let api: WorkHeadroomEnvelope = try await apiProjection(WorkHeadroomEnvelope.self, route: "/v1/pressure/work", query: ["view": "headroom"]) {
+            return api
+        }
+        return try await runJSON(
+            WorkHeadroomEnvelope.self,
+            arguments: ["--json", "session", "pressure", "work", "headroom"]
+        )
+    }
+
+    public func recoveryClear() async throws -> RecoveryClearEnvelope {
+        try await runJSON(
+            RecoveryClearEnvelope.self,
+            arguments: ["--json", "session", "pressure", "recovery", "clear"]
         )
     }
 

@@ -6,6 +6,7 @@ struct MonitorView: View {
     @EnvironmentObject private var store: PressureStore
     @State private var confirmInstall = false
     @State private var confirmUninstall = false
+    @State private var confirmClearRecovery = false
 
     private var launchd: LaunchdStatus? { store.board.launchd }
     private var health: StatusHealth? { store.board.health }
@@ -31,12 +32,26 @@ struct MonitorView: View {
                                 Text(recovery.recoveryCommand)
                                     .font(PressureTheme.monoCaption)
                                     .textSelection(.enabled)
-                                Button("Copy recovery command") {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(recovery.recoveryCommand, forType: .string)
+                                HStack(spacing: 10) {
+                                    Button("Copy recovery command") {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString(recovery.recoveryCommand, forType: .string)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .help("Copy the evidence-centered command for manual review. The app never executes recovery automatically.")
+                                    Button("Clear recovery hint") {
+                                        confirmClearRecovery = true
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(store.busyAction != nil)
+                                    .help("Acknowledge and clear the pending unclean-shutdown recovery hint after verifying host health.")
                                 }
-                                .buttonStyle(.bordered)
-                                .help("Copy the evidence-centered command for manual review. The app never executes recovery automatically.")
+                            } else {
+                                Button("Clear recovery hint") {
+                                    confirmClearRecovery = true
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(store.busyAction != nil)
                             }
                         } else {
                             Text("A recovery hint exists; refresh to load its details.")
@@ -158,6 +173,14 @@ struct MonitorView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Stops and removes the LaunchAgent, forces observe-only policy on incomplete uninstall, and keeps telemetry.")
+        }
+        .confirmationDialog("Clear recovery hint?", isPresented: $confirmClearRecovery, titleVisibility: .visible) {
+            Button("Clear recovery hint") {
+                Task { await store.clearRecoveryHint() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Removes the pending unclean-shutdown recovery hint so doctor and status return to normal.")
         }
     }
 

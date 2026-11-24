@@ -932,6 +932,8 @@ public struct PolicyResourceBudgets: Codable, Sendable, Hashable {
 }
 
 public struct PolicyWorkLimits: Codable, Sendable, Hashable {
+    public var admission: String?
+    public var memoryAdmission: String?
     public var capacity: Int?
     public var warningCapacity: Int?
     public var warningCapacityEnabled: Bool?
@@ -947,6 +949,8 @@ public struct PolicyWorkLimits: Codable, Sendable, Hashable {
     public var reclaimWeight: Int?
 
     enum CodingKeys: String, CodingKey {
+        case admission
+        case memoryAdmission = "memory_admission"
         case capacity
         case warningCapacity = "warning_capacity"
         case warningCapacityEnabled = "warning_capacity_enabled"
@@ -1114,6 +1118,8 @@ public struct WorkLease: Codable, Sendable, Identifiable, Hashable {
     /// Idle leased group whose weight is released until it works again.
     public var parked: Bool
     public var parkedAt: Date?
+    public var predictedPeakMB: Int64?
+    public var predictedMedianMB: Int64?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -1126,6 +1132,8 @@ public struct WorkLease: Codable, Sendable, Identifiable, Hashable {
         case reviewReason = "review_reason"
         case parked
         case parkedAt = "parked_at"
+        case predictedPeakMB = "predicted_peak_mb"
+        case predictedMedianMB = "predicted_median_mb"
     }
 
     public init(from decoder: Decoder) throws {
@@ -1141,6 +1149,8 @@ public struct WorkLease: Codable, Sendable, Identifiable, Hashable {
         reviewReason = try c.decodeIfPresent(String.self, forKey: .reviewReason)
         parked = try c.decodeIfPresent(Bool.self, forKey: .parked) ?? false
         parkedAt = try c.decodeIfPresent(Date.self, forKey: .parkedAt)
+        predictedPeakMB = try c.decodeIfPresent(Int64.self, forKey: .predictedPeakMB)
+        predictedMedianMB = try c.decodeIfPresent(Int64.self, forKey: .predictedMedianMB)
     }
 }
 
@@ -1164,6 +1174,9 @@ public struct WorkWaiter: Codable, Sendable, Identifiable, Hashable {
     /// 1-based place in the operator promotion sequence; 1 is the active head.
     /// Zero means this waiter is not pinned.
     public var overridePosition: Int
+    public var selectedAt: Date?
+    public var startExpired: Bool
+    public var predictedPeakMB: Int64?
 
     public var id: String { operationID }
 
@@ -1182,6 +1195,9 @@ public struct WorkWaiter: Codable, Sendable, Identifiable, Hashable {
         case reservedAt = "reserved_at"
         case pressureParked = "pressure_parked"
         case overridePosition = "override_position"
+        case selectedAt = "selected_at"
+        case startExpired = "start_expired"
+        case predictedPeakMB = "predicted_peak_mb"
     }
 
     public init(from decoder: Decoder) throws {
@@ -1203,6 +1219,9 @@ public struct WorkWaiter: Codable, Sendable, Identifiable, Hashable {
         pressureParked = try c.decodeIfPresent(Bool.self, forKey: .pressureParked) ?? false
         // Absent on an n-1 helper: unpinned, never a decode failure.
         overridePosition = try c.decodeIfPresent(Int.self, forKey: .overridePosition) ?? 0
+        selectedAt = try c.decodeIfPresent(Date.self, forKey: .selectedAt)
+        startExpired = try c.decodeIfPresent(Bool.self, forKey: .startExpired) ?? false
+        predictedPeakMB = try c.decodeIfPresent(Int64.self, forKey: .predictedPeakMB)
     }
 
     /// This waiter is pinned behind the active head by an operator sequence. It
@@ -1288,9 +1307,11 @@ public struct WorkAdmissionLatch: Codable, Sendable, Hashable {
 
 public struct WorkStatus: Codable, Sendable, Hashable {
     public var schemaVersion: Int?
+    public var admission: String?
     public var capacity: Int
     public var used: Int
     public var available: Int
+    public var parkedWeight: Int
     public var leases: [WorkLease]
     public var waiters: [WorkWaiter]
     public var queueDepth: Int
@@ -1314,7 +1335,9 @@ public struct WorkStatus: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
+        case admission
         case capacity, used, available, leases, waiters
+        case parkedWeight = "parked_weight"
         case queueDepth = "queue_depth"
         case admissionHolds = "admission_holds"
         case admissionHoldCount = "admission_hold_count"
@@ -1336,9 +1359,11 @@ public struct WorkStatus: Codable, Sendable, Hashable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion)
+        admission = try c.decodeIfPresent(String.self, forKey: .admission)
         capacity = try c.decodeIfPresent(Int.self, forKey: .capacity) ?? 0
         used = try c.decodeIfPresent(Int.self, forKey: .used) ?? 0
         available = try c.decodeIfPresent(Int.self, forKey: .available) ?? 0
+        parkedWeight = try c.decodeIfPresent(Int.self, forKey: .parkedWeight) ?? 0
         leases = try c.decodeIfPresent([WorkLease].self, forKey: .leases) ?? []
         waiters = try c.decodeIfPresent([WorkWaiter].self, forKey: .waiters) ?? []
         queueDepth = try c.decodeIfPresent(Int.self, forKey: .queueDepth) ?? 0
@@ -1364,6 +1389,21 @@ public struct WorkStatus: Codable, Sendable, Hashable {
         admissionLatch = try c.decodeIfPresent(WorkAdmissionLatch.self, forKey: .admissionLatch)
     }
 
+    /// True when the coordinator runs in resource-headroom mode instead of
+    /// fixed weighted slots. The `1 << 20` sentinel also identifies resource
+    /// mode on older helpers that predate the explicit `admission` field.
+    public var isResourceAdmission: Bool {
+        admission == "resource" || capacity >= 1_048_576
+    }
+
+    public var activeLeaseCount: Int {
+        leases.filter { !$0.parked }.count
+    }
+
+    public var parkedLeaseCount: Int {
+        leases.filter { $0.parked }.count
+    }
+
     /// The first persisted work-state shape with an ordered override tail.
     /// Below it a write keeps only the single override head.
     public static let overrideSequenceMinimumSchema = 8
@@ -1376,10 +1416,12 @@ public struct WorkStatus: Codable, Sendable, Hashable {
         (schemaVersion ?? WorkStatus.overrideSequenceMinimumSchema) >= WorkStatus.overrideSequenceMinimumSchema
     }
 
-    public init(capacity: Int = 0, used: Int = 0, available: Int = 0, leases: [WorkLease] = [], waiters: [WorkWaiter] = []) {
+    public init(capacity: Int = 0, used: Int = 0, available: Int = 0, leases: [WorkLease] = [], waiters: [WorkWaiter] = [], admission: String? = nil, parkedWeight: Int = 0) {
+        self.admission = admission
         self.capacity = capacity
         self.used = used
         self.available = available
+        self.parkedWeight = parkedWeight
         self.leases = leases
         self.waiters = waiters
         self.queueDepth = waiters.count
@@ -1399,6 +1441,90 @@ public struct WorkStatus: Codable, Sendable, Hashable {
         self.longestAdmissionHoldMS = 0
         self.admissionLatch = nil
     }
+}
+
+public struct WorkMemoryHeadroom: Codable, Sendable, Hashable {
+    public var rule: String?
+    public var schemaVersion: Int?
+    public var sampledAt: Date?
+    public var sampleFresh: Bool
+    public var level: PressureLevel
+    public var physicalMB: Int64
+    public var availableMB: Int64
+    public var reserveMB: Int64
+    public var leaseCount: Int
+    public var leasePredictedMB: Int64
+    public var rampingLeaseCount: Int
+    public var leasedRSSMB: Int64
+    public var leasedRSSKnown: Bool
+    public var inflightMB: Int64
+    public var headroomMB: Int64
+    public var swapUsedMB: Int64
+    public var swapOutMBPerSecond: Double
+    public var swapThrashLatched: Bool
+    public var swapThrashCause: String?
+
+    enum CodingKeys: String, CodingKey {
+        case rule, level
+        case schemaVersion = "schema_version"
+        case sampledAt = "sampled_at"
+        case sampleFresh = "sample_fresh"
+        case physicalMB = "physical_mb"
+        case availableMB = "available_mb"
+        case reserveMB = "reserve_mb"
+        case leaseCount = "lease_count"
+        case leasePredictedMB = "lease_predicted_mb"
+        case rampingLeaseCount = "ramping_lease_count"
+        case leasedRSSMB = "leased_rss_mb"
+        case leasedRSSKnown = "leased_rss_known"
+        case inflightMB = "inflight_mb"
+        case headroomMB = "headroom_mb"
+        case swapUsedMB = "swap_used_mb"
+        case swapOutMBPerSecond = "swap_out_mb_per_s"
+        case swapThrashLatched = "swap_thrash_latched"
+        case swapThrashCause = "swap_thrash_cause"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        rule = try c.decodeIfPresent(String.self, forKey: .rule)
+        schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion)
+        sampledAt = try c.decodeIfPresent(Date.self, forKey: .sampledAt)
+        sampleFresh = try c.decodeIfPresent(Bool.self, forKey: .sampleFresh) ?? false
+        level = PressureLevel(raw: try c.decodeIfPresent(String.self, forKey: .level))
+        physicalMB = try c.decodeIfPresent(Int64.self, forKey: .physicalMB) ?? 0
+        availableMB = try c.decodeIfPresent(Int64.self, forKey: .availableMB) ?? 0
+        reserveMB = try c.decodeIfPresent(Int64.self, forKey: .reserveMB) ?? 0
+        leaseCount = try c.decodeIfPresent(Int.self, forKey: .leaseCount) ?? 0
+        leasePredictedMB = try c.decodeIfPresent(Int64.self, forKey: .leasePredictedMB) ?? 0
+        rampingLeaseCount = try c.decodeIfPresent(Int.self, forKey: .rampingLeaseCount) ?? 0
+        leasedRSSMB = try c.decodeIfPresent(Int64.self, forKey: .leasedRSSMB) ?? 0
+        leasedRSSKnown = try c.decodeIfPresent(Bool.self, forKey: .leasedRSSKnown) ?? false
+        inflightMB = try c.decodeIfPresent(Int64.self, forKey: .inflightMB) ?? 0
+        headroomMB = try c.decodeIfPresent(Int64.self, forKey: .headroomMB) ?? 0
+        swapUsedMB = try c.decodeIfPresent(Int64.self, forKey: .swapUsedMB) ?? 0
+        swapOutMBPerSecond = try c.decodeIfPresent(Double.self, forKey: .swapOutMBPerSecond) ?? 0
+        swapThrashLatched = try c.decodeIfPresent(Bool.self, forKey: .swapThrashLatched) ?? false
+        swapThrashCause = try c.decodeIfPresent(String.self, forKey: .swapThrashCause)
+    }
+}
+
+public struct WorkHeadroomEnvelope: Codable, Sendable {
+    public var action: String?
+    public var ok: Bool?
+    public var headroom: WorkMemoryHeadroom?
+    public var memoryAdmission: String?
+
+    enum CodingKeys: String, CodingKey {
+        case action, ok, headroom
+        case memoryAdmission = "memory_admission"
+    }
+}
+
+public struct RecoveryClearEnvelope: Codable, Sendable {
+    public var action: String?
+    public var ok: Bool?
+    public var cleared: Bool?
 }
 
 public struct WorkEnvelope: Codable, Sendable {
@@ -2211,13 +2337,18 @@ public struct DoctorHost: Codable, Sendable, Hashable {
 }
 
 public struct DoctorWork: Codable, Sendable, Hashable {
+    public var admission: String?
     public var capacity: Int?
     public var used: Int?
     public var queueDepth: Int?
     public var expressGreen: Bool?
 
+    public var isResourceAdmission: Bool {
+        admission == "resource" || (capacity ?? 0) >= 1_048_576
+    }
+
     enum CodingKeys: String, CodingKey {
-        case capacity, used
+        case admission, capacity, used
         case queueDepth = "queue_depth"
         case expressGreen = "express_green"
     }

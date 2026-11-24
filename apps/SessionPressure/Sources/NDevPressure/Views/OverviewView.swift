@@ -86,7 +86,7 @@ struct OverviewView: View {
                         StatusChip(label: "Operator", ok: health.operatorReady)
                         StatusChip(
                             label: health.protectionMode.replacingOccurrences(of: "_", with: " "),
-                            ok: health.dailyDriverReady || health.protectionMode == "observe"
+                            ok: health.dailyDriverReady || health.protectionMode == "observe" || health.protectionMode == "observe-only"
                         )
                     }
                 }
@@ -153,7 +153,9 @@ struct OverviewView: View {
                         StatusChip(label: "Monitor", ok: mon.healthy ?? false)
                     }
                     if let work = doctor.work {
-                        Text("queue \(work.used ?? 0)/\(work.capacity ?? 0) depth \(work.queueDepth ?? 0)")
+                        Text(work.isResourceAdmission
+                             ? "resource mode · depth \(work.queueDepth ?? 0)"
+                             : "queue \(work.used ?? 0)/\(work.capacity ?? 0) depth \(work.queueDepth ?? 0)")
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                         if work.expressGreen == true {
@@ -268,8 +270,8 @@ struct OverviewView: View {
                 title: "Agent RSS sum",
                 value: PressureFormat.mb(snap.agentRSSSumMB),
                 subtitle: "\(snap.agentTreeCount) trees · \(snap.processCount) procs",
-                accent: PressureTheme.levelColor(snap.agentRSSSumMB >= 11264 ? .red : snap.agentRSSSumMB >= 8192 ? .warning : .normal),
-                progress: min(1, snap.agentRSSSumMB / 13312),
+                accent: PressureTheme.levelColor(agentRSSLevel),
+                progress: min(1, snap.agentRSSSumMB / agentRSSCeilingMB),
                 help: PressureHelp.agentRSS + " Click to open Agent Trees (⌘2).",
                 action: { store.selectedSection = .trees }
             )
@@ -544,7 +546,19 @@ struct OverviewView: View {
             help: PressureHelp.workCapacity
         ) {
             if let work {
-                CapacityBar(used: work.used, capacity: work.capacity, available: work.available)
+                if work.isResourceAdmission {
+                    HStack(spacing: 12) {
+                        Text("Resource admission")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(work.activeLeaseCount) active\(work.parkedLeaseCount > 0 ? " · \(work.parkedLeaseCount) parked" : "") · q \(work.queueDepth)")
+                            .font(PressureTheme.monoCaption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    CapacityBar(used: work.used, capacity: work.capacity, available: work.available)
+                }
                 if work.leases.isEmpty && work.waiters.isEmpty && work.admissionHoldCount == 0 {
                     Text("No active leases, waiters, or held work.")
                         .font(.caption)
@@ -591,10 +605,12 @@ struct OverviewView: View {
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(PressureTheme.levelColor(.red))
                             } else if head.isPressureReserved {
-                                Label("held", systemImage: "pause.circle.fill")
+                                Label(head.pressureParked ? "parked" : "held", systemImage: "pause.circle.fill")
                                     .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(PressureTheme.levelColor(.warning))
-                                    .help("Reserved and waiting for host pressure to clear. Run now cannot start it sooner.")
+                                    .foregroundStyle(head.pressureParked ? Color.secondary : PressureTheme.levelColor(.warning))
+                                    .help(head.pressureParked
+                                          ? "Waiting for host pressure to clear. It keeps its place while work behind it that fits runs. Run now cannot start it sooner."
+                                          : "Reserved and waiting for host pressure to clear. Run now cannot start it sooner.")
                             } else {
                                 Button {
                                     Task { await store.overrideWork(waiter: head) }
@@ -639,16 +655,35 @@ struct OverviewView: View {
         }
     }
 
+    private var agentRSSCeilingMB: Double {
+        max(policy?.thresholds?.agentTotalCriticalMB ?? 13312, 1)
+    }
+
+    private var agentRSSLevel: PressureLevel {
+        let crit = policy?.thresholds?.agentTotalCriticalMB ?? 13312
+        let red = policy?.thresholds?.agentTotalRedMB ?? 11264
+        let warn = policy?.thresholds?.agentTotalWarningMB ?? 8192
+        if snap.agentRSSSumMB >= crit { return .critical }
+        if snap.agentRSSSumMB >= red { return .red }
+        if snap.agentRSSSumMB >= warn { return .warning }
+        return .normal
+    }
+
     private var freeAccent: Color {
-        if snap.freePercent <= 8 { return PressureTheme.levelColor(.critical) }
-        if snap.freePercent <= 15 { return PressureTheme.levelColor(.red) }
-        if snap.freePercent <= 25 { return PressureTheme.levelColor(.warning) }
+        let crit = policy?.thresholds?.freeCriticalPercent ?? 8
+        let red = policy?.thresholds?.freeRedPercent ?? 15
+        let warn = policy?.thresholds?.freeWarningPercent ?? 25
+        if snap.freePercent <= crit { return PressureTheme.levelColor(.critical) }
+        if snap.freePercent <= red { return PressureTheme.levelColor(.red) }
+        if snap.freePercent <= warn { return PressureTheme.levelColor(.warning) }
         return PressureTheme.levelColor(.normal)
     }
 
     private var cpuAccent: Color {
-        if snap.hostCPUPercent >= 95 { return PressureTheme.levelColor(.red) }
-        if snap.hostCPUPercent >= 85 { return PressureTheme.levelColor(.warning) }
+        let red = policy?.thresholds?.hostCPURedPercent ?? 95
+        let warn = policy?.thresholds?.hostCPUWarningPercent ?? 85
+        if snap.hostCPUPercent >= red { return PressureTheme.levelColor(.red) }
+        if snap.hostCPUPercent >= warn { return PressureTheme.levelColor(.warning) }
         return PressureTheme.levelColor(.normal)
     }
 
@@ -662,7 +697,9 @@ struct OverviewView: View {
     private var swapLevel: PressureLevel {
         if snap.swapThrashLatched { return .red }
         if let rate = snap.swapOutMBPerSecond, rate >= 8 { return .warning }
-        return snap.swapUsedMB >= 8192 ? .red : snap.swapUsedMB >= 4096 ? .warning : .normal
+        let red = policy?.thresholds?.swapRedMB ?? 8192
+        let warn = policy?.thresholds?.swapWarningMB ?? 4096
+        return snap.swapUsedMB >= red ? .red : snap.swapUsedMB >= warn ? .warning : .normal
     }
 
     private var memoryMomentumSubtitle: String {
