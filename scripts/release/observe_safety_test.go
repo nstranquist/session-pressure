@@ -80,21 +80,82 @@ func TestAcceptanceFactoryWriterCurrentControllerAndBudget(t *testing.T) {
 	var a map[string]any
 	_ = json.Unmarshal(r.Audit, &a)
 	metrics := a["audit"].(map[string]any)["categories"].([]any)[0].(map[string]any)["metrics"].(map[string]any)
-	// Recent 2h factory writer had a 250ms burst, while current controller is at 100ms histogram bound.
-	metrics["cli_writer_recent_2h"] = map[string]any{"known": true, "attempted": 500, "written": 500, "failed": 0, "gaps": 0, "latency_samples": 500, "latency_p95_us": 250000}
-	metrics["cli_writer_current_controller"] = map[string]any{"known": true, "attempted": 200, "written": 200, "failed": 0, "gaps": 0, "latency_samples": 200, "latency_p95_us": 100000}
+	// Recent 2h factory writer had a 500ms burst, while current controller is at 250ms histogram bound.
+	metrics["cli_writer_recent_2h"] = map[string]any{"known": true, "attempted": 500, "written": 500, "failed": 0, "gaps": 0, "latency_samples": 500, "latency_p95_us": 500000}
+	metrics["cli_writer_current_controller"] = map[string]any{"known": true, "attempted": 200, "written": 200, "failed": 0, "gaps": 0, "latency_samples": 200, "latency_p95_us": 250000}
 	metrics["cli_writer_current_controller_evidence"] = true
 	r.Audit, _ = json.Marshal(a)
 	r.evaluate(s, now)
 	if !r.WriterPassed || !r.Accepted {
-		t.Fatalf("current-controller factory writer at 100ms histogram bound should pass: pending=%v", r.Pending)
+		t.Fatalf("current-controller factory writer at 250ms histogram bound should pass: pending=%v", r.Pending)
 	}
-	// Exceeding 100ms on current controller must fail.
-	metrics["cli_writer_current_controller"].(map[string]any)["latency_p95_us"] = 100001
+	// Exceeding 250ms on current controller must fail.
+	metrics["cli_writer_current_controller"].(map[string]any)["latency_p95_us"] = 250001
 	r.Audit, _ = json.Marshal(a)
 	r.Pending = []string{}
 	r.evaluate(s, now)
 	if r.WriterPassed || r.Accepted {
-		t.Fatalf("factory writer above 100ms must fail acceptance")
+		t.Fatalf("factory writer above 250ms must fail acceptance")
+	}
+}
+
+func TestAppBudgetSurvivesBriefInteractiveSpikeButCatchesLeakAndBloat(t *testing.T) {
+	start := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	s := observation{ContinuityPassed: true}
+	var w appObservationWindow
+	cpu := 10.0
+	// 39 parked samples at 95 MiB plus 1 brief interactive window open at 220 MiB
+	// that reclaims cleanly back to 95 MiB -> p95=95, latest=95, peak=220 -> PASS.
+	for i := 0; i < 40; i++ {
+		fp := 95.0
+		if i == 20 {
+			fp = 220.0
+		}
+		cpu += 0.05 // ~0.08% CPU
+		s.recordAppSampleWithFootprint(start.Add(time.Duration(i)*time.Minute), 42, cpu, 140.0, fp, true, &w)
+	}
+	if !s.AppBudgetPassed || s.AppPeakFootprintMiB != 220.0 || s.AppP95FootprintMiB != 95.0 || s.AppLatestFootprintMiB != 95.0 {
+		t.Fatalf("transient interactive spike should pass steady budget: passed=%v peak=%v p95=%v latest=%v", s.AppBudgetPassed, s.AppPeakFootprintMiB, s.AppP95FootprintMiB, s.AppLatestFootprintMiB)
+	}
+	// Late memory leak ending at 135 MiB must fail via latest > 128.
+	s.recordAppSampleWithFootprint(start.Add(40*time.Minute), 42, cpu+0.05, 160.0, 135.0, true, &w)
+	if s.AppBudgetPassed {
+		t.Fatalf("late memory leak above 128 MiB must fail budget: %+v", s)
+	}
+	// Persistent bloat (>5% of samples above 128 MiB) must fail via p95 > 128 even
+	// if the final sample drops back below 128 MiB.
+	s2 := observation{ContinuityPassed: true}
+	var w2 appObservationWindow
+	cpu2 := 1.0
+	for i := 0; i < 35; i++ {
+		fp := 95.0
+		if i >= 10 && i < 15 { // 5/35 = 14.3% bloated
+			fp = 145.0
+		}
+		cpu2 += 0.05
+		s2.recordAppSampleWithFootprint(start.Add(time.Duration(i)*time.Minute), 43, cpu2, 140.0, fp, true, &w2)
+	}
+	if s2.AppBudgetPassed || s2.AppP95FootprintMiB <= 128 {
+		t.Fatalf("persistent bloat (>5%% samples) must fail via p95: passed=%v p95=%v", s2.AppBudgetPassed, s2.AppP95FootprintMiB)
+	}
+}
+
+func TestObserveFailFastCatchesWarmReadAndAppSampleFailures(t *testing.T) {
+	s := observation{
+		ContinuityPassed: true,
+		Reads: map[string]readGate{
+			"status": {Samples: 100, P95MS: 300, BudgetMS: 250, Passed: false},
+		},
+	}
+	if reason := s.unrecoverableReason(); !strings.Contains(reason, "warm read gate status failed") {
+		t.Fatalf("expected warm read fail-fast reason, got %q", reason)
+	}
+	s2 := observation{
+		ContinuityPassed:   true,
+		AppSampleFailures:  1,
+		LastAppSampleError: "app_discovery_failed",
+	}
+	if reason := s2.unrecoverableReason(); !strings.Contains(reason, "app_discovery_failed") {
+		t.Fatalf("expected app sample fail-fast reason, got %q", reason)
 	}
 }

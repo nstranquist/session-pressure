@@ -160,7 +160,7 @@ func Disabled() bool {
 }
 
 // Spread concurrent calls across the bounded shard set, including calls from
-// one process. PID-only sharding serializes every command behind three fsyncs.
+// one process, to prevent lock contention on one shard.
 var writerSequence atomic.Uint64
 
 func RecordCommand(action string, started time.Time, exit int) error {
@@ -262,9 +262,10 @@ func RecordCommandResult(action string, started time.Time, exit int, gateNotSati
 		if err == nil {
 			_, err = f.Write(raw)
 		}
-		if err == nil {
-			err = f.Sync()
-		}
+		// Match nicos-tools cli-invocations AppendLineWithin (durable=false):
+		// O_APPEND into the kernel page cache survives process crashes and stays
+		// consistent with atomic non-fsynced writeState crash-gap accounting
+		// without stalling every CLI invocation on an APFS NVMe flush barrier.
 		closeErr := f.Close()
 		if err == nil {
 			err = closeErr
@@ -345,9 +346,8 @@ func writeState(path string, state writerState) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	// The primary JSONL event stream is fsynced on every append; atomic rename
-	// preserves process-crash gap accounting without paying two extra APFS
-	// fsync barriers per CLI invocation.
+	// Atomic CreateTemp + Rename preserves process-crash gap accounting without
+	// paying per-invocation APFS fsync barriers on command telemetry.
 	return os.Rename(f.Name(), path)
 }
 func ReadProductWriterHealthSince(since time.Time) CLIWriterHealthReport {

@@ -29,44 +29,46 @@ type readGate struct {
 	Passed   bool    `json:"passed"`
 }
 type observation struct {
-	MonitoringStarted    time.Time           `json:"monitoring_started"`
-	BinaryDigest         string              `json:"binary_sha256"`
-	AppPath              string              `json:"app_path"`
-	AppIdentity          appIdentity         `json:"app_identity"`
-	Accepted24H          bool                `json:"accepted_24h"`
-	Accepted72H          bool                `json:"accepted_72h"`
-	AppRestarts          int                 `json:"app_restarts"`
-	Started              time.Time           `json:"started"`
-	Updated              time.Time           `json:"updated"`
-	Deadline             time.Time           `json:"deadline"`
-	MaxDeadline          time.Time           `json:"max_deadline,omitempty"`
-	Binary               string              `json:"binary"`
-	Identity             json.RawMessage     `json:"identity,omitempty"`
-	Reads                map[string]readGate `json:"reads"`
-	Checks               int                 `json:"checks"`
-	Failures             int                 `json:"failures"`
-	HealthPassed         bool                `json:"health_passed"`
-	LastFailure          string              `json:"last_failure,omitempty"`
-	StoppedEarlyReason   string              `json:"stopped_early_reason,omitempty"`
-	ResidentPID          int                 `json:"resident_pid"`
-	ResidentRestarts     int                 `json:"resident_restarts"`
-	MaxSampleGapSeconds  float64             `json:"max_sample_gap_seconds"`
-	SleepPauses          int                 `json:"sleep_pauses,omitempty"`
-	SleepPauseSeconds    float64             `json:"sleep_pause_seconds,omitempty"`
-	ContinuityPassed     bool                `json:"continuity_passed"`
-	Observed24H          bool                `json:"observed_24h"`
-	Observed72H          bool                `json:"observed_72h"`
-	AppSampleOK          bool                `json:"app_sample_ok"`
-	AppSampleFailures    int                 `json:"app_sample_failures"`
-	LastAppSampleError   string              `json:"last_app_sample_error,omitempty"`
-	LastAppSampleFailure time.Time           `json:"last_app_sample_failure,omitempty"`
-	AppPID               int                 `json:"app_pid"`
-	AppObservedSeconds   float64             `json:"app_observed_seconds"`
-	AppCPUPercent        float64             `json:"app_cpu_percent"`
-	AppPeakRSSMiB        float64             `json:"app_peak_rss_mib"`
-	AppPeakFootprintMiB  float64             `json:"app_peak_footprint_mib,omitempty"`
-	AppMemoryBudgetBy    string              `json:"app_memory_budget_metric,omitempty"`
-	AppBudgetPassed      bool                `json:"app_30m_budget_passed"`
+	MonitoringStarted     time.Time           `json:"monitoring_started"`
+	BinaryDigest          string              `json:"binary_sha256"`
+	AppPath               string              `json:"app_path"`
+	AppIdentity           appIdentity         `json:"app_identity"`
+	Accepted24H           bool                `json:"accepted_24h"`
+	Accepted72H           bool                `json:"accepted_72h"`
+	AppRestarts           int                 `json:"app_restarts"`
+	Started               time.Time           `json:"started"`
+	Updated               time.Time           `json:"updated"`
+	Deadline              time.Time           `json:"deadline"`
+	MaxDeadline           time.Time           `json:"max_deadline,omitempty"`
+	Binary                string              `json:"binary"`
+	Identity              json.RawMessage     `json:"identity,omitempty"`
+	Reads                 map[string]readGate `json:"reads"`
+	Checks                int                 `json:"checks"`
+	Failures              int                 `json:"failures"`
+	HealthPassed          bool                `json:"health_passed"`
+	LastFailure           string              `json:"last_failure,omitempty"`
+	StoppedEarlyReason    string              `json:"stopped_early_reason,omitempty"`
+	ResidentPID           int                 `json:"resident_pid"`
+	ResidentRestarts      int                 `json:"resident_restarts"`
+	MaxSampleGapSeconds   float64             `json:"max_sample_gap_seconds"`
+	SleepPauses           int                 `json:"sleep_pauses,omitempty"`
+	SleepPauseSeconds     float64             `json:"sleep_pause_seconds,omitempty"`
+	ContinuityPassed      bool                `json:"continuity_passed"`
+	Observed24H           bool                `json:"observed_24h"`
+	Observed72H           bool                `json:"observed_72h"`
+	AppSampleOK           bool                `json:"app_sample_ok"`
+	AppSampleFailures     int                 `json:"app_sample_failures"`
+	LastAppSampleError    string              `json:"last_app_sample_error,omitempty"`
+	LastAppSampleFailure  time.Time           `json:"last_app_sample_failure,omitempty"`
+	AppPID                int                 `json:"app_pid"`
+	AppObservedSeconds    float64             `json:"app_observed_seconds"`
+	AppCPUPercent         float64             `json:"app_cpu_percent"`
+	AppPeakRSSMiB         float64             `json:"app_peak_rss_mib"`
+	AppPeakFootprintMiB   float64             `json:"app_peak_footprint_mib,omitempty"`
+	AppP95FootprintMiB    float64             `json:"app_p95_footprint_mib,omitempty"`
+	AppLatestFootprintMiB float64             `json:"app_latest_footprint_mib,omitempty"`
+	AppMemoryBudgetBy     string              `json:"app_memory_budget_metric,omitempty"`
+	AppBudgetPassed       bool                `json:"app_30m_budget_passed"`
 }
 
 func readCLI(binary string, args ...string) ([]byte, error) {
@@ -338,6 +340,8 @@ func (s *observation) recordAppSampleFailure(now time.Time, err error) {
 	s.AppCPUPercent = 0
 	s.AppPeakRSSMiB = 0
 	s.AppPeakFootprintMiB = 0
+	s.AppP95FootprintMiB = 0
+	s.AppLatestFootprintMiB = 0
 	s.AppBudgetPassed = false
 }
 
@@ -375,6 +379,11 @@ func (s *observation) recordSampleGap(wallGap, awakeGap, interval time.Duration)
 }
 
 func (s *observation) unrecoverableReason() string {
+	for _, name := range []string{"status", "board", "rich"} {
+		if g, ok := s.Reads[name]; ok && (!g.Passed || g.Failures > 0) {
+			return fmt.Sprintf("warm read gate %s failed (p95=%.1fms, failures=%d)", name, g.P95MS, g.Failures)
+		}
+	}
 	switch {
 	case !s.ContinuityPassed:
 		return "continuity gap exceeded sample bound"
@@ -382,6 +391,11 @@ func (s *observation) unrecoverableReason() string {
 		return "resident restarted during soak"
 	case s.AppRestarts > 0:
 		return "app restarted during soak"
+	case s.AppSampleFailures > 0:
+		if s.LastAppSampleError != "" {
+			return "app sample failed: " + s.LastAppSampleError
+		}
+		return "app sample failed during soak"
 	case s.Failures > 0:
 		if s.LastFailure != "" {
 			return s.LastFailure
@@ -525,6 +539,18 @@ func (s *observation) verifyArtifacts() error {
 type appObservationWindow struct {
 	started           time.Time
 	firstCPU, lastCPU float64
+	rssSamples        []float64
+	footprintSamples  []float64
+}
+
+func percentile95(samples []float64) float64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	cp := make([]float64, len(samples))
+	copy(cp, samples)
+	sort.Float64s(cp)
+	return cp[(len(cp)*95+99)/100-1]
 }
 
 func (s *observation) recordAppSample(now time.Time, pid int, cpu, rss float64, w *appObservationWindow) {
@@ -544,14 +570,20 @@ func (s *observation) recordAppSampleWithFootprint(now time.Time, pid int, cpu, 
 		*w = appObservationWindow{started: now, firstCPU: cpu, lastCPU: cpu}
 		s.AppPeakRSSMiB = 0
 		s.AppPeakFootprintMiB = 0
+		s.AppP95FootprintMiB = 0
+		s.AppLatestFootprintMiB = 0
 		s.AppCPUPercent = 0
 	}
 	s.AppSampleOK = true
 	w.lastCPU = cpu
 	s.AppObservedSeconds = now.Sub(w.started).Seconds()
 	s.AppPeakRSSMiB = max(s.AppPeakRSSMiB, rss)
+	w.rssSamples = append(w.rssSamples, rss)
 	if hasFootprint && footprintMiB > 0 {
 		s.AppPeakFootprintMiB = max(s.AppPeakFootprintMiB, footprintMiB)
+		w.footprintSamples = append(w.footprintSamples, footprintMiB)
+		s.AppP95FootprintMiB = percentile95(w.footprintSamples)
+		s.AppLatestFootprintMiB = footprintMiB
 		s.AppMemoryBudgetBy = "phys_footprint"
 	} else if s.AppMemoryBudgetBy == "" {
 		s.AppMemoryBudgetBy = "rss"
@@ -559,11 +591,16 @@ func (s *observation) recordAppSampleWithFootprint(now time.Time, pid int, cpu, 
 	if s.AppObservedSeconds > 0 {
 		s.AppCPUPercent = 100 * (cpu - w.firstCPU) / s.AppObservedSeconds
 	}
-	memMiB := s.AppPeakRSSMiB
-	if s.AppPeakFootprintMiB > 0 {
-		memMiB = s.AppPeakFootprintMiB
+	// Judge steady-state memory against p95 AND latest sample so persistent bloat
+	// or a late leak fails while brief interactive UI opens that reclaim cleanly
+	// do not falsely poison a 72h daily-driver soak.
+	memP95 := percentile95(w.rssSamples)
+	memLatest := rss
+	if len(w.footprintSamples) > 0 {
+		memP95 = s.AppP95FootprintMiB
+		memLatest = s.AppLatestFootprintMiB
 	}
-	s.AppBudgetPassed = s.ContinuityPassed && s.AppObservedSeconds >= 1800 && s.AppCPUPercent >= 0 && s.AppCPUPercent <= 1 && memMiB <= 128
+	s.AppBudgetPassed = s.ContinuityPassed && s.AppObservedSeconds >= 1800 && s.AppCPUPercent >= 0 && s.AppCPUPercent <= 1 && memP95 <= 128 && memLatest <= 128
 }
 
 func (s *observation) updateAcceptance(now time.Time) {
