@@ -436,7 +436,23 @@ func cmdSessionPressureBoard(g *Flags, args []string) int {
 
 	text := snapshotText
 	if workErr == nil {
-		text += fmt.Sprintf(" work=%d/%d queue=%d holds=%d", work.Used, work.Capacity, work.QueueDepth, work.AdmissionHoldCount)
+		if work.Admission == sessionpressure.WorkAdmissionResource || work.Capacity >= 1<<20 {
+			active, parked := 0, 0
+			for _, lease := range work.Leases {
+				if lease.Parked {
+					parked++
+				} else {
+					active++
+				}
+			}
+			if parked > 0 {
+				text += fmt.Sprintf(" work=resource(%d active,%d parked) queue=%d holds=%d", active, parked, work.QueueDepth, work.AdmissionHoldCount)
+			} else {
+				text += fmt.Sprintf(" work=resource(%d active) queue=%d holds=%d", active, work.QueueDepth, work.AdmissionHoldCount)
+			}
+		} else {
+			text += fmt.Sprintf(" work=%d/%d queue=%d holds=%d", work.Used, work.Capacity, work.QueueDepth, work.AdmissionHoldCount)
+		}
 		if work.OverrideQueueDepth > 0 {
 			text += fmt.Sprintf(" pinned=%d", work.OverrideQueueDepth)
 		}

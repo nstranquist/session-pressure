@@ -33,7 +33,14 @@ const (
 	storageWatchQuotaAlert      = 0.90
 	storageWatchDriveDefault    = "/Volumes/X10 Pro"
 	storageWatchTMDefault       = "/Volumes/NicosTM"
+	// storageWatchNoteCommandEnv opts in to an external note sink (executable
+	// and whitespace-separated arguments, no shell; alert text is written to
+	// stdin). Keeping this opt-in preserves the open-core boundary: standalone
+	// installs never exec a private wrapper binary.
+	storageWatchNoteCommandEnv = "SESSION_PRESSURE_STORAGE_WATCH_NOTE_CMD"
 )
+
+var errStorageWatchNoteUnconfigured = errors.New("note hook unconfigured")
 
 type storageWatchCondition struct {
 	ID       string `json:"id"`
@@ -100,18 +107,28 @@ var (
 			Source: "session-pressure-storage-watch", Seconds: "15",
 		}, time.Now)
 	}
-	storageWatchScratchpad = func(text string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		command := exec.CommandContext(ctx, "ndev", "--json", "scratchpad", "capture", "--target", "agents", "--index", "--source", "session-pressure-storage-watch", "--header", "Storage watch alert")
-		command.Stdin = strings.NewReader(text)
-		output, err := command.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("scratchpad capture: %w: %s", err, strings.TrimSpace(string(output)))
-		}
-		return nil
-	}
+	storageWatchScratchpad = defaultStorageWatchNote
 )
+
+func defaultStorageWatchNote(text string) error {
+	raw := strings.TrimSpace(os.Getenv(storageWatchNoteCommandEnv))
+	if raw == "" {
+		return errStorageWatchNoteUnconfigured
+	}
+	parts := strings.Fields(raw)
+	if len(parts) == 0 {
+		return errStorageWatchNoteUnconfigured
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	command.Stdin = strings.NewReader(text)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("note hook: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
 
 func probeTimeMachine(probe *storageWatchProbe) {
 	output, err := storageWatchTMUtil("destinationinfo")
@@ -305,10 +322,12 @@ func routeStorageWatchAlerts(due []storageWatchCondition, logPath string, now ti
 		note.WriteString("\n")
 		_ = appendStorageWatchLog(logPath, map[string]any{"schema_version": storageWatchSchema, "at": now.UTC(), "condition": condition})
 	}
-	if err := storageWatchScratchpad(note.String()); err != nil {
-		outcomes = append(outcomes, "scratchpad:"+err.Error())
+	if err := storageWatchScratchpad(note.String()); errors.Is(err, errStorageWatchNoteUnconfigured) {
+		outcomes = append(outcomes, "note:unconfigured")
+	} else if err != nil {
+		outcomes = append(outcomes, "note:"+err.Error())
 	} else {
-		outcomes = append(outcomes, "scratchpad:ok")
+		outcomes = append(outcomes, "note:ok")
 	}
 	return outcomes
 }

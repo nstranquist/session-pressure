@@ -108,6 +108,31 @@ func TestStorageWatchRoutesToastAndScratchpad(t *testing.T) {
 	}
 }
 
+func TestStorageWatchNoteHookOpenCoreDefault(t *testing.T) {
+	t.Setenv(storageWatchNoteCommandEnv, "")
+	if err := defaultStorageWatchNote("hello"); err != errStorageWatchNoteUnconfigured {
+		t.Fatalf("defaultStorageWatchNote without env = %v, want errStorageWatchNoteUnconfigured", err)
+	}
+
+	outFile := filepath.Join(t.TempDir(), "captured.txt")
+	hookScript := filepath.Join(t.TempDir(), "capture-note.sh")
+	script := "#!/bin/sh\ncat > " + outFile + "\n"
+	if err := os.WriteFile(hookScript, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(storageWatchNoteCommandEnv, hookScript)
+	if err := defaultStorageWatchNote("disk warning"); err != nil {
+		t.Fatalf("defaultStorageWatchNote with hook failed: %v", err)
+	}
+	got, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("read captured note: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != "disk warning" {
+		t.Fatalf("captured note = %q, want %q", string(got), "disk warning")
+	}
+}
+
 func TestParseTMBackupTime(t *testing.T) {
 	got := parseTMBackupTime("/Volumes/.timemachine/X/2026-11-16-101530.backup")
 	if got.IsZero() || got.Hour() != 10 || got.Minute() != 15 {

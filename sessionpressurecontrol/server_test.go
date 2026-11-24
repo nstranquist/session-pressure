@@ -129,6 +129,16 @@ func TestProjectionQueryArgumentsPreserveCanonicalShape(t *testing.T) {
 			want:  []string{"--json", "session", "pressure", "work", "history", "--full", "--limit", "2", "--since", "24h"},
 		},
 		{
+			name:  "work headroom",
+			route: "/v1/pressure/work?view=headroom",
+			want:  []string{"--json", "session", "pressure", "work", "headroom"},
+		},
+		{
+			name:  "work placement filters",
+			route: "/v1/pressure/work?view=placement&no_runners=true&window=6h",
+			want:  []string{"--json", "session", "pressure", "work", "placement", "--no-runners", "--window", "6h"},
+		},
+		{
 			name:  "telemetry filters",
 			route: "/v1/pressure/telemetry?limit=2&since=24h",
 			want:  []string{"--json", "session", "pressure", "telemetry", "--limit", "2", "--since", "24h"},

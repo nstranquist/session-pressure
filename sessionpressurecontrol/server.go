@@ -384,7 +384,10 @@ func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWork(w http.ResponseWriter, r *http.Request) {
-	view, err := projectionView(r, "status", map[string]bool{"status": true, "history": true, "stats": true, "report": true, "evaluate": true}, "work view must be status, history, stats, report, or evaluate")
+	view, err := projectionView(r, "status", map[string]bool{
+		"status": true, "history": true, "stats": true, "report": true,
+		"evaluate": true, "headroom": true, "placement": true,
+	}, "work view must be status, history, stats, report, evaluate, headroom, or placement")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_view", err.Error(), false)
 		return
@@ -395,6 +398,8 @@ func (s *Server) handleWork(w http.ResponseWriter, r *http.Request) {
 		allowed = allowedQuery{"full": queryBool, "limit": queryLimit, "since": queryDuration}
 	case "stats", "report":
 		allowed = allowedQuery{"full": queryBool, "since": queryDuration}
+	case "placement":
+		allowed = allowedQuery{"window": queryDuration, "no_runners": queryBool}
 	}
 	args, err := projectionArgs(r, "work", allowed, view)
 	if err != nil {
@@ -636,7 +641,7 @@ func projectionArgs(r *http.Request, sub string, allowed allowedQuery, commandPa
 			continue
 		}
 		args = append(args, "--"+strings.ReplaceAll(key, "_", "-"))
-		if key != "full" && key != "live" {
+		if key != "full" && key != "live" && key != "no_runners" {
 			args = append(args, value)
 		}
 	}
