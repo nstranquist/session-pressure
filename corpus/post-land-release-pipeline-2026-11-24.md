@@ -85,3 +85,10 @@ the nicos-tools wrapper change, then one `build-committed-ndev` so the
 installed `ndev` starts registering. After that, `make release-promote`
 alone keeps all four binaries on one revision.
 
+Push session-pressure before you deliver a nicos-tools change that uses its
+new API. The nicos-tools remote gate resolves the `go.mod` replace through
+a clone of session-pressure `origin/main`, not the local checkout. The
+first wrapper delivery ran its gate before the push and failed with "no
+required module provides package .../frontdoor". After the push, the same
+change passed as a re-capture.
+
