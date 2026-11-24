@@ -337,9 +337,7 @@ func writeState(path string, state writerState) error {
 		return err
 	}
 	defer os.Remove(f.Name())
-	if _, err = f.Write(raw); err == nil {
-		err = f.Sync()
-	}
+	_, err = f.Write(raw)
 	closeErr := f.Close()
 	if err != nil {
 		return err
@@ -347,6 +345,9 @@ func writeState(path string, state writerState) error {
 	if closeErr != nil {
 		return closeErr
 	}
+	// The primary JSONL event stream is fsynced on every append; atomic rename
+	// preserves process-crash gap accounting without paying two extra APFS
+	// fsync barriers per CLI invocation.
 	return os.Rename(f.Name(), path)
 }
 func ReadProductWriterHealthSince(since time.Time) CLIWriterHealthReport {

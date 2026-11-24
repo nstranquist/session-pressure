@@ -760,3 +760,21 @@ func TestReplayWorkEventsProvesBuildCalibrationPackingGain(t *testing.T) {
 		t.Fatalf("build calibration replay: candidate=%+v legacy=%+v gates=%v", candidate, legacy, replay.CalibrationGatesPass)
 	}
 }
+
+func TestReplayWorkEventsAllowsHealthyZeroContentionPopulation(t *testing.T) {
+	start := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	events := make([]WorkEvent, 0, 220)
+	for i := 0; i < 110; i++ {
+		id := fmt.Sprintf("%032x", i+1)
+		queued := start.Add(time.Duration(i) * 10 * time.Second)
+		events = append(events,
+			WorkEvent{OperationID: id, Class: WorkClassTest, Event: WorkEventQueued, Timestamp: queued},
+			WorkEvent{OperationID: id, Class: WorkClassTest, Event: WorkEventCompleted, Timestamp: queued.Add(time.Second), RuntimeMillis: 1000},
+		)
+	}
+	replay := ReplayWorkEvents(events, defaultWorkLimits(16))
+	replay.ApplySelectorBenchmark(WorkSelectorBenchmark{Pass: true, P95Microseconds: 1, BudgetMicroseconds: 2000})
+	if !replay.MinimumSampleMet || !replay.PromotionReady {
+		t.Fatalf("healthy 110-op zero-contention trace should be promotion_ready: %+v", replay)
+	}
+}

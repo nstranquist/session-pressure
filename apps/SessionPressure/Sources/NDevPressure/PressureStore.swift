@@ -544,9 +544,24 @@ final class PressureStore: ObservableObject {
         } else {
             stopWorkFocusPoll()
             stopDiskFocusPoll()
+            // Release heavy detail caches while parked in menu-bar-only mode so
+            // long-running idle footprint stays tightly bounded.
+            trimTransientWindowCaches()
             // Reschedule onto the slower menu-bar-only cadence.
             schedulePoll(immediate: false)
         }
+    }
+
+    private func trimTransientWindowCaches() {
+        workDetailEvents = []
+        workInspect = nil
+        diskWriteHistory = []
+        diskWriters = []
+        storageProviders = []
+        storageInventory = nil
+        storageReceipt = []
+        storagePreview = nil
+        navigationHistory.removeAll()
     }
 
     /// Cadence for the whole-board poll. Windowed use follows the pressure

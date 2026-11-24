@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nstranquist/session-pressure/internal/filelock"
 	"github.com/nstranquist/session-pressure/packages/processtree"
 )
 
@@ -38,6 +39,7 @@ type observation struct {
 	Started              time.Time           `json:"started"`
 	Updated              time.Time           `json:"updated"`
 	Deadline             time.Time           `json:"deadline"`
+	MaxDeadline          time.Time           `json:"max_deadline,omitempty"`
 	Binary               string              `json:"binary"`
 	Identity             json.RawMessage     `json:"identity,omitempty"`
 	Reads                map[string]readGate `json:"reads"`
@@ -45,9 +47,12 @@ type observation struct {
 	Failures             int                 `json:"failures"`
 	HealthPassed         bool                `json:"health_passed"`
 	LastFailure          string              `json:"last_failure,omitempty"`
+	StoppedEarlyReason   string              `json:"stopped_early_reason,omitempty"`
 	ResidentPID          int                 `json:"resident_pid"`
 	ResidentRestarts     int                 `json:"resident_restarts"`
 	MaxSampleGapSeconds  float64             `json:"max_sample_gap_seconds"`
+	SleepPauses          int                 `json:"sleep_pauses,omitempty"`
+	SleepPauseSeconds    float64             `json:"sleep_pause_seconds,omitempty"`
 	ContinuityPassed     bool                `json:"continuity_passed"`
 	Observed24H          bool                `json:"observed_24h"`
 	Observed72H          bool                `json:"observed_72h"`
@@ -59,6 +64,8 @@ type observation struct {
 	AppObservedSeconds   float64             `json:"app_observed_seconds"`
 	AppCPUPercent        float64             `json:"app_cpu_percent"`
 	AppPeakRSSMiB        float64             `json:"app_peak_rss_mib"`
+	AppPeakFootprintMiB  float64             `json:"app_peak_footprint_mib,omitempty"`
+	AppMemoryBudgetBy    string              `json:"app_memory_budget_metric,omitempty"`
 	AppBudgetPassed      bool                `json:"app_30m_budget_passed"`
 }
 
@@ -120,6 +127,7 @@ func observe(args []string) error {
 	duration := f.Duration("duration", 72*time.Hour, "elapsed observation window")
 	interval := f.Duration("interval", time.Minute, "health sample interval (10s..5m)")
 	samples := f.Int("samples", 100, "warm reads per endpoint (100..1000)")
+	failFast := f.Bool("fail-fast", false, "exit early when an unrecoverable soak failure latches")
 	if e := f.Parse(args); e != nil {
 		return e
 	}
@@ -129,6 +137,12 @@ func observe(args []string) error {
 	if e := os.MkdirAll(filepath.Dir(*out), 0700); e != nil {
 		return e
 	}
+	// Guard against runaway duplicate observers targeting the same evidence path.
+	releaseLock, e := filelock.AcquireContext(context.Background(), *out+".lock", 100*time.Millisecond)
+	if e != nil {
+		return fmt.Errorf("observe lock busy (preventing duplicate soak): %w", e)
+	}
+	defer releaseLock()
 	started := time.Now().UTC()
 	s := observation{Started: started, Updated: started, Deadline: started.Add(*duration), Binary: *binary, AppPath: *app, Reads: map[string]readGate{}}
 	// A launch agent can run again after login. Preserve the interrupted run's
@@ -178,21 +192,23 @@ func observe(args []string) error {
 			return e
 		}
 	}
-	s.MonitoringStarted = time.Now().UTC()
+	lastMono := time.Now()
+	s.MonitoringStarted = lastMono.UTC()
 	s.Deadline = s.MonitoringStarted.Add(*duration)
-	lastSample := s.MonitoringStarted
+	// Hard wall-clock ceiling so sleep extensions can never turn a soak into a
+	// runaway infinite schedule.
+	s.MaxDeadline = s.MonitoringStarted.Add(max(*duration*2, *duration+48*time.Hour))
+	lastWall := s.MonitoringStarted.Round(0)
 	s.ContinuityPassed = true
 	var window appObservationWindow
 	for {
-		now := time.Now().UTC()
-		gap := now.Sub(lastSample)
-		if gap.Seconds() > s.MaxSampleGapSeconds {
-			s.MaxSampleGapSeconds = gap.Seconds()
-		}
-		if gap > 2*(*interval)+30*time.Second {
-			s.ContinuityPassed = false
-		}
-		lastSample = now
+		nowMono := time.Now()
+		now := nowMono.UTC()
+		wallGap := now.Round(0).Sub(lastWall)
+		awakeGap := nowMono.Sub(lastMono)
+		s.recordSampleGap(wallGap, awakeGap, *interval)
+		lastMono = nowMono
+		lastWall = now.Round(0)
 		s.Updated = now
 		current, err := readCLI(*binary, "capabilities")
 		if err == nil {
@@ -234,18 +250,30 @@ func observe(args []string) error {
 		pid, cpu, rss, sampleErr := appSample(filepath.Join(s.AppPath, "Contents", "MacOS", "NDevPressure"))
 		sampleTime := time.Now().UTC()
 		if sampleErr == nil {
-			s.recordAppSample(sampleTime, pid, cpu, rss, &window)
+			fpMiB, fpOK := appFootprintMiB(pid)
+			s.recordAppSampleWithFootprint(sampleTime, pid, cpu, rss, fpMiB, fpOK, &window)
 		} else {
 			s.recordAppSampleFailure(sampleTime, sampleErr)
 		}
 		s.updateAcceptance(sampleTime)
+		if *failFast {
+			if reason := s.unrecoverableReason(); reason != "" {
+				s.StoppedEarlyReason = reason
+				_ = writeJSON(*out, s)
+				return fmt.Errorf("observe stopped early: %s", reason)
+			}
+		}
 		if e = writeJSON(*out, s); e != nil {
 			return e
 		}
-		if !now.Before(s.Deadline) {
+		effectiveDeadline := s.Deadline
+		if !s.MaxDeadline.IsZero() && s.MaxDeadline.Before(effectiveDeadline) {
+			effectiveDeadline = s.MaxDeadline
+		}
+		if !now.Before(effectiveDeadline) {
 			return nil
 		}
-		time.Sleep(min(*interval, time.Until(s.Deadline)))
+		time.Sleep(min(*interval, time.Until(effectiveDeadline)))
 	}
 }
 
@@ -309,7 +337,84 @@ func (s *observation) recordAppSampleFailure(now time.Time, err error) {
 	s.AppObservedSeconds = 0
 	s.AppCPUPercent = 0
 	s.AppPeakRSSMiB = 0
+	s.AppPeakFootprintMiB = 0
 	s.AppBudgetPassed = false
+}
+
+// recordSampleGap distinguishes intentional host sleep (wall clock jumped while
+// monotonic uptime stayed inside the sample bound) from an observer stall.
+func (s *observation) recordSampleGap(wallGap, awakeGap, interval time.Duration) {
+	if awakeGap < 0 {
+		awakeGap = 0
+	}
+	maxAllowed := 2*interval + 30*time.Second
+	if wallGap > maxAllowed && awakeGap <= maxAllowed {
+		sleepDelta := wallGap - awakeGap
+		if sleepDelta > 0 {
+			s.SleepPauses++
+			s.SleepPauseSeconds += sleepDelta.Seconds()
+			if !s.Deadline.IsZero() {
+				s.Deadline = s.Deadline.Add(sleepDelta)
+				if !s.MaxDeadline.IsZero() && s.Deadline.After(s.MaxDeadline) {
+					s.Deadline = s.MaxDeadline
+				}
+			}
+		}
+		if awakeGap.Seconds() > s.MaxSampleGapSeconds {
+			s.MaxSampleGapSeconds = awakeGap.Seconds()
+		}
+		return
+	}
+	measured := max(wallGap, awakeGap)
+	if measured.Seconds() > s.MaxSampleGapSeconds {
+		s.MaxSampleGapSeconds = measured.Seconds()
+	}
+	if measured > maxAllowed {
+		s.ContinuityPassed = false
+	}
+}
+
+func (s *observation) unrecoverableReason() string {
+	switch {
+	case !s.ContinuityPassed:
+		return "continuity gap exceeded sample bound"
+	case s.ResidentRestarts > 0:
+		return "resident restarted during soak"
+	case s.AppRestarts > 0:
+		return "app restarted during soak"
+	case s.Failures > 0:
+		if s.LastFailure != "" {
+			return s.LastFailure
+		}
+		return "health check failed"
+	default:
+		return ""
+	}
+}
+
+func appFootprintMiB(pid int) (float64, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	raw, err := processtree.CommandContext(ctx, "footprint", "-p", strconv.Itoa(pid), "-f", "bytes", "--noCategories").Output()
+	if err != nil {
+		return 0, false
+	}
+	return parseFootprintBytes(string(raw))
+}
+
+func parseFootprintBytes(output string) (float64, bool) {
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "phys_footprint:") {
+			fields := strings.Fields(strings.TrimPrefix(trimmed, "phys_footprint:"))
+			if len(fields) >= 1 {
+				if v, err := strconv.ParseFloat(fields[0], 64); err == nil && v > 0 && !math.IsNaN(v) && !math.IsInf(v, 0) {
+					return v / (1024 * 1024), true
+				}
+			}
+		}
+	}
+	return 0, false
 }
 
 func appSample(executable string) (int, float64, float64, error) {
@@ -423,6 +528,10 @@ type appObservationWindow struct {
 }
 
 func (s *observation) recordAppSample(now time.Time, pid int, cpu, rss float64, w *appObservationWindow) {
+	s.recordAppSampleWithFootprint(now, pid, cpu, rss, 0, false, w)
+}
+
+func (s *observation) recordAppSampleWithFootprint(now time.Time, pid int, cpu, rss, footprintMiB float64, hasFootprint bool, w *appObservationWindow) {
 	if pid == s.AppPID && !w.started.IsZero() && (cpu < w.lastCPU || !now.After(w.started)) {
 		s.recordAppSampleFailure(now, errors.New("app_sample_counter_regressed"))
 		return
@@ -434,22 +543,36 @@ func (s *observation) recordAppSample(now time.Time, pid int, cpu, rss float64, 
 		s.AppPID = pid
 		*w = appObservationWindow{started: now, firstCPU: cpu, lastCPU: cpu}
 		s.AppPeakRSSMiB = 0
+		s.AppPeakFootprintMiB = 0
 		s.AppCPUPercent = 0
 	}
 	s.AppSampleOK = true
 	w.lastCPU = cpu
 	s.AppObservedSeconds = now.Sub(w.started).Seconds()
 	s.AppPeakRSSMiB = max(s.AppPeakRSSMiB, rss)
+	if hasFootprint && footprintMiB > 0 {
+		s.AppPeakFootprintMiB = max(s.AppPeakFootprintMiB, footprintMiB)
+		s.AppMemoryBudgetBy = "phys_footprint"
+	} else if s.AppMemoryBudgetBy == "" {
+		s.AppMemoryBudgetBy = "rss"
+	}
 	if s.AppObservedSeconds > 0 {
 		s.AppCPUPercent = 100 * (cpu - w.firstCPU) / s.AppObservedSeconds
 	}
-	s.AppBudgetPassed = s.ContinuityPassed && s.AppObservedSeconds >= 1800 && s.AppCPUPercent >= 0 && s.AppCPUPercent <= 1 && s.AppPeakRSSMiB <= 128
+	memMiB := s.AppPeakRSSMiB
+	if s.AppPeakFootprintMiB > 0 {
+		memMiB = s.AppPeakFootprintMiB
+	}
+	s.AppBudgetPassed = s.ContinuityPassed && s.AppObservedSeconds >= 1800 && s.AppCPUPercent >= 0 && s.AppCPUPercent <= 1 && memMiB <= 128
 }
 
 func (s *observation) updateAcceptance(now time.Time) {
 	elapsed := time.Duration(0)
 	if !s.MonitoringStarted.IsZero() {
-		elapsed = now.Sub(s.MonitoringStarted)
+		elapsed = now.Sub(s.MonitoringStarted) - time.Duration(s.SleepPauseSeconds*float64(time.Second))
+		if elapsed < 0 {
+			elapsed = 0
+		}
 	}
 	s.Observed24H = elapsed >= 24*time.Hour && s.ContinuityPassed
 	s.Observed72H = elapsed >= 72*time.Hour && s.ContinuityPassed

@@ -71,6 +71,10 @@ struct NDevPressureApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Keep idle physical memory footprint minimal: this app talks to local
+        // CLI/Unix-socket endpoints and does not benefit from a multi-MB URLCache.
+        URLCache.shared.memoryCapacity = 0
+        URLCache.shared.diskCapacity = 0
         NSApp.setActivationPolicy(.regular)
     }
 

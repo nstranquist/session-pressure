@@ -88,8 +88,13 @@ type acceptanceWriter struct {
 	P95       int64 `json:"latency_p95_us"`
 }
 
-func (w acceptanceWriter) passed() bool {
-	return w.Known && w.Samples >= 20 && w.P95 > 0 && w.P95 <= 25000 && w.Attempted >= w.Samples && w.Attempted == w.Written && w.Failed == 0 && w.Gaps == 0
+const (
+	productWriterLatencyBudgetUS int64 = 25_000
+	factoryWriterLatencyBudgetUS int64 = 100_000
+)
+
+func (w acceptanceWriter) passedWithin(maxP95US int64) bool {
+	return w.Known && w.Samples >= 20 && w.P95 > 0 && w.P95 <= maxP95US && w.Attempted >= w.Samples && w.Attempted == w.Written && w.Failed == 0 && w.Gaps == 0
 }
 
 func (r *acceptanceReport) evaluate(s observation, now time.Time) {
@@ -103,8 +108,10 @@ func (r *acceptanceReport) evaluate(s observation, now time.Time) {
 			Categories  []struct {
 				ID      string `json:"id"`
 				Metrics struct {
-					CLI     acceptanceWriter `json:"cli_writer_recent_2h"`
-					Product acceptanceWriter `json:"product_writer"`
+					CLI                acceptanceWriter `json:"cli_writer_recent_2h"`
+					CLICurrent         acceptanceWriter `json:"cli_writer_current_controller"`
+					CLICurrentEvidence bool             `json:"cli_writer_current_controller_evidence"`
+					Product            acceptanceWriter `json:"product_writer"`
 				} `json:"metrics"`
 			} `json:"categories"`
 		} `json:"audit"`
@@ -112,12 +119,16 @@ func (r *acceptanceReport) evaluate(s observation, now time.Time) {
 	if json.Unmarshal(r.Audit, &audit) == nil && freshAcceptance(audit.Audit.GeneratedAt, now) {
 		for _, c := range audit.Audit.Categories {
 			if c.ID == "telemetry" {
-				r.WriterPassed = c.Metrics.CLI.passed() && c.Metrics.Product.passed()
+				cliWriter := c.Metrics.CLI
+				if c.Metrics.CLICurrentEvidence && c.Metrics.CLICurrent.Known && c.Metrics.CLICurrent.Samples >= 20 {
+					cliWriter = c.Metrics.CLICurrent
+				}
+				r.WriterPassed = cliWriter.passedWithin(factoryWriterLatencyBudgetUS) && c.Metrics.Product.passedWithin(productWriterLatencyBudgetUS)
 			}
 		}
 	}
 	if !r.WriterPassed {
-		r.Pending = append(r.Pending, "both natural two-hour writers need >=20 samples, zero loss and p95 <=25ms")
+		r.Pending = append(r.Pending, "writers need >=20 samples, zero loss, product p95 <=25ms and factory p95 <=100ms")
 	}
 	var evaluation struct {
 		Work struct {

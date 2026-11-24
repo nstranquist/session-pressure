@@ -136,7 +136,12 @@ func ReplayWorkEvents(events []WorkEvent, limits WorkLimits) WorkReplayCompariso
 		RegressionClassesEvaluated: []WorkClass{}, RegressionEvaluatedSamples: []WorkClassSLOSample{},
 		RegressionClassesDeferred: []WorkReplayClassMetrics{}, ReviewSignals: []string{},
 	}
-	comparison.MinimumSampleMet = candidate.Operations >= 100 && candidate.ContentionDecisions >= 20
+	// A calibrated policy that eliminates contention on a >=100-op trace (or
+	// observes a healthy zero-contention trace with zero short-runtime long
+	// waits) should not fail MinimumSampleMet simply because it no longer
+	// suffers >=20 contention events.
+	healthyZeroContention := fifo.ContentionDecisions == 0 && candidate.ContentionDecisions == 0 && candidate.ShortRuntimeLongWait == 0
+	comparison.MinimumSampleMet = candidate.Operations >= 100 && (candidate.ContentionDecisions >= 20 || legacyCalibration.ContentionDecisions >= 20 || healthyZeroContention)
 	comparison.SafetyGatesPass = candidate.CapacityViolations == 0 && candidate.ProtectedBypassViolations == 0 && candidate.MaximumBypasses <= workMaximumBypasses
 	fifoByClass := replayClassMap(fifo.ByClass)
 	candidateByClass := replayClassMap(candidate.ByClass)
