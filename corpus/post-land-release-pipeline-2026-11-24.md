@@ -92,3 +92,16 @@ first wrapper delivery ran its gate before the push and failed with "no
 required module provides package .../frontdoor". After the push, the same
 change passed as a re-capture.
 
+Verified on the primary Mac, 2026-11-24:
+
+1. `make release-promote` at 5016690, before any front door was recorded:
+   exit 0, no `front_door` in the receipt (a host without a front door
+   is unaffected).
+2. After the wrapper landed and one `build-committed-ndev`, one call
+   through `ndev` recorded `front-door.json`.
+3. `make release-promote` at 9b1d2ba: exit 0, receipt `front_door.status`
+   `republished` at 9b1d2ba, steps end with `republish-recorded-front-door`
+   and `verify-doctor-through-front-door`. `ndev --json session pressure
+   doctor` afterwards: cli, front_door and installed_helper all 9b1d2ba,
+   `mismatch` false, source lag `current`.
+
