@@ -85,6 +85,8 @@ func TestResourceDecisionLadder(t *testing.T) {
 		{"red alone does not delay work that fits", redRoomy, job, "admit:none:fits", 0, false},
 		{"red lane admits light interactive work that would wait", red, with(func(r *ResourceRequest) { r.Interactive, r.Weight, r.FastLaneMaxWeight = true, 2, 2 }), "admit:level:red_lane", 0, false},
 		{"high disk writes lower io priority", diskHigh, job, "throttle:io:disk_write_high", 4, true},
+		{"high disk writes spare interactive work", diskHigh, with(func(r *ResourceRequest) { r.Interactive = true }), "admit:none:fits", 0, false},
+		{"high disk writes spare solo work", diskHigh, with(func(r *ResourceRequest) { r.RunningLeases = 0 }), "admit:none:fits", 0, false},
 		{"fair share halves the dominant session under warning", warning, with(func(r *ResourceRequest) { r.SessionShare, r.SessionLeases = 0.8, 3 }), "throttle:cpu:fair_share", 2, false},
 		{"fair share spares interactive work", warning, with(func(r *ResourceRequest) { r.SessionShare, r.SessionLeases, r.Interactive = 0.8, 3, true }), "admit:none:fits", 0, false},
 	}

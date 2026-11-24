@@ -358,7 +358,10 @@ func decideResourceAdmission(headroom ResourceHeadroom, request ResourceRequest)
 		}
 		return away(ResourceDimensionMemory, resourceReasonNoRoom, deficit)
 	}
-	if headroom.DiskWrite == DiskWriteStateHigh {
+	// High disk writes lower I/O priority for concurrent non-interactive work.
+	// Interactive work and solo runs are spared so routine M4 dev bursts do not
+	// wrap attended or lone commands in taskpolicy -d throttle.
+	if headroom.DiskWrite == DiskWriteStateHigh && !request.Interactive && request.RunningLeases > 0 {
 		decision.BackgroundIO = true
 	}
 	if cpu := headroom.CPU; cpu.Available && request.PredictedCores > cpu.HeadroomCores {
