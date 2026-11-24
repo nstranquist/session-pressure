@@ -1,6 +1,6 @@
 # Work queue wait audit and desktop app fixes (2026-11-24)
 
-Owner: antigravity. Status: implemented, 2026-11-24. Work: WORK-SP-2, WORK-903.
+Owner: antigravity. Status: implemented, 2026-11-24. Work: WORK-SP-2, WORK-SP-4, WORK-SP-5, WORK-SP-6, WORK-SP-7, WORK-903.
 
 ## Problem
 
@@ -86,6 +86,26 @@ memory headroom:
   - Format CLI `board` text cleanly for resource admission.
   - Add `view=headroom` and `view=placement` (`window`, `no_runners`) to
     `/v1/pressure/work`.
+
+- **Slice 4 (`sessionpressure/`, `apps/SessionPressure/`)**:
+  - Exempt interactive work (`request.Interactive`) and solo runs
+    (`request.RunningLeases == 0`) from `disk_write_high` `BackgroundIO`
+    throttling in `work_resource_headroom.go` (`WORK-SP-7`), preventing
+    routine 1 GiB/min M4 dev bursts from wrapping 78% of agent commands in
+    `taskpolicy -d throttle` while keeping concurrent non-interactive
+    background I/O throttling intact.
+  - Bump `NDev Pressure` bundle version from `1.6.0 (23)` to `1.6.1 (24)` for
+    guarded headless release promotion (`WORK-SP-4`).
+
+## Host remediation (WORK-SP-4, WORK-SP-5)
+
+- Updated host `gate-delegate.json` from the removed legacy workspace path to
+  the canonical repository path so Linux remote gates and delivery draining
+  resume cleanly.
+- Cleared the stale 2026-11-23 `recovery-hint.json` and 7 zero-byte `*.tmp-*`
+  files left by the prior disk-full event; live `doctor` returned `ok: true`.
+- Enabled closed-loop `placer: true` in `remote-work.json` (with backup) so
+  fast checks stay local on an idle host using family-key history.
 
 ## Verification
 
