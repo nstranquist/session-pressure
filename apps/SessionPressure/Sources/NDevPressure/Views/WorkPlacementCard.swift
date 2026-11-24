@@ -186,16 +186,40 @@ struct WorkPlacementCard: View {
 }
 
 /// Runner slot use. Jobs beyond the slot count are shown as overflow.
+///
+/// A small slot count draws one segment per slot. A large one (a runner
+/// whose cap is a ceiling, such as 1024 under memory admission) draws a
+/// proportional fill instead: 1024 segments with 3 pt gaps need about
+/// 3,070 pt, which pushed the whole Work Queue page off screen.
 struct SlotBar: View {
     let jobs: Int
     let slots: Int
 
+    nonisolated static let maxSegments = 24
+
+    private var fill: Color {
+        PressureTheme.levelColor(jobs >= slots ? .warning : .normal)
+    }
+
     var body: some View {
         HStack(spacing: 3) {
-            ForEach(0..<max(slots, 0), id: \.self) { index in
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(index < jobs ? PressureTheme.levelColor(jobs >= slots ? .warning : .normal) : Color.primary.opacity(0.08))
-                    .frame(height: 8)
+            if slots <= Self.maxSegments {
+                ForEach(0..<max(slots, 0), id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(index < jobs ? fill : Color.primary.opacity(0.08))
+                        .frame(height: 8)
+                }
+            } else {
+                GeometryReader { geo in
+                    let share = min(Double(max(jobs, 0)) / Double(slots), 1)
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2).fill(Color.primary.opacity(0.08))
+                        // A busy runner stays visible even at a tiny share.
+                        RoundedRectangle(cornerRadius: 2).fill(fill)
+                            .frame(width: jobs > 0 ? max(4, geo.size.width * share) : 0)
+                    }
+                }
+                .frame(height: 8)
             }
             if jobs > slots {
                 Text("+\(jobs - slots) queued")
