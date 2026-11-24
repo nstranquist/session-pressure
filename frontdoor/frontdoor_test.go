@@ -133,9 +133,9 @@ func TestWithoutWrapperEnvDropsOnlyWrapperVariables(t *testing.T) {
 		RevisionEnv + "=" + strings.Repeat("a", 40),
 		Env + `={"name":"w"}`,
 		"SESSION_PRESSURE_FRONT_DOOR_OTHER=kept",
-		"HOME=/home/x",
+		"LANG=C",
 	})
-	want := []string{"PATH=/bin", "SESSION_PRESSURE_FRONT_DOOR_OTHER=kept", "HOME=/home/x"}
+	want := []string{"PATH=/bin", "SESSION_PRESSURE_FRONT_DOOR_OTHER=kept", "LANG=C"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("WithoutWrapperEnv = %#v, want %#v", got, want)
 	}
