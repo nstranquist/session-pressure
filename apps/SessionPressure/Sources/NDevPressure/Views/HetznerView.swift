@@ -191,11 +191,17 @@ private struct RunnersCard: View {
                 Text(stale ? "No jobs in the last sample." : "No jobs running in the last sample.")
                     .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
             } else {
-                ForEach(host.liveJobs) { job in liveJobRow(job) }
+                ForEach(host.liveJobs) { job in
+                    liveJobRow(job)
+                    if hetzner.selectedJobID == job.jobID { JobLogPanel(hetzner: hetzner) }
+                }
             }
             if !host.recentRuns.isEmpty {
                 DisclosureGroup("Recent runs (\(host.recentRuns.count))") {
-                    ForEach(host.recentRuns) { job in recentRunRow(job) }
+                    ForEach(host.recentRuns) { job in
+                        recentRunRow(job)
+                        if hetzner.selectedJobID == job.jobID { JobLogPanel(hetzner: hetzner) }
+                    }
                 }
                 .font(.caption)
             }
@@ -203,7 +209,8 @@ private struct RunnersCard: View {
                 DisclosureGroup {
                     ForEach(host.kills) { kill in killRow(kill) }
                 } label: {
-                    Text("Stall kills (\(host.kills.count))").font(.caption.weight(.semibold)).foregroundStyle(.red)
+                    Text("Stall kills (\(host.kills.count)) · latest \(PressureFormat.relative(host.kills.compactMap(\.at).max()))")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.red)
                 }
             }
         }
@@ -228,23 +235,31 @@ private struct RunnersCard: View {
     }
 
     private func liveJobRow(_ job: LiveJob) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 8) {
-                Text(job.repo.isEmpty ? job.jobID : job.repo).font(.subheadline.weight(.semibold))
-                if let jobClass = job.jobClass { chip(jobClass, .secondary) }
-                verdictChip(job)
-                Spacer()
-                if let elapsed = job.elapsedS {
-                    Text(PressureFormat.duration(seconds: elapsed))
-                        .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
+        let open = hetzner.selectedJobID == job.jobID
+        return Button { hetzner.selectLiveJob(job) } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(job.repo.isEmpty ? job.jobID : job.repo).font(.subheadline.weight(.semibold))
+                    if let jobClass = job.jobClass { chip(jobClass, .secondary) }
+                    verdictChip(job)
+                    Spacer()
+                    if let elapsed = job.elapsedS {
+                        Text(PressureFormat.duration(seconds: elapsed))
+                            .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
+                    }
+                    Image(systemName: open ? "chevron.down" : "chevron.right")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
+                Text(liveJobMeta(job))
+                    .font(PressureTheme.monoCaption)
+                    .foregroundStyle(job.isStalled ? .red : .secondary)
+                    .lineLimit(2)
             }
-            Text(liveJobMeta(job))
-                .font(PressureTheme.monoCaption)
-                .foregroundStyle(job.isStalled ? .red : .secondary)
-                .lineLimit(2)
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 3)
+        .buttonStyle(.plain)
+        .help(job.phase == "running" ? "Open this job's log; it refreshes while the job runs" : "Open this job's log")
     }
 
     private func liveJobMeta(_ job: LiveJob) -> String {
@@ -262,18 +277,26 @@ private struct RunnersCard: View {
     }
 
     private func recentRunRow(_ job: LiveJob) -> some View {
-        HStack(spacing: 8) {
-            Text(job.repo.isEmpty ? job.jobID : job.repo).font(PressureTheme.monoCaption)
-            if let jobClass = job.jobClass { chip(jobClass, .secondary) }
-            chip(job.state ?? "terminal", terminalStateColor(job.state))
-            if let elapsed = job.elapsedS {
-                Text(PressureFormat.duration(seconds: elapsed)).font(PressureTheme.monoCaption).foregroundStyle(.secondary)
+        let open = hetzner.selectedJobID == job.jobID
+        return Button { hetzner.selectLiveJob(job) } label: {
+            HStack(spacing: 8) {
+                Text(job.repo.isEmpty ? job.jobID : job.repo).font(PressureTheme.monoCaption)
+                if let jobClass = job.jobClass { chip(jobClass, .secondary) }
+                chip(job.state ?? "terminal", terminalStateColor(job.state))
+                if let elapsed = job.elapsedS {
+                    Text(PressureFormat.duration(seconds: elapsed)).font(PressureTheme.monoCaption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: open ? "chevron.down" : "chevron.right")
+                    .font(.caption2).foregroundStyle(.secondary)
+                Text(PressureFormat.shortTime(job.finishedAt ?? job.updatedAt))
+                    .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
             }
-            Spacer()
-            Text(PressureFormat.shortTime(job.finishedAt ?? job.updatedAt))
-                .font(PressureTheme.monoCaption).foregroundStyle(.secondary)
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 2)
+        .buttonStyle(.plain)
+        .help("Open this job's log")
     }
 
     private func terminalStateColor(_ state: String?) -> Color {
@@ -375,7 +398,7 @@ private struct DelegateStatusCard: View {
                     Text("Bounded history: \(hetzner.delegateRuns.count) recent rows loaded; \(hetzner.malformedRows) malformed rows skipped. Counts describe this window.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Text("Read from ~/.nicos-dev/commit-delivery/v1/gate-delegate.json and its run ledger (last 1,000 rows) — display only.")
+                Text("Read from ~/.nicos-dev/commit-delivery/v1/gate-delegate.json and the gate-delegate.runs stream in side-streams.sqlite (latest 1,000 runs) — display only.")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
         }
@@ -728,7 +751,7 @@ private struct BoxJobsCard: View {
                         .padding(.top, 6)
                 }
             }
-            Text("Source: /srv/build/logs/jobs.log on \(hetzner.selectedHost ?? "the selected runner") via SSH (last 1,000 receipts), about once a minute while visible; unchanged receipts are not re-sent. Select a job to open its log.")
+            Text("Source: /srv/build/logs/jobs.log on \(hetzner.selectedHost ?? "the selected runner") via SSH (latest 1,000 receipts, \(receiptSpan)), about once a minute while visible; unchanged receipts are not re-sent. Long commands are cut in the list; select a job to open its log and full command.")
                 .font(.caption2).foregroundStyle(.tertiary).padding(.top, 6)
         }
         .onChange(of: CacheKey(revision: hetzner.jobsRevision, filter: filter), initial: true) { _, key in
@@ -739,6 +762,12 @@ private struct BoxJobsCard: View {
             try? await Task.sleep(for: .milliseconds(180))
             if !Task.isCancelled { filter.search = searchText }
         }
+    }
+
+    /// How far back the loaded receipts reach, so a short window is visible.
+    private var receiptSpan: String {
+        guard let oldest = hetzner.jobs.compactMap(\.at).min() else { return "no receipts loaded" }
+        return "back to " + PressureFormat.relative(oldest)
     }
 
     private var trailing: String {
@@ -812,7 +841,8 @@ private struct BoxJobRow: View, Equatable {
                 }
                 Text(meta).font(PressureTheme.monoCaption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 if !job.command.isEmpty {
-                    Text(job.command).font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                    Text(job.command + (job.commandTruncated == true ? " …" : ""))
+                        .font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
                 }
             }
             .padding(.vertical, 6)
@@ -835,8 +865,9 @@ private struct BoxJobRow: View, Equatable {
     }
 }
 
-/// Inline log for the selected receipt. Large logs render in a native text
-/// view so a 100 KB log does not lay out as one SwiftUI Text.
+/// Inline log for the open job: a receipt, or a live or recent scheduler
+/// job. Large logs render in a native text view so a 200 KB log does not lay
+/// out as one SwiftUI Text.
 private struct JobLogPanel: View {
     @ObservedObject var hetzner: HetznerStore
 
@@ -848,29 +879,60 @@ private struct JobLogPanel: View {
                     Text("Fetching log from \(hetzner.selectedHost ?? "the runner")…").foregroundStyle(.secondary)
                 }
             } else if let log = hetzner.jobLog {
-                HStack {
-                    Text("\(log.utf8.count >= 100_000 ? "First 100 KB of the log" : "Log") · \(log.split(separator: "\n", omittingEmptySubsequences: false).count) lines")
-                        .font(.caption).foregroundStyle(.secondary)
+                if let command = log.command, !command.isEmpty {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("Command").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        Text(command)
+                            .font(PressureTheme.monoCaption)
+                            .textSelection(.enabled)
+                            .lineLimit(6)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button { HetznerUI.copy(command) } label: { Image(systemName: "doc.on.doc") }
+                            .buttonStyle(.plain).foregroundStyle(.secondary).help("Copy the full command")
+                    }
+                }
+                HStack(spacing: 8) {
+                    Text(header(log)).font(.caption).foregroundStyle(.secondary)
+                    if hetzner.jobLogFollowing { chip("FOLLOWING", .green) }
                     Spacer()
-                    Button { HetznerUI.copy(log) } label: { Label("Copy", systemImage: "doc.on.doc") }
+                    Button { hetzner.reloadLog() } label: { Label("Reload", systemImage: "arrow.clockwise") }
+                        .controlSize(.small)
+                    Button { HetznerUI.copy(log.log) } label: { Label("Copy", systemImage: "doc.on.doc") }
                         .controlSize(.small)
                 }
-                LogTextView(text: log)
+                LogTextView(text: log.log, followTail: hetzner.jobLogFollowing || log.omittedBytes > 0)
                     .frame(height: 280)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(PressureTheme.hairline))
             } else if let error = hetzner.jobLogError {
-                Label("Log read failed: \(error). SETUP receipts can exist without a log.", systemImage: "exclamationmark.triangle")
+                Label("Log read failed: \(error)", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }
         }
         .padding(.leading, 12)
         .padding(.bottom, 8)
     }
+
+    private func header(_ log: GateRunnerJobLog) -> String {
+        let size = PressureFormat.bytes(log.bytes)
+        var text = log.omittedBytes > 0
+            ? "First 40 KB and last 160 KB of \(size) (\(PressureFormat.bytes(log.omittedBytes)) omitted)"
+            : log.bytes == 0 ? "No output yet" : "Log · \(size)"
+        if hetzner.jobLogFollowing {
+            text += " · refreshes every 15 s while the job runs"
+        } else if let at = hetzner.jobLogFetchedAt {
+            text += " · read " + PressureFormat.relative(at)
+        }
+        return text
+    }
 }
 
 private struct LogTextView: NSViewRepresentable {
     let text: String
+    /// Scroll to the end on new text: the latest output of a running job,
+    /// or the tail of a long log, is where a failure shows.
+    var followTail = false
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -889,5 +951,6 @@ private struct LogTextView: NSViewRepresentable {
         guard let view = scroll.documentView as? NSTextView, view.string != text else { return }
         view.string = text
         view.textColor = .labelColor
+        if followTail { view.scrollToEndOfDocument(nil) }
     }
 }

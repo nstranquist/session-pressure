@@ -8,6 +8,14 @@ private actor KnownJobsLog {
     func append(_ value: String?) { values.append(value) }
 }
 
+private actor LogReads {
+    private(set) var count = 0
+    func next(_ id: String) -> Int {
+        count += 1
+        return count
+    }
+}
+
 private actor RunnerProbe {
     var calls = 0
     var active = 0
@@ -199,6 +207,59 @@ struct HetznerStoreTests {
         store.stop()
     }
 
+    @Test("a running job's log follows the job, then gets one last read")
+    func followsRunningJobLog() async throws {
+        let probe = RunnerProbe()
+        await probe.setLive(RunnerProbe.sampleLive)
+        let reads = LogReads()
+        let store = HetznerStore(inspect: { box, known, _, _, _ in try await probe.read(box, known: known) },
+                                 readLog: { id, _, _ in
+            let n = await reads.next(id)
+            return GateRunnerJobLog(id: id, kind: "scheduler", log: "line \(n)\n", bytes: 7)
+        })
+        await store.refreshNow()
+        let job = try #require(store.liveHosts.first?.liveJobs.first)
+        store.selectLiveJob(job)
+        #expect(store.selectedJobID == "job-s1")
+        #expect(store.jobLogFollowing)
+        while store.jobLogLoading { await Task.yield() }
+        #expect(store.jobLog?.log == "line 1\n")
+
+        // Still running: the tick reads the log again and keeps following.
+        store.followRunningLog()
+        while await reads.count < 2 { await Task.yield() }
+        while store.jobLog?.log != "line 2\n" { await Task.yield() }
+        #expect(store.jobLogFollowing)
+
+        // The job left the running phase: one last read, then stop.
+        await probe.setLive(LiveSection(present: true, error: nil, hosts: []))
+        await store.refreshNow()
+        store.followRunningLog()
+        #expect(!store.jobLogFollowing)
+        while store.jobLog?.log != "line 3\n" { await Task.yield() }
+
+        // Selecting the same job again closes its log.
+        store.selectLiveJob(job)
+        #expect(store.selectedJobID == nil)
+        #expect(store.jobLog == nil)
+        store.stop()
+    }
+
+    @Test("a finished job's log opens without following")
+    func finishedJobLogDoesNotFollow() async throws {
+        let store = HetznerStore(inspect: { box, known, _, _, _ in
+            RunnerProbe.envelope(includeBox: box, unchanged: known != nil)
+        }, readLog: { id, _, _ in
+            GateRunnerJobLog(id: id, kind: "receipt", log: "done", bytes: 4, command: "go test ./a ./b")
+        })
+        await store.refreshNow()
+        store.selectJob(try #require(store.jobs.first))
+        #expect(!store.jobLogFollowing)
+        while store.jobLogLoading { await Task.yield() }
+        #expect(store.jobLog?.command == "go test ./a ./b")
+        store.stop()
+    }
+
     @Test("absent live section reports unavailable without hiding history")
     func absentLiveIsUnavailable() async {
         let probe = RunnerProbe()
@@ -235,7 +296,7 @@ struct HetznerStoreTests {
         }, readLog: { _, host, user in
             #expect(host == "runner-1")
             #expect(user == "reserve-user")
-            return "reserve log"
+            return GateRunnerJobLog(id: "r", kind: "receipt", log: "reserve log", bytes: 11)
         })
         await store.refreshNow()
         await store.selectHost("runner-1")
@@ -243,7 +304,7 @@ struct HetznerStoreTests {
         #expect(store.jobLog == nil)
         store.selectJob(try #require(store.jobs.first))
         while store.jobLogLoading { await Task.yield() }
-        #expect(store.jobLog == "reserve log")
+        #expect(store.jobLog?.log == "reserve log")
         store.stop()
     }
 

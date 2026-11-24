@@ -55,7 +55,9 @@ struct GateRunnerContractTests {
         // rather than assume the newest concurrent receipt has a log.
         if let jobID = ProcessInfo.processInfo.environment["PRESSURE_GATE_RUNNER_LOG_ID"] {
             let log = try await client.gateRunnerJobLog(id: jobID)
-            #expect(log.utf8.count <= 100_000)
+            // Whole up to 200 KB, else 40 KB head + 160 KB tail + one gap line.
+            #expect(log.log.utf8.count <= 200_100)
+            #expect(log.bytes >= Int64(log.log.utf8.count) - 100)
         }
     }
 }

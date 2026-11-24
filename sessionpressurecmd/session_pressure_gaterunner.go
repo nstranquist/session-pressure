@@ -107,11 +107,11 @@ func cmdSessionPressureGaterunner(g *Flags, args []string) int {
 		if len(args) != 3 || args[1] != "--id" {
 			return sessionPressureError("remote job-log requires --id JOB", 2)
 		}
-		log, e := gaterunner.JobLog(ctx, args[2])
+		result, e := gaterunner.JobLog(ctx, args[2])
 		if e != nil {
 			return sessionPressureError(e.Error(), 1)
 		}
-		return emitPressure(g, map[string]any{"ok": true, "action": "remote.job-log", "log": log}, log, 0)
+		return emitPressure(g, map[string]any{"ok": true, "action": "remote.job-log", "log": result.Log, "job_log": result}, result.Log, 0)
 	default:
 		return sessionPressureError("remote inspection requires inspect, job-log, or capacity", 2)
 	}

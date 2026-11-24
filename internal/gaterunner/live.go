@@ -1,16 +1,12 @@
 package gaterunner
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"math"
 	"os"
 	"sort"
 	"time"
-
-	"github.com/nstranquist/session-pressure/packages/processtree"
 )
 
 // Runner-live store (RUNNER-LIVENESS-DESIGN §3): the Mac-side poller keeps
@@ -262,32 +258,9 @@ func liveJobFromRow(row map[string]any) LiveJob {
 	return job
 }
 
-// queryRunnerLive runs one query-only sqlite3 read, following the
-// factory-health pattern: no database engine in-process, a short busy
-// timeout, and bounded output. The store path is validated as a regular
-// file by the caller before any query runs.
+// queryRunnerLive reads one bounded snapshot from the runner-live store.
 func queryRunnerLive(parent context.Context, path string, query string) ([]map[string]any, error) {
-	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
-	defer cancel()
-	cmd := processtree.CommandContext(ctx, "/usr/bin/sqlite3", "-readonly", "-bail", "-cmd", ".timeout 100", "-cmd", "PRAGMA query_only=ON;", "-json", path, query)
-	out := &boundedCapture{limit: 2 << 20}
-	stderr := &boundedCapture{limit: 4096}
-	cmd.Stdout = out
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		return nil, err
-	}
-	if len(bytes.TrimSpace(out.Bytes())) == 0 {
-		return []map[string]any{}, nil
-	}
-	var rows []map[string]any
-	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
-		return nil, err
-	}
-	if len(rows) > 6000 {
-		return nil, errors.New("runner-live result exceeds bound")
-	}
-	return rows, nil
+	return querySQLite(parent, path, query, 2<<20, 6000)
 }
 
 func liveStr(row map[string]any, key string) (string, bool) {

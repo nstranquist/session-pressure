@@ -2,8 +2,8 @@ import Foundation
 
 // MARK: - Models
 
-/// One row of the commit-delivery gate-delegate ledger
-/// (~/.nicos-dev/commit-delivery/v1/gate-delegate/runs.jsonl). The worker
+/// One row of the commit-delivery gate-delegate ledger (the gate-delegate.runs
+/// stream in ~/.nicos-dev/commit-delivery/v1/side-streams.sqlite). The worker
 /// writes one row per delegated gate check: the Hetzner box ran the check,
 /// and the row records whether the box verdict was merely shadow-compared
 /// against the local run or actually used in place of it.
@@ -135,6 +135,8 @@ public struct BoxJob: Decodable, Identifiable, Sendable {
     public let durationSeconds: Int?
     public let macEst: String?
     public let command: String
+    /// The runner cut this receipt's command; the job log carries it whole.
+    public var commandTruncated: Bool?
 
     public var isSetupFailure: Bool { exitCode == "SETUP" }
     public var isSuccess: Bool { exitCode == "0" }
@@ -150,8 +152,37 @@ public struct BoxJob: Decodable, Identifiable, Sendable {
         case durationSeconds = "duration_seconds"
         case macEst = "mac_est"
         case command
+        case commandTruncated = "command_truncated"
     }
 
+}
+
+/// One bounded job log read (`remote job-log`). A log up to 200 KB comes
+/// whole; a longer one is its first 40 KB and last 160 KB around an
+/// "N bytes omitted" line. Receipt logs also carry the full command.
+public struct GateRunnerJobLog: Decodable, Sendable, Equatable {
+    public let id: String
+    /// "receipt" (finished job, /srv/build/logs/jobs) or "scheduler" (a live
+    /// or recent scheduler job, /srv/build/scheduler).
+    public let kind: String
+    public let log: String
+    public let bytes: Int64
+    public let omittedBytes: Int64
+    public let command: String?
+
+    public init(id: String, kind: String, log: String, bytes: Int64, omittedBytes: Int64 = 0, command: String? = nil) {
+        self.id = id
+        self.kind = kind
+        self.log = log
+        self.bytes = bytes
+        self.omittedBytes = omittedBytes
+        self.command = command
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, log, bytes, command
+        case omittedBytes = "omitted_bytes"
+    }
 }
 
 

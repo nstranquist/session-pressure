@@ -26,8 +26,28 @@ import (
 	"github.com/nstranquist/session-pressure/packages/processtree"
 )
 
-const maxFileBytes = 4 << 20
 const maxRows = 1000
+
+// The delegate run ledger is the gate-delegate.runs side stream in the
+// delivery lane's side-streams.sqlite (it replaced gate-delegate/runs.jsonl
+// on 2026-11-16). Rows are append-only JSON bodies keyed by seq.
+const (
+	sideStreamsName    = "side-streams.sqlite"
+	delegateRunsStream = "gate-delegate.runs"
+)
+
+// Receipt lines carry the full escaped command, up to about 21 KB each, so
+// 1,000 raw lines are about 6.5 MB. The runner cuts each line to
+// receiptLineBytes and marks a cut line with a trailing \x01 byte, which keeps
+// the minute-cadence read near 500 KB and lets the latest 1,000 receipts fit
+// the wire budget. The full command comes with the job log (JobLog).
+const (
+	receiptLineBytes  = 512
+	receiptCutMarker  = "\x01"
+	receiptsReadLimit = 768 << 10
+	rowsWireBudget    = 1 << 20
+	receiptsScript    = `tail -n 1000 /srv/build/logs/jobs.log | LC_ALL=C awk '{ if (length($0) > 512) printf "%s\001\n", substr($0, 1, 512); else print }' && printf '\n__HZ_HEALTH__\n' && cat /proc/loadavg && free -m && df -P / && uptime -p`
+)
 
 type Run struct {
 	ID                string     `json:"id"`
@@ -84,6 +104,9 @@ type Job struct {
 	DurationSeconds *int       `json:"duration_seconds"`
 	MacEst          *string    `json:"mac_est"`
 	Command         string     `json:"command"`
+	// CommandTruncated marks a receipt the runner cut to receiptLineBytes;
+	// JobLog returns the full command.
+	CommandTruncated bool `json:"command_truncated,omitempty"`
 }
 type Inspection struct {
 	Host             string        `json:"host"`
@@ -132,7 +155,7 @@ func InspectWithCursors(ctx context.Context, home string, includeBox bool, known
 	fleetReady := make(chan *FleetSection, 1)
 	go func() { fleetReady <- readFleet(ctx, home, includeBox) }()
 	dir := filepath.Join(home, ".nicos-dev", "commit-delivery", "v1")
-	runs, present, truncated, malformed, signature, unchanged, err := readLedgerSince(filepath.Join(dir, "gate-delegate", "runs.jsonl"), known)
+	runs, present, truncated, malformed, signature, unchanged, err := readDelegateRuns(ctx, filepath.Join(dir, sideStreamsName), known)
 	s.LedgerPresent, s.HistoryTruncated, s.MalformedRows = present, truncated, malformed
 	s.LedgerSignature, s.LedgerUnchanged = signature, unchanged
 	if err != nil {
@@ -151,7 +174,7 @@ func InspectWithCursors(ctx context.Context, home string, includeBox bool, known
 		s.Config = config
 	}
 	if includeBox {
-		output, e := runSSH(ctx, "tail -n 1000 /srv/build/logs/jobs.log && printf '\n__HZ_HEALTH__\n' && cat /proc/loadavg && free -m && df -P / && uptime -p", 1<<20)
+		output, e := runSSH(ctx, receiptsScript, receiptsReadLimit)
 		if e != nil {
 			s.BoxError = "gate_runner_read_failed"
 			s.BoxFailure = sshFailureKind(e)
@@ -189,9 +212,9 @@ func InspectWithCursors(ctx context.Context, home string, includeBox bool, known
 			}
 		}
 	}
-	s.Runs, truncated = boundRows(s.Runs, 512<<10)
+	s.Runs, truncated = boundRows(s.Runs, rowsWireBudget)
 	s.HistoryTruncated = s.HistoryTruncated || truncated
-	s.Jobs, _ = boundRows(s.Jobs, 512<<10)
+	s.Jobs, _ = boundRows(s.Jobs, rowsWireBudget)
 	s.Fleet = <-fleetReady
 	s.CapturedAt = time.Now().UTC()
 	return s
@@ -210,111 +233,98 @@ func parseDate(s string) *time.Time {
 	return &t
 }
 
-// Read a bounded suffix, discard only an incomplete first line, and keep the
-// latest 1000 complete rows. Files and configurations must be regular files.
-func readLedger(path string) ([]Run, bool, bool, int, error) {
-	rows, present, truncated, malformed, _, _, err := readLedgerSince(path, "")
-	return rows, present, truncated, malformed, err
-}
-func readLedgerSince(path, known string) ([]Run, bool, bool, int, string, bool, error) {
-	f, e := openRegular(path)
-	if os.IsNotExist(e) {
+// readDelegateRuns reads the latest maxRows gate-delegate runs, newest
+// first. A missing store is absent history, not an error. The signature
+// names the stream's committed extent (row count and top seq), so an
+// unchanged ledger is not decoded or re-sent.
+func readDelegateRuns(ctx context.Context, path, known string) ([]Run, bool, bool, int, string, bool, error) {
+	st, err := os.Lstat(path)
+	if os.IsNotExist(err) {
 		return []Run{}, false, false, 0, "", false, nil
 	}
-	if e != nil {
-		return nil, false, false, 0, "", false, e
+	if err != nil || !st.Mode().IsRegular() {
+		return nil, false, false, 0, "", false, errors.New("side-stream store must be a regular file")
 	}
-	defer f.Close()
-	st, e := f.Stat()
-	if e != nil || !st.Mode().IsRegular() {
-		return nil, false, false, 0, "", false, errors.New("ledger must be regular")
+	extent, err := querySQLite(ctx, path, "SELECT count(*) AS n, coalesce(max(seq), 0) AS top FROM stream_rows WHERE stream = '"+delegateRunsStream+"'", 4096, 1)
+	if err != nil || len(extent) != 1 {
+		return nil, true, false, 0, "", false, errors.New("delegate ledger extent unreadable")
 	}
-	truncated := st.Size() > maxFileBytes
-	if truncated {
-		if _, e = f.Seek(-maxFileBytes, io.SeekEnd); e != nil {
-			return nil, true, true, 0, "", false, e
-		}
-	}
-	raw, e := io.ReadAll(io.LimitReader(f, maxFileBytes+1))
-	if e != nil || len(raw) > maxFileBytes {
-		return nil, true, truncated, 0, "", false, errors.New("ledger exceeds read bound")
-	}
-	if truncated {
-		_, raw, _ = bytes.Cut(raw, []byte("\n"))
-	}
-	// A writer may still be appending its last line. Do not count that prefix as
-	// a malformed committed receipt or cache it as a complete record.
-	if end := bytes.LastIndexByte(raw, '\n'); end >= 0 {
-		raw = raw[:end]
-	} else {
-		raw = nil
-	}
-	digest := sha256.Sum256(raw)
+	count, _ := extent[0]["n"].(float64)
+	top, _ := extent[0]["top"].(float64)
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s:%.0f:%.0f", delegateRunsStream, count, top)))
 	signature := hex.EncodeToString(digest[:])
+	truncated := count > maxRows
 	if known != "" && known == signature {
 		return []Run{}, true, truncated, 0, signature, true, nil
 	}
-	lines := bytes.Split(raw, []byte("\n"))
-	if len(lines) > maxRows {
-		lines = lines[len(lines)-maxRows:]
-		truncated = true
+	rows, err := querySQLite(ctx, path, fmt.Sprintf("SELECT body FROM stream_rows WHERE stream = '%s' AND seq <= %.0f ORDER BY seq DESC LIMIT %d", delegateRunsStream, top, maxRows), 4<<20, maxRows)
+	if err != nil {
+		return nil, true, truncated, 0, "", false, err
 	}
 	runs := []Run{}
 	malformed := 0
 	occurrences := map[string]int{}
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := lines[i]
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
-		var row struct {
-			At            string `json:"at"`
-			Mode          string `json:"mode"`
-			Decision      string `json:"decision"`
-			DeliveryID    string `json:"delivery_id"`
-			Repository    string `json:"repository"`
-			BoxRepository string `json:"box_repository"`
-			Command       string `json:"command"`
-			Verify        struct {
-				Argv []string `json:"argv"`
-			} `json:"verify"`
-			Local struct {
-				Passed      *bool   `json:"passed"`
-				MS          *int64  `json:"ms"`
-				Detail      *string `json:"detail"`
-				Environment *string `json:"environment"`
-			} `json:"local"`
-			Remote struct {
-				Ran          bool    `json:"ran"`
-				Passed       *bool   `json:"passed"`
-				Exit         *int    `json:"exit"`
-				RunMS        *int64  `json:"run_ms"`
-				WallMS       *int64  `json:"wall_ms"`
-				Stage        *string `json:"stage"`
-				TreeVerified *bool   `json:"tree_verified"`
-			} `json:"remote"`
-			Tree              *string `json:"tree"`
-			PolicyDigest      *string `json:"policy_digest"`
-			RemotePassAllowed *bool   `json:"remote_pass_allowed"`
-			Agreement         *bool   `json:"agreement"`
-		}
-		if json.Unmarshal(line, &row) != nil || row.DeliveryID == "" || row.At == "" || parseDate(row.At) == nil {
+	for _, r := range rows {
+		raw, _ := r["body"].(string)
+		run, ok := parseDelegateRun([]byte(raw), occurrences)
+		if !ok {
 			malformed++
 			continue
 		}
-		if row.Command == "" {
-			row.Command = strings.Join(row.Verify.Argv, " ")
-		}
-		name := row.BoxRepository
-		if name == "" {
-			name = filepath.Base(row.Repository)
-		}
-		baseID := row.DeliveryID + "@" + row.At
-		occurrence := occurrences[baseID]
-		occurrences[baseID]++
-		runs = append(runs, Run{ID: fmt.Sprintf("%s@%d", baseID, occurrence), At: parseDate(row.At), Mode: row.Mode, Decision: row.Decision, DeliveryID: row.DeliveryID, RepoName: name, RepoPath: row.Repository, Command: row.Command, LocalPassed: row.Local.Passed, LocalMS: row.Local.MS, LocalDetail: row.Local.Detail, LocalEnvironment: row.Local.Environment, Agreement: row.Agreement, RemoteRan: row.Remote.Ran, RemotePassed: row.Remote.Passed, RemoteExit: row.Remote.Exit, RemoteRunMS: row.Remote.RunMS, RemoteWallMS: row.Remote.WallMS, RemoteStage: row.Remote.Stage, TreeVerified: row.Remote.TreeVerified, TreeHash: row.Tree, PolicyDigest: row.PolicyDigest, RemotePassAllowed: row.RemotePassAllowed})
+		runs = append(runs, run)
 	}
 	return runs, true, truncated, malformed, signature, false, nil
+}
+
+// parseDelegateRun projects one ledger body. occurrences keeps repeated
+// delivery@at rows distinct, newest first.
+func parseDelegateRun(line []byte, occurrences map[string]int) (Run, bool) {
+	var row struct {
+		At            string `json:"at"`
+		Mode          string `json:"mode"`
+		Decision      string `json:"decision"`
+		DeliveryID    string `json:"delivery_id"`
+		Repository    string `json:"repository"`
+		BoxRepository string `json:"box_repository"`
+		Command       string `json:"command"`
+		Verify        struct {
+			Argv []string `json:"argv"`
+		} `json:"verify"`
+		Local struct {
+			Passed      *bool   `json:"passed"`
+			MS          *int64  `json:"ms"`
+			Detail      *string `json:"detail"`
+			Environment *string `json:"environment"`
+		} `json:"local"`
+		Remote struct {
+			Ran          bool    `json:"ran"`
+			Passed       *bool   `json:"passed"`
+			Exit         *int    `json:"exit"`
+			RunMS        *int64  `json:"run_ms"`
+			WallMS       *int64  `json:"wall_ms"`
+			Stage        *string `json:"stage"`
+			TreeVerified *bool   `json:"tree_verified"`
+		} `json:"remote"`
+		Tree              *string `json:"tree"`
+		PolicyDigest      *string `json:"policy_digest"`
+		RemotePassAllowed *bool   `json:"remote_pass_allowed"`
+		Agreement         *bool   `json:"agreement"`
+	}
+	if json.Unmarshal(line, &row) != nil || row.DeliveryID == "" || row.At == "" || parseDate(row.At) == nil {
+		return Run{}, false
+	}
+	// command is a short label ("go run"); verify.argv is what ran.
+	if len(row.Verify.Argv) > 0 {
+		row.Command = strings.Join(row.Verify.Argv, " ")
+	}
+	name := row.BoxRepository
+	if name == "" {
+		name = filepath.Base(row.Repository)
+	}
+	baseID := row.DeliveryID + "@" + row.At
+	occurrence := occurrences[baseID]
+	occurrences[baseID]++
+	return Run{ID: fmt.Sprintf("%s@%d", baseID, occurrence), At: parseDate(row.At), Mode: row.Mode, Decision: row.Decision, DeliveryID: row.DeliveryID, RepoName: name, RepoPath: row.Repository, Command: row.Command, LocalPassed: row.Local.Passed, LocalMS: row.Local.MS, LocalDetail: row.Local.Detail, LocalEnvironment: row.Local.Environment, Agreement: row.Agreement, RemoteRan: row.Remote.Ran, RemotePassed: row.Remote.Passed, RemoteExit: row.Remote.Exit, RemoteRunMS: row.Remote.RunMS, RemoteWallMS: row.Remote.WallMS, RemoteStage: row.Remote.Stage, TreeVerified: row.Remote.TreeVerified, TreeHash: row.Tree, PolicyDigest: row.PolicyDigest, RemotePassAllowed: row.RemotePassAllowed}, true
 }
 func readConfig(path string) (*Config, error) {
 	f, e := openRegular(path)
@@ -355,28 +365,110 @@ func readConfig(path string) (*Config, error) {
 
 var jobIDPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9]+$`)
 
-func JobLog(ctx context.Context, id string) (string, error) {
-	if !jobIDPattern.MatchString(id) || len(id) > 64 {
-		return "", errors.New("invalid gate-runner job id")
-	}
-	raw, e := runSSH(ctx, "head -c 100000 /srv/build/logs/jobs/"+id+".log", 100000)
-	if e != nil {
-		return "", errors.New("gate-runner job log unavailable")
-	}
-	return string(raw), nil
+// schedulerJobPattern matches a scheduler job (a live or recent job in the
+// runner-live feed). Its output is /srv/build/scheduler/<id>.log and grows
+// while the job runs.
+var schedulerJobPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// A log up to jobLogWhole bytes comes back whole. A longer log comes back as
+// its first jobLogHead and last jobLogTail bytes: setup context plus the end,
+// where a failure or the latest output of a running job is.
+const (
+	jobLogWhole = 200_000
+	jobLogHead  = 40_000
+	jobLogTail  = 160_000
+	// jobLogGap separates head and tail; printf prints it verbatim.
+	jobLogGap = "\n\x1eHZ_GAP\x1e\n"
+)
+
+// JobLogResult is one bounded job log read.
+type JobLogResult struct {
+	ID           string `json:"id"`
+	Kind         string `json:"kind"` // receipt or scheduler
+	Log          string `json:"log"`
+	Bytes        int64  `json:"bytes"`
+	OmittedBytes int64  `json:"omitted_bytes"`
+	// Command is the full receipt command (receipt logs only); the inspect
+	// list may carry a cut copy.
+	Command *string `json:"command,omitempty"`
 }
 
+func jobLogTarget(id string) (path, kind string, ok bool) {
+	switch {
+	case len(id) <= 64 && jobIDPattern.MatchString(id):
+		return "/srv/build/logs/jobs/" + id + ".log", "receipt", true
+	case schedulerJobPattern.MatchString(id):
+		return "/srv/build/scheduler/" + id + ".log", "scheduler", true
+	}
+	return "", "", false
+}
+
+// jobLogScript prints the size line, the receipt line (receipts only), a
+// marker, then the whole log or its head and tail around a gap marker. The id
+// is validated before it reaches the shell.
+func jobLogScript(id, path, kind string) string {
+	receipt := ""
+	if kind == "receipt" {
+		receipt = fmt.Sprintf(`grep -F -- ' job=%s ' /srv/build/logs/jobs.log | tail -n 1; `, id)
+	}
+	return fmt.Sprintf(`f=%s; if [ ! -f "$f" ]; then echo __HZ_MISSING__; exit 0; fi; s=$(($(wc -c < "$f"))); echo "__HZ_SIZE__ $s"; %secho __HZ_LOG__; if [ "$s" -le %d ]; then head -c %d "$f"; else head -c %d "$f"; printf '%s'; tail -c %d "$f"; fi`,
+		path, receipt, jobLogWhole, jobLogWhole, jobLogHead, jobLogGap, jobLogTail)
+}
+
+func JobLog(ctx context.Context, id string) (JobLogResult, error) {
+	path, kind, ok := jobLogTarget(id)
+	if !ok {
+		return JobLogResult{}, errors.New("invalid gate-runner job id")
+	}
+	raw, e := runSSH(ctx, jobLogScript(id, path, kind), jobLogWhole+64<<10)
+	if e != nil {
+		return JobLogResult{}, errors.New("gate-runner job log unavailable")
+	}
+	return parseJobLog(id, kind, string(raw))
+}
+
+func parseJobLog(id, kind, raw string) (JobLogResult, error) {
+	if strings.HasPrefix(raw, "__HZ_MISSING__") {
+		return JobLogResult{}, errors.New("gate-runner job log not found (SETUP receipts and queued jobs have none)")
+	}
+	header, body, ok := strings.Cut(raw, "__HZ_LOG__\n")
+	sizeLine, rest, _ := strings.Cut(header, "\n")
+	size, err := strconv.ParseInt(strings.TrimPrefix(sizeLine, "__HZ_SIZE__ "), 10, 64)
+	if !ok || !strings.HasPrefix(sizeLine, "__HZ_SIZE__ ") || err != nil || size < 0 {
+		return JobLogResult{}, errors.New("gate-runner job log payload invalid")
+	}
+	result := JobLogResult{ID: id, Kind: kind, Bytes: size}
+	if kind == "receipt" {
+		if job, ok := ParseJob(strings.TrimSpace(rest)); ok && job.ID == id {
+			result.Command = &job.Command
+		}
+	}
+	if head, tail, split := strings.Cut(body, jobLogGap); split {
+		// A running log grows between stat and tail, so the omitted count is
+		// a lower bound from the size at stat time.
+		result.OmittedBytes = max(0, size-int64(jobLogHead+jobLogTail))
+		body = head + fmt.Sprintf("\n\n… %d bytes omitted …\n\n", result.OmittedBytes) + tail
+	}
+	result.Log = strings.ToValidUTF8(body, "\uFFFD")
+	return result, nil
+}
+
+// boundedCapture fails a write past limit. It does not embed bytes.Buffer:
+// io.Copy would use Buffer.ReadFrom and skip the limit entirely.
 type boundedCapture struct {
-	bytes.Buffer
+	buf   bytes.Buffer
 	limit int
 }
 
 func (b *boundedCapture) Write(p []byte) (int, error) {
-	if len(p) > b.limit-b.Len() {
+	if len(p) > b.limit-b.buf.Len() {
 		return 0, errors.New("gate-runner output exceeds bound")
 	}
-	return b.Buffer.Write(p)
+	return b.buf.Write(p)
 }
+func (b *boundedCapture) Bytes() []byte { return b.buf.Bytes() }
+func (b *boundedCapture) Len() int      { return b.buf.Len() }
+
 func runSSH(parent context.Context, remote string, limit int) ([]byte, error) {
 	target := runnerTarget(parent)
 	if target == "" {
@@ -452,7 +544,13 @@ func runnerTarget(ctx context.Context) string {
 	return ""
 }
 func ParseJob(line string) (Job, bool) {
-	head, command, _ := strings.Cut(line, " cmd=")
+	cut := strings.HasSuffix(line, receiptCutMarker)
+	line = strings.TrimSuffix(line, receiptCutMarker)
+	head, command, hasCommand := strings.Cut(line, " cmd=")
+	if cut && !hasCommand {
+		// The cut fell before cmd=; the fields after it are unknown.
+		return Job{}, false
+	}
 	tokens := strings.Fields(head)
 	if len(tokens) < 2 {
 		return Job{}, false
@@ -483,25 +581,89 @@ func ParseJob(line string) (Job, bool) {
 	if exit == "" {
 		exit = "?"
 	}
-	return Job{ID: id, At: parseDate(tokens[0]), Caller: fields["caller"], Repo: fields["repo"], SHA: value("sha"), Cand: value("cand"), JobClass: value("class"), ExitCode: exit, DurationSeconds: dur, MacEst: value("mac_est"), Command: unescape(command)}, true
+	return Job{ID: id, At: parseDate(tokens[0]), Caller: fields["caller"], Repo: fields["repo"], SHA: value("sha"), Cand: value("cand"), JobClass: value("class"), ExitCode: exit, DurationSeconds: dur, MacEst: value("mac_est"), Command: strings.ToValidUTF8(unquoteShell(command), ""), CommandTruncated: cut}, true
 }
-func unescape(raw string) string {
-	var out strings.Builder
-	escaped := false
-	for _, r := range raw {
-		if escaped {
-			out.WriteRune(r)
-			escaped = false
-		} else if r == '\\' {
-			escaped = true
-		} else {
-			out.WriteRune(r)
+
+// unquoteShell decodes a receipt cmd= value, which the runner writes with
+// bash printf %q: backslash escapes for plain words, '...' for literals and
+// $'...' (ANSI-C quoting) once the command holds a newline or control byte.
+// A receipt the runner cut can end inside a quote; the decoder then keeps
+// what it has instead of failing.
+func unquoteShell(raw string) string {
+	out := make([]byte, 0, len(raw))
+	for i := 0; i < len(raw); {
+		switch {
+		case strings.HasPrefix(raw[i:], "$'"):
+			i += 2
+			for i < len(raw) && raw[i] != '\'' {
+				if raw[i] != '\\' || i+1 >= len(raw) {
+					out = append(out, raw[i])
+					i++
+					continue
+				}
+				var decoded []byte
+				decoded, i = ansiCEscape(raw, i+1)
+				out = append(out, decoded...)
+			}
+			i++
+		case raw[i] == '\'':
+			j := strings.IndexByte(raw[i+1:], '\'')
+			if j < 0 {
+				return string(append(out, raw[i+1:]...))
+			}
+			out = append(out, raw[i+1:i+1+j]...)
+			i += j + 2
+		case raw[i] == '\\' && i+1 < len(raw):
+			out = append(out, raw[i+1])
+			i += 2
+		default:
+			out = append(out, raw[i])
+			i++
 		}
 	}
-	if escaped {
-		out.WriteRune('\\')
+	return string(out)
+}
+
+// ansiCEscape decodes one bash $'...' escape whose letter starts at raw[i]
+// and returns the bytes and the index after the escape.
+func ansiCEscape(raw string, i int) ([]byte, int) {
+	simple := map[byte]byte{'a': 7, 'b': 8, 'e': 27, 'E': 27, 'f': 12, 'n': '\n', 'r': '\r', 't': '\t', 'v': 11, '\\': '\\', '\'': '\'', '"': '"', '?': '?'}
+	c := raw[i]
+	if b, ok := simple[c]; ok {
+		return []byte{b}, i + 1
 	}
-	return out.String()
+	digits := func(start, max, base int) (int, int) {
+		n, j := 0, start
+		for j < len(raw) && j-start < max {
+			d, err := strconv.ParseUint(raw[j:j+1], base, 8)
+			if err != nil {
+				break
+			}
+			n = n*base + int(d)
+			j++
+		}
+		return n, j
+	}
+	switch {
+	case c >= '0' && c <= '7':
+		n, j := digits(i, 3, 8)
+		return []byte{byte(n)}, j
+	case c == 'x':
+		if n, j := digits(i+1, 2, 16); j > i+1 {
+			return []byte{byte(n)}, j
+		}
+	case c == 'u' || c == 'U':
+		max := 4
+		if c == 'U' {
+			max = 8
+		}
+		if n, j := digits(i+1, max, 16); j > i+1 {
+			return []byte(string(rune(n))), j
+		}
+	case c == 'c' && i+1 < len(raw):
+		return []byte{raw[i+1] & 0x1f}, i + 2
+	}
+	return []byte{'\\', c}, i + 1
 }
 func ParseHealth(raw string) Health {
 	h := Health{}

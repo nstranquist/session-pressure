@@ -56,7 +56,7 @@ struct DelegateStats: Sendable {
 final class HetznerStore: ObservableObject {
     /// (includeBox, knownLedger, host, user, knownJobs)
     typealias Inspect = @Sendable (Bool, String?, String?, String?, String?) async throws -> GateRunnerEnvelope
-    typealias ReadLog = @Sendable (String, String?, String?) async throws -> String
+    typealias ReadLog = @Sendable (String, String?, String?) async throws -> GateRunnerJobLog
     @Published private(set) var delegateRuns: [DelegateRun] = [] { didSet { runsRevision &+= 1 } }
     @Published private(set) var runsRevision = 0
     @Published private(set) var delegateStats = DelegateStats()
@@ -84,10 +84,15 @@ final class HetznerStore: ObservableObject {
     @Published private(set) var liveError: String?
     @Published private(set) var liveCheckedAt: Date?
     @Published private(set) var refreshing = false
-    @Published var selectedJobID: String?
-    @Published private(set) var jobLog: String?
+    /// The one open log: a receipt id, or a live or recent scheduler job id.
+    @Published private(set) var selectedJobID: String?
+    @Published private(set) var jobLog: GateRunnerJobLog?
     @Published private(set) var jobLogError: String?
     @Published private(set) var jobLogLoading = false
+    /// True while the open log belongs to a running job; its log is read
+    /// again on each 15-second tick until the job leaves the running phase.
+    @Published private(set) var jobLogFollowing = false
+    @Published private(set) var jobLogFetchedAt: Date?
     private let inspect: Inspect
     private let readLog: ReadLog
     private var loopTask: Task<Void, Never>?
@@ -117,6 +122,7 @@ final class HetznerStore: ObservableObject {
                 do { try await Task.sleep(for: .seconds(15)) } catch { break }
                 tick += 1
                 await self?.refresh(includeBox: tick % 4 == 0)
+                self?.followRunningLog()
             }
         }
     }
@@ -131,6 +137,7 @@ final class HetznerStore: ObservableObject {
         logTask = nil
         refreshing = false
         jobLogLoading = false
+        jobLogFollowing = false
     }
 
     func refreshNow() async { await refresh(includeBox: true) }
@@ -253,35 +260,75 @@ final class HetznerStore: ObservableObject {
         selectedJobID = nil
         jobLog = nil
         jobLogError = nil
+        jobLogFollowing = false
+        jobLogFetchedAt = nil
         if wasPolling { start() } else { await refreshNow() }
     }
 
-    func selectJob(_ job: BoxJob) {
+    /// Opens or closes a finished receipt's log.
+    func selectJob(_ job: BoxJob) { toggleLog(id: job.id, running: false) }
+
+    /// Opens or closes a live or recent scheduler job's log. A running job's
+    /// log follows the job until it finishes.
+    func selectLiveJob(_ job: LiveJob) { toggleLog(id: job.jobID, running: job.phase == "running") }
+
+    /// Reads the open log again now.
+    func reloadLog() {
+        guard let id = selectedJobID else { return }
+        fetchLog(id: id, showLoading: jobLog == nil)
+    }
+
+    private func toggleLog(id: String, running: Bool) {
         logTask?.cancel()
         jobLog = nil
         jobLogError = nil
-        if selectedJobID == job.id {
+        jobLogFetchedAt = nil
+        if selectedJobID == id {
             selectedJobID = nil
             jobLogLoading = false
+            jobLogFollowing = false
             return
         }
-        selectedJobID = job.id
-        jobLogLoading = true
+        selectedJobID = id
+        jobLogFollowing = running
+        fetchLog(id: id, showLoading: true)
+    }
+
+    /// Called after each tick's refresh. A followed job that is no longer
+    /// running in the live feed gets one last read, then stops following.
+    func followRunningLog() {
+        guard jobLogFollowing, let id = selectedJobID, logTask == nil else { return }
+        let stillRunning = liveHosts.contains { host in
+            host.liveJobs.contains { $0.jobID == id && $0.phase == "running" }
+        }
+        if !stillRunning { jobLogFollowing = false }
+        fetchLog(id: id, showLoading: false)
+    }
+
+    private func fetchLog(id: String, showLoading: Bool) {
+        logTask?.cancel()
+        if showLoading { jobLogLoading = true }
         let readLog = self.readLog
         let host = selectedHost
         let user = fleet?.hosts.first(where: { $0.name == host })?.user
         let token = generation
         logTask = Task { [weak self] in
-            do {
-                let result = try await readLog(job.id, host, user)
-                guard let self, !Task.isCancelled, self.generation == token, self.selectedJobID == job.id else { return }
-                self.jobLog = result
-                self.jobLogLoading = false
-            } catch {
-                guard let self, !Task.isCancelled, self.generation == token, self.selectedJobID == job.id else { return }
-                self.jobLogError = error.localizedDescription
-                self.jobLogLoading = false
+            let result: Result<GateRunnerJobLog, Error>
+            do { result = .success(try await readLog(id, host, user)) } catch { result = .failure(error) }
+            guard let self, !Task.isCancelled, self.generation == token, self.selectedJobID == id else { return }
+            switch result {
+            case .success(let log):
+                // An unchanged log is not reassigned, so the text view keeps
+                // its scroll position and selection.
+                if self.jobLog != log { self.jobLog = log }
+                self.jobLogError = nil
+                self.jobLogFetchedAt = Date()
+            case .failure(let error):
+                // A failed follow-up read keeps the last good log on screen.
+                if self.jobLog == nil { self.jobLogError = error.localizedDescription }
             }
+            self.jobLogLoading = false
+            self.logTask = nil
         }
     }
 }

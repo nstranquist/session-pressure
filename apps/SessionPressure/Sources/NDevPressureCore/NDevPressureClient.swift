@@ -193,8 +193,9 @@ public struct NDevPressureClient: Sendable {
         if !includeBox { args.append("--no-box") }
         if let knownLedger, !knownLedger.isEmpty { args += ["--known-ledger", knownLedger] }
         if includeBox, let knownJobs, !knownJobs.isEmpty { args += ["--known-jobs", knownJobs] }
+        // 1,000 delegate runs and 1,000 receipts measure about 1.6 MB.
         return try await runJSON(GateRunnerEnvelope.self, arguments: args,
-                                 maximumResponseBytes: 2 * 1024 * 1024, timeoutSeconds: 16)
+                                 maximumResponseBytes: 4 * 1024 * 1024, timeoutSeconds: 16)
     }
 
     /// Reads every fleet runner in parallel (one SSH round trip each, 12 s
@@ -205,16 +206,23 @@ public struct NDevPressureClient: Sendable {
                           maximumResponseBytes: 2 * 1024 * 1024, timeoutSeconds: 18)
     }
 
-    public func gateRunnerJobLog(id: String, host: String? = nil, user: String? = nil) async throws -> String {
-        struct Envelope: Decodable { let ok: Bool; let log: String }
+    public func gateRunnerJobLog(id: String, host: String? = nil, user: String? = nil) async throws -> GateRunnerJobLog {
+        struct Envelope: Decodable {
+            let ok: Bool
+            let log: String
+            let jobLog: GateRunnerJobLog?
+            enum CodingKeys: String, CodingKey { case ok, log, jobLog = "job_log" }
+        }
         var args = ["--json", "session", "pressure", "remote", "job-log", "--id", id]
         if let host { args += ["--host", host] }
         if let user { args += ["--user", user] }
         let result = try await runJSON(Envelope.self,
             arguments: args,
-            maximumResponseBytes: 1024 * 1024, timeoutSeconds: 16)
+            maximumResponseBytes: 2 * 1024 * 1024, timeoutSeconds: 16)
         guard result.ok else { throw NDevPressureClientError.emptyResponse }
-        return result.log
+        // A CLI older than job_log (a saved binary override) sends only the
+        // first 100 KB as `log`.
+        return result.jobLog ?? GateRunnerJobLog(id: id, kind: "receipt", log: result.log, bytes: Int64(result.log.utf8.count))
     }
 
     public func capabilities() async throws -> CapabilitiesEnvelope {
