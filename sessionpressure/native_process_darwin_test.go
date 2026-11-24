@@ -350,14 +350,26 @@ func TestNativeSamplerBuildsAgentTreesWithinOperatorBudget(t *testing.T) {
 	if snapshot.AgentTreeCount < 1 || snapshot.AgentRSSSumMB <= 0 {
 		t.Skipf("no agent trees on host (AgentTreeCount=%d AgentRSSSumMB=%v); host inventory still healthy", snapshot.AgentTreeCount, snapshot.AgentRSSSumMB)
 	}
-	maxDurationMS := 1500.0
+	maxWorkMS := 1500.0
 	if raceDetectorEnabled {
-		maxDurationMS = 2000
+		maxWorkMS = 2000
 	}
-	if liveHostBudgets() && snapshot.SampleDurationMS > maxDurationMS {
-		t.Fatalf("native sample took %.3fms; expected <= %.0fms", snapshot.SampleDurationMS, maxDurationMS)
+	// An operator sample waits until the kernel's host CPU counters advance
+	// (hostCPUMinimumLiveWindow, capped at hostCPUInitialMaxWait). The wait
+	// grows in steps of about 250 ms on the kernel's cadence, not with the
+	// sampler's work: 252-852 ms on 2026-11-24, against about 230 ms of work.
+	// Budget the work, and hold the wait to its own designed cap, so the
+	// kernel's cadence cannot fail the work budget (WORK-1662).
+	waitMS, measured := snapshot.SamplePhaseMS["host_cpu"]
+	if !measured {
+		t.Fatalf("native sample did not report its host_cpu phase: %+v", snapshot.SamplePhaseMS)
 	}
-	t.Logf("native sample: processes=%d trees=%d duration=%.3fms cpu=%.3fms", snapshot.ProcessCount, snapshot.AgentTreeCount, snapshot.SampleDurationMS, snapshot.SampleCPUTimeMS)
+	workMS := snapshot.SampleDurationMS - waitMS
+	maxWaitMS := float64((hostCPUInitialMaxWait + hostCPUInitialPollInterval).Milliseconds())
+	if liveHostBudgets() && (workMS > maxWorkMS || waitMS > maxWaitMS) {
+		t.Fatalf("native sample work %.3fms (budget %.0fms), host CPU wait %.3fms (cap %.0fms)", workMS, maxWorkMS, waitMS, maxWaitMS)
+	}
+	t.Logf("native sample: processes=%d trees=%d duration=%.3fms work=%.3fms host_cpu_wait=%.3fms cpu=%.3fms", snapshot.ProcessCount, snapshot.AgentTreeCount, snapshot.SampleDurationMS, workMS, waitMS, snapshot.SampleCPUTimeMS)
 }
 
 func TestResidentSampler64SampleCPUAndLatencySoak(t *testing.T) {
@@ -375,11 +387,26 @@ func TestResidentSampler64SampleCPUAndLatencySoak(t *testing.T) {
 		ticks += 100
 		return hostCPUTicks{Busy: ticks / 10, Total: ticks}, nil
 	}
+	// The resident samples seconds apart, so each sample already has a host
+	// CPU window of hostCPUMinimumLiveWindow and never waits for one. Called
+	// back to back, every sample would wait for that window instead, and the
+	// duration budget would measure the wait (p95 256-265 ms against 300 ms,
+	// so a load spike failed the test, WORK-1662). Move the sampler clock on
+	// by one window between samples: the 64 samples still span 16 s, as
+	// before, and the clock runs at wall speed inside a sample, so durations
+	// stay real.
+	var cadence time.Duration
+	sampler.now = func() time.Time { return time.Now().Add(cadence) }
+	// A healthy host. Free memory at the warning level forces a fresh
+	// inventory and a power probe on every sample, which is the pressure
+	// path, not the healthy cadence that this soak measures.
+	sampler.freePercentSource = func() (int, error) { return 90, nil }
 	stats := monitorStats{}
 	lastProcessCPU := 0.0
 	latest := Snapshot{}
 	freshInventories := 0
 	for index := 0; index < monitorStatsWindow; index++ {
+		cadence += hostCPUMinimumLiveWindow
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		snapshot, err := sampler.Sample(ctx, policy)
 		cancel()
