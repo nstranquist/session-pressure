@@ -247,3 +247,10 @@ ok.
 - [ ] The `other` family holds `sha256-*` session-pressure helper processes
       (about 15). Name them as their own member or family.
 - [x] Tree rung excludes language servers (Change 3).
+
+- 2026-11-24 (weekly run): 1888 level records, 26 thrash transitions,
+  snapshots 2026-11-16 to 2026-11-24. Calm gaps at swap >= 24576 MB: 0.
+  At swap >= 12288 MB: 7 (p50 59s, max 2m35s). Relapse within 10 min for
+  the 5/10/15/20 min windows: 0/0/0/0 released gaps, so no rate. Heartbeats
+  with `swap_lag_released` true: 0. Swap high-water mark 23872 MB
+  (2026-11-17 14:43 UTC). Verdict: under the 30-gap bar, no window change.
