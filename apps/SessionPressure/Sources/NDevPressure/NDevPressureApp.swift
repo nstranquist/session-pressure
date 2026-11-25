@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import NDevPressureCore
 
-@main
+// The process entry is `NDevPressureEntry` (LaunchAtLoginSwitch.swift).
 struct NDevPressureApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = PressureStore()
