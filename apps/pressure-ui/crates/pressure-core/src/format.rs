@@ -73,3 +73,7 @@ pub fn mb(value: f64) -> String {
         format!("{:.0} MiB", value)
     }
 }
+
+pub fn swap_out_rate(mb_per_s: f64) -> String {
+    format!("{:.1} MB/s", mb_per_s.max(0.0))
+}

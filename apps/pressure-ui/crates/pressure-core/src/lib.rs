@@ -7,5 +7,7 @@ pub mod models;
 
 pub use client::{ClientError, PressureClient};
 pub use commands::{Command, CommandKind, commands, filter_commands};
-pub use format::{bytes, duration_ms, mb, percent, rate_bps, relative_hint, short_id};
+pub use format::{
+    bytes, duration_ms, mb, percent, rate_bps, relative_hint, short_id, swap_out_rate,
+};
 pub use models::*;

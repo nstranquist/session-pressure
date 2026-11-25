@@ -93,6 +93,21 @@ impl PressureClient {
         Ok(env)
     }
 
+    pub fn work_headroom(&self) -> Result<WorkHeadroomEnvelope, ClientError> {
+        self.run_json(&["work".into(), "headroom".into()], true)
+    }
+
+    pub fn work_placement(&self, window: &str) -> Result<WorkPlacementEnvelope, ClientError> {
+        self.run_json(
+            &["work".into(), "placement".into(), "--window".into(), window.into()],
+            true,
+        )
+    }
+
+    pub fn recovery_clear(&self) -> Result<RecoveryClearEnvelope, ClientError> {
+        self.run_json(&["recovery".into(), "clear".into()], true)
+    }
+
     pub fn work_inspect(&self, operation_id: &str) -> Result<WorkInspectEnvelope, ClientError> {
         self.run_json(
             &["work".into(), "inspect".into(), "--operation-id".into(), operation_id.into()],

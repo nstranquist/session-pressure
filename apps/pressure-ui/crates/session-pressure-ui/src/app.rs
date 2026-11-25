@@ -11,9 +11,9 @@ use gpui_component::{
     v_flex,
 };
 use pressure_core::{
-    CommandKind, PressureBoard, PressureClient, PressureLevel, Section, WorkInspectReport,
-    WorkLifecycleEvent, WorkSelection, bytes, filter_commands, mb, percent, rate_bps,
-    short_id,
+    AlertItem, CommandKind, PressureBoard, PressureClient, PressureLevel, Section,
+    WorkInspectReport, WorkLifecycleEvent, WorkMemoryHeadroom, WorkPlacementReport, WorkSelection,
+    bytes, duration_ms, filter_commands, mb, percent, rate_bps, short_id, swap_out_rate,
 };
 use smol::Timer;
 
@@ -30,11 +30,16 @@ pub enum ConfirmKind {
     StopTree { operation_id: String, summary: String },
     Reschedule { operation_id: String, schedule: String },
     ApplyProfile { profile: String },
+    ClearRecoveryHint,
 }
 
 pub struct PressureApp {
     client: Option<PressureClient>,
     board: PressureBoard,
+    work_headroom: Option<WorkMemoryHeadroom>,
+    work_headroom_error: Option<String>,
+    work_placement: Option<WorkPlacementReport>,
+    disk_health_error: Option<String>,
     section: Section,
     last_error: Option<String>,
     status: Option<String>,
@@ -56,6 +61,10 @@ impl PressureApp {
         let mut app = Self {
             client,
             board: PressureBoard::default(),
+            work_headroom: None,
+            work_headroom_error: None,
+            work_placement: None,
+            disk_health_error: None,
             section: Section::Overview,
             last_error: None,
             status: None,
@@ -105,13 +114,34 @@ impl PressureApp {
         self.status = Some(if live { "Live sample…" } else { "Refreshing…" }.into());
         cx.notify();
         cx.spawn(async move |this, cx| {
+            let board_client = client.clone();
+            let headroom_client = client.clone();
+            let placement_client = client.clone();
             let result = cx
                 .background_spawn(async move {
-                    client.board(live, true, &["doctor", "calibration", "policy", "monitor", "idle", "telemetry"])
+                    board_client.board(live, true, &["doctor", "calibration", "policy", "monitor", "idle", "telemetry"])
                 })
+                .await;
+            let headroom = cx
+                .background_spawn(async move { headroom_client.work_headroom() })
+                .await;
+            let placement = cx
+                .background_spawn(async move { placement_client.work_placement("6h") })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.busy = false;
+                match headroom {
+                    Ok(env) => {
+                        this.work_headroom = env.headroom;
+                        this.work_headroom_error = None;
+                    }
+                    Err(e) => {
+                        this.work_headroom_error = Some(e.to_string());
+                    }
+                }
+                if let Ok(env) = placement {
+                    this.work_placement = env.placement;
+                }
                 match result {
                     Ok(env) => {
                         this.board = PressureBoard::from_envelope(
@@ -157,6 +187,18 @@ impl PressureApp {
                     async move { client.work_status() }
                 })
                 .await;
+            let headroom = cx
+                .background_spawn({
+                    let client = client.clone();
+                    async move { client.work_headroom() }
+                })
+                .await;
+            let placement = cx
+                .background_spawn({
+                    let client = client.clone();
+                    async move { client.work_placement("6h") }
+                })
+                .await;
             let inspect = if let Some(id) = selected.clone() {
                 cx.background_spawn(async move { client.work_inspect(&id) })
                     .await
@@ -169,6 +211,18 @@ impl PressureApp {
                     if let Some(work) = env.work {
                         this.board.work = Some(work);
                     }
+                }
+                match headroom {
+                    Ok(env) => {
+                        this.work_headroom = env.headroom;
+                        this.work_headroom_error = None;
+                    }
+                    Err(e) => {
+                        this.work_headroom_error = Some(e.to_string());
+                    }
+                }
+                if let Ok(env) = placement {
+                    this.work_placement = env.placement;
                 }
                 if let Some(env) = inspect {
                     if let Some(report) = env.inspect {
@@ -412,8 +466,31 @@ impl PressureApp {
                 })
                 .detach();
             }
+            Some(ConfirmKind::ClearRecoveryHint) => {
+                let Some(client) = self.client.clone() else { return };
+                cx.spawn(async move |this, cx| {
+                    let result = cx
+                        .background_spawn(async move { client.recovery_clear() })
+                        .await;
+                    let _ = this.update(cx, |this, cx| {
+                        if let Err(e) = result {
+                            this.last_error = Some(e.to_string());
+                        } else {
+                            this.status = Some("Recovery hint cleared".into());
+                            this.kick_refresh(false, cx);
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
             None => {}
         }
+    }
+
+    fn current_alerts(&self) -> Vec<AlertItem> {
+        self.board
+            .alerts(self.work_placement.as_ref(), self.disk_health_error.as_deref())
     }
 
     fn sidebar_icon(section: Section) -> IconName {
@@ -479,6 +556,30 @@ impl PressureApp {
         let used = work.map(|w| w.used).unwrap_or(0);
         let cap = work.map(|w| w.capacity).unwrap_or(0);
         let depth = work.map(|w| w.queue_depth).unwrap_or(0);
+        let resource_mode = work.map(|w| w.is_resource_admission()).unwrap_or(false);
+        let (cap_label, cap_value, cap_pct) = if resource_mode {
+            if let Some(h) = &self.work_headroom {
+                (
+                    "HEADROOM",
+                    if h.sample_fresh {
+                        mb(h.headroom_mb.max(0) as f64)
+                    } else {
+                        "stale".into()
+                    },
+                    h.used_fraction() * 100.0,
+                )
+            } else {
+                let active = work.map(|w| w.active_lease_count()).unwrap_or(0);
+                ("WORK", format!("{active} active"), 0.0)
+            }
+        } else {
+            (
+                "CAP",
+                format!("{used}/{cap}"),
+                if cap > 0 { (used as f32 / cap as f32) * 100.0 } else { 0.0 },
+            )
+        };
+        let alert_count = self.current_alerts().len();
         h_flex()
             .px_3()
             .gap_4()
@@ -492,9 +593,12 @@ impl PressureApp {
             .child(level_badge(self.board.level(), cx))
             .child(stat("MEM", percent(snap.memory_used_percent() as f64), snap.memory_used_percent() as f32))
             .child(stat("CPU", format!("{:.0}%", snap.host_cpu_percent), snap.host_cpu_percent as f32))
-            .child(stat("CAP", format!("{used}/{cap}"), if cap > 0 { (used as f32 / cap as f32) * 100.0 } else { 0.0 }))
+            .child(stat(cap_label, cap_value, cap_pct))
             .child(format!("queue {depth}"))
             .child(format!("trees {}", snap.agent_tree_count))
+            .when(alert_count > 0, |this| {
+                this.child(div().text_color(cx.theme().yellow).child(format!("{alert_count} alert(s)")))
+            })
             .when_some(self.status.clone(), |this, s| this.child(s))
             .when_some(self.last_error.clone(), |this, e| {
                 this.child(div().text_color(cx.theme().red).child(e))
@@ -555,6 +659,10 @@ impl PressureApp {
                 "Apply work style?",
                 format!("Apply the {profile} work style. This is a confirmed policy mutation."),
             ),
+            Some(ConfirmKind::ClearRecoveryHint) => (
+                "Clear recovery hint?",
+                "Removes the pending unclean-shutdown recovery hint so doctor and status return to normal.".into(),
+            ),
             None => ("", String::new()),
         };
         v_flex()
@@ -597,34 +705,127 @@ impl PressureApp {
             )
     }
 
-    fn render_overview(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_overview(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let snap = &self.board.snapshot;
         let work = self.board.work.as_ref();
+        let alerts = self.current_alerts();
+        let resource_mode = work.map(|w| w.is_resource_admission()).unwrap_or(false);
+        let work_metric_title = if resource_mode { "Work headroom" } else { "Capacity" };
+        let work_metric_value = if resource_mode {
+            if let Some(h) = &self.work_headroom {
+                if h.sample_fresh {
+                    format!("{} free", mb(h.headroom_mb.max(0) as f64))
+                } else {
+                    "Sample stale".into()
+                }
+            } else if let Some(w) = work {
+                let parked = w.parked_lease_count();
+                if parked > 0 {
+                    format!("{} active · {} parked · q {}", w.active_lease_count(), parked, w.queue_depth)
+                } else {
+                    format!("{} active · q {}", w.active_lease_count(), w.queue_depth)
+                }
+            } else {
+                "—".into()
+            }
+        } else {
+            format!(
+                "{}/{}",
+                work.map(|w| w.used).unwrap_or(0),
+                work.map(|w| w.capacity).unwrap_or(0)
+            )
+        };
+        let work_metric_level = if resource_mode {
+            if let Some(h) = &self.work_headroom {
+                if h.headroom_mb <= 0 {
+                    PressureLevel::Red
+                } else if h.swap_thrash_latched {
+                    PressureLevel::Warning
+                } else {
+                    PressureLevel::Normal
+                }
+            } else {
+                PressureLevel::Normal
+            }
+        } else {
+            PressureLevel::Normal
+        };
+        let swap_value = if let Some(rate) = snap.swap_out_mb_per_s {
+            if snap.swap_thrash_latched {
+                format!("{} · {} out (thrash)", mb(snap.swap_used_mb), swap_out_rate(rate))
+            } else {
+                format!("{} · {} out", mb(snap.swap_used_mb), swap_out_rate(rate))
+            }
+        } else {
+            mb(snap.swap_used_mb)
+        };
         v_flex()
             .p_4()
             .gap_4()
             .child(header_row("Host pressure", snap.level.label(), cx))
+            .when(!alerts.is_empty(), |this| {
+                this.child(
+                    v_flex()
+                        .gap_1()
+                        .p_3()
+                        .rounded(cx.theme().radius)
+                        .border_1()
+                        .border_color(cx.theme().yellow)
+                        .child(div().text_sm().font_semibold().child(format!("Alerts ({})", alerts.len())))
+                        .children(alerts.into_iter().map(|alert| {
+                            let target = alert.section;
+                            let id = alert.id.clone();
+                            Button::new(format!("alert-{id}"))
+                                .small()
+                                .label(format!(
+                                    "[{}] {} — {} → {}",
+                                    alert.severity.label(),
+                                    alert.title,
+                                    alert.detail,
+                                    target.title()
+                                ))
+                                .on_click(cx.listener(move |this, _, _, cx| this.select_section(target, cx)))
+                        })),
+                )
+            })
             .child(
                 h_flex()
                     .gap_3()
                     .children([
-                        metric("Memory used", percent(snap.memory_used_percent() as f64), cx),
-                        metric("Host CPU", format!("{:.0}%", snap.host_cpu_percent), cx),
-                        metric("Agent RSS", mb(snap.agent_rss_sum_mb), cx),
-                        metric(
-                            "Capacity",
-                            format!(
-                                "{}/{}",
-                                work.map(|w| w.used).unwrap_or(0),
-                                work.map(|w| w.capacity).unwrap_or(0)
-                            ),
+                        metric_leveled(
+                            "Memory used",
+                            percent(snap.memory_used_percent() as f64),
+                            self.board.free_memory_level(),
                             cx,
                         ),
+                        metric_leveled(
+                            "Host CPU",
+                            format!("{:.0}%", snap.host_cpu_percent),
+                            self.board.host_cpu_level(),
+                            cx,
+                        ),
+                        metric_leveled(
+                            "Agent RSS",
+                            format!(
+                                "{} / {}",
+                                mb(snap.agent_rss_sum_mb),
+                                mb(self.board.agent_rss_ceiling_mb())
+                            ),
+                            self.board.agent_rss_level(),
+                            cx,
+                        ),
+                        metric_leveled(work_metric_title, work_metric_value, work_metric_level, cx),
                     ]),
             )
             .child(
                 h_flex()
                     .gap_3()
+                    .child(metric_leveled(
+                        "Swap",
+                        swap_value,
+                        self.board.swap_level(),
+                        cx,
+                    ))
                     .child(metric(
                         "Admission",
                         if self.board.admission.as_ref().map(|a| a.allowed).unwrap_or(true) {
@@ -653,9 +854,21 @@ impl PressureApp {
             )
             .when(!snap.reasons.is_empty(), |this| this.child(card("Why", snap.reasons.clone(), cx)))
             .when_some(self.board.doctor.clone(), |this, doctor| {
-                this.when(!doctor.warnings.is_empty(), |this| {
-                    this.child(card("Doctor", doctor.warnings.clone(), cx))
-                })
+                let mut lines = doctor.warnings.clone();
+                if let Some(dw) = &doctor.work {
+                    let work_line = if dw.is_resource_admission() {
+                        format!("work: resource mode · depth {}", dw.queue_depth.unwrap_or(0))
+                    } else {
+                        format!(
+                            "work: queue {}/{} depth {}",
+                            dw.used.unwrap_or(0),
+                            dw.capacity.unwrap_or(0),
+                            dw.queue_depth.unwrap_or(0)
+                        )
+                    };
+                    lines.push(work_line);
+                }
+                this.when(!lines.is_empty(), |this| this.child(card("Doctor", lines, cx)))
             })
             .when(!snap.top_host_consumers.is_empty(), |this| {
                 this.child(card(
@@ -799,6 +1012,33 @@ impl PressureApp {
 
     fn render_work(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let work = self.board.work.clone().unwrap_or_default();
+        let resource_mode = work.is_resource_admission();
+        let queue_subtitle = if resource_mode {
+            format!(
+                "{} active · {} parked · q {}",
+                work.active_lease_count(),
+                work.parked_lease_count(),
+                work.queue_depth
+            )
+        } else {
+            format!("{}/{}  waiters {}", work.used, work.capacity, work.queue_depth)
+        };
+        let active_stall = self.work_placement.as_ref().and_then(|p| p.active_stall.clone());
+        let parked_stalls = self
+            .work_placement
+            .as_ref()
+            .map(|p| p.parked_stalls.clone())
+            .unwrap_or_default();
+        let selected_waiter = match &self.work_selection {
+            Some(WorkSelection::Waiter { operation_id, .. }) => {
+                work.waiters.iter().find(|w| w.operation_id == *operation_id).cloned()
+            }
+            _ => None,
+        };
+        let selected_waiter_pressure_reserved = selected_waiter
+            .as_ref()
+            .map(|w| w.is_pressure_reserved())
+            .unwrap_or(false);
         h_flex()
             .size_full()
             .child(
@@ -807,11 +1047,102 @@ impl PressureApp {
                     .h_full()
                     .border_r_1()
                     .border_color(cx.theme().border)
-                    .child(header_row(
-                        "Queue",
-                        &format!("{}/{}  waiters {}", work.used, work.capacity, work.queue_depth),
-                        cx,
-                    ))
+                    .child(header_row("Queue", &queue_subtitle, cx))
+                    .when(resource_mode, |this| {
+                        this.child(
+                            v_flex()
+                                .px_3()
+                                .py_2()
+                                .gap_1()
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .when_some(self.work_headroom.clone(), |d, h| {
+                                    let clamped = h.headroom_mb.max(0);
+                                    let headline = if h.sample_fresh {
+                                        format!("{} headroom", mb(clamped as f64))
+                                    } else {
+                                        "Sample stale".into()
+                                    };
+                                    let color = if h.headroom_mb <= 0 {
+                                        cx.theme().red
+                                    } else if h.swap_thrash_latched {
+                                        cx.theme().yellow
+                                    } else {
+                                        cx.theme().foreground
+                                    };
+                                    d.child(div().text_sm().font_semibold().text_color(color).child(headline))
+                                        .child(Progress::new("work-headroom").h_2().value(h.used_fraction() * 100.0))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(format!(
+                                                    "avail {} − reserve {} − in-flight {} · swap-out {}",
+                                                    mb(h.available_mb as f64),
+                                                    mb(h.reserve_mb as f64),
+                                                    mb(h.inflight_mb as f64),
+                                                    swap_out_rate(h.swap_out_mb_per_s)
+                                                )),
+                                        )
+                                })
+                                .when(self.work_headroom.is_none(), |d| {
+                                    d.child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(
+                                                self.work_headroom_error
+                                                    .clone()
+                                                    .unwrap_or_else(|| "Loading memory headroom…".into()),
+                                            ),
+                                    )
+                                }),
+                        )
+                    })
+                    .when_some(active_stall, |this, stall| {
+                        let cls = stall.class_name.unwrap_or_else(|| "work".into());
+                        let reason = stall
+                            .decision_reason
+                            .filter(|s| !s.is_empty())
+                            .map(|r| format!(" · {r}"))
+                            .unwrap_or_default();
+                        this.child(
+                            div()
+                                .mx_2()
+                                .mt_2()
+                                .p_2()
+                                .rounded(cx.theme().radius)
+                                .border_1()
+                                .border_color(cx.theme().yellow)
+                                .text_xs()
+                                .text_color(cx.theme().yellow)
+                                .child(format!(
+                                    "STALL: {cls} stalled {}{reason} ({})",
+                                    duration_ms(stall.duration_ms),
+                                    short_id(&stall.operation_id)
+                                )),
+                        )
+                    })
+                    .when(!parked_stalls.is_empty(), |this| {
+                        this.children(parked_stalls.into_iter().take(3).map(|p| {
+                            let cls = p.class_name.unwrap_or_else(|| "work".into());
+                            div()
+                                .mx_2()
+                                .mt_1()
+                                .p_2()
+                                .rounded(cx.theme().radius)
+                                .border_1()
+                                .border_color(cx.theme().yellow)
+                                .text_xs()
+                                .text_color(cx.theme().yellow)
+                                .child(format!(
+                                    "PARKED LOCK: {cls} parked {} (age {}) · {}",
+                                    duration_ms(p.parked_duration_ms),
+                                    duration_ms(p.age_ms),
+                                    short_id(&p.operation_id)
+                                ))
+                        }))
+                    })
                     .child(
                         div()
                             .px_3()
@@ -831,7 +1162,11 @@ impl PressureApp {
                                     lease_id: lease.id.clone(),
                                 };
                                 let active = self.work_selection.as_ref().map(|s| s.operation_id()) == Some(sel.operation_id());
-                                rows.push(work_row("LEASE", &lease.class_name, lease.weight, lease.pid, lease.op_id(), active, sel, cx));
+                                let mut badge = if lease.parked { "PARKED" } else { "LEASE" }.to_string();
+                                if let Some(peak) = lease.predicted_peak_mb.filter(|&p| p > 0) {
+                                    badge.push_str(&format!(" ~{}", mb(peak as f64)));
+                                }
+                                rows.push(work_row(&badge, &lease.class_name, lease.weight, lease.pid, lease.op_id(), active, sel, cx));
                             }
                             for waiter in work.waiters {
                                 let sel = WorkSelection::Waiter {
@@ -841,7 +1176,17 @@ impl PressureApp {
                                     pid: waiter.pid,
                                 };
                                 let active = self.work_selection.as_ref().map(|s| s.operation_id()) == Some(sel.operation_id());
-                                rows.push(work_row("WAIT", &waiter.class_name, waiter.weight, waiter.pid, &waiter.operation_id, active, sel, cx));
+                                let mut badge = if waiter.pressure_parked {
+                                    "P-PARK".to_string()
+                                } else if waiter.start_expired {
+                                    "EXPIRED".to_string()
+                                } else {
+                                    "WAIT".to_string()
+                                };
+                                if let Some(peak) = waiter.predicted_peak_mb.filter(|&p| p > 0) {
+                                    badge.push_str(&format!(" ~{}", mb(peak as f64)));
+                                }
+                                rows.push(work_row(&badge, &waiter.class_name, waiter.weight, waiter.pid, &waiter.operation_id, active, sel, cx));
                             }
                             for hold in work.admission_holds {
                                 rows.push(
@@ -875,18 +1220,30 @@ impl PressureApp {
                         this.child(div().text_sm().child(inspect.summary.clone()))
                             .child(kv("Stall", &inspect.stall_class))
                             .when_some(inspect.command().map(|s| s.to_string()), |d, cmd| d.child(kv("Command", &cmd)))
+                            .when(selected_waiter_pressure_reserved, |d| {
+                                let label = if selected_waiter.as_ref().map(|w| w.pressure_parked).unwrap_or(false) {
+                                    "Parked on host pressure (Run now cannot start it sooner)"
+                                } else {
+                                    "Reserved on host pressure (waiting for host pressure to clear)"
+                                };
+                                d.child(div().text_xs().text_color(cx.theme().yellow).child(label))
+                            })
                             .child(
                                 h_flex()
                                     .gap_2()
-                                    .when(self.work_selection.as_ref().map(|s| s.is_waiter()).unwrap_or(false), |row| {
-                                        row.child(
-                                            Button::new("run-now")
-                                                .small()
-                                                .primary()
-                                                .label("Run now")
-                                                .on_click(cx.listener(|this, _, _, cx| this.run_command(CommandKind::RunNow, cx))),
-                                        )
-                                    })
+                                    .when(
+                                        self.work_selection.as_ref().map(|s| s.is_waiter()).unwrap_or(false)
+                                            && !selected_waiter_pressure_reserved,
+                                        |row| {
+                                            row.child(
+                                                Button::new("run-now")
+                                                    .small()
+                                                    .primary()
+                                                    .label("Run now")
+                                                    .on_click(cx.listener(|this, _, _, cx| this.run_command(CommandKind::RunNow, cx))),
+                                            )
+                                        },
+                                    )
                                     .when(self.work_selection.as_ref().map(|s| s.is_lease()).unwrap_or(false), |row| {
                                         row.child(
                                             Button::new("stop-tree")
@@ -1001,10 +1358,66 @@ impl PressureApp {
                 "Profiles are confirmed. They never bypass host-pressure or capacity. Auto-shed stays an explicit extra confirm in the Swift client; this surface applies the named profile only.",
             ))
             .when_some(self.board.policy.clone(), |this, policy| {
+                let thresholds = policy.thresholds.clone();
+                let work_limits = policy.work_limits.clone();
+                let launch = policy.launch_admission.clone();
                 this.child(kv("Enabled", if policy.enabled { "yes" } else { "no" }))
                     .child(kv("Admission", if policy.enforce_admission { "enforced" } else { "observe" }))
                     .child(kv("Auto-shed", if policy.auto_shed_critical { "on" } else { "off" }))
                     .child(kv("Profile", policy.profile.as_deref().unwrap_or("—")))
+                    .when_some(work_limits, |d, wl| {
+                        let mut lines = Vec::new();
+                        if let Some(adm) = wl.admission {
+                            lines.push(format!("work admission: {adm}"));
+                        }
+                        if let Some(mem_adm) = wl.memory_admission {
+                            lines.push(format!("memory admission: {mem_adm}"));
+                        }
+                        if let Some(cap) = wl.capacity {
+                            if cap >= pressure_core::RESOURCE_ADMISSION_CAPACITY_SENTINEL {
+                                lines.push("capacity: resource-headroom mode".into());
+                            } else {
+                                lines.push(format!("capacity: {cap}"));
+                            }
+                        }
+                        d.when(!lines.is_empty(), |x| x.child(card("Work admission", lines, cx)))
+                    })
+                    .when_some(thresholds, |d, t| {
+                        let lines = vec![
+                            format!(
+                                "Free memory: warn <= {}% · red <= {}% · crit <= {}%",
+                                t.free_warning_percent.unwrap_or(25),
+                                t.free_red_percent.unwrap_or(15),
+                                t.free_critical_percent.unwrap_or(8)
+                            ),
+                            format!(
+                                "Host CPU: warn >= {:.0}% · red >= {:.0}%",
+                                t.host_cpu_warning_percent.unwrap_or(85.0),
+                                t.host_cpu_red_percent.unwrap_or(95.0)
+                            ),
+                            format!(
+                                "Agent RSS sum: warn >= {} · red >= {} · crit >= {}",
+                                mb(t.agent_total_warning_mb.unwrap_or(8192.0)),
+                                mb(t.agent_total_red_mb.unwrap_or(11264.0)),
+                                mb(t.agent_total_critical_mb.unwrap_or(13312.0))
+                            ),
+                            format!(
+                                "Swap used: warn >= {} · red >= {}",
+                                mb(t.swap_warning_mb.unwrap_or(4096.0)),
+                                mb(t.swap_red_mb.unwrap_or(8192.0))
+                            ),
+                        ];
+                        d.child(card("Policy thresholds", lines, cx))
+                    })
+                    .when_some(launch, |d, la| {
+                        let lines = vec![format!(
+                            "mode: {} · block depth >= {} · oldest wait >= {}s",
+                            la.mode.as_deref().unwrap_or("—"),
+                            la.queue_depth_block.unwrap_or(0),
+                            la.oldest_wait_block_seconds.unwrap_or(0)
+                        )];
+                        d.child(card("Launch admission", lines, cx))
+                    })
             })
             .when_some(self.board.policy_path.clone(), |this, path| this.child(kv("Path", &path)))
             .when_some(self.board.health.clone(), |this, health| {
@@ -1015,7 +1428,7 @@ impl PressureApp {
             })
     }
 
-    fn render_monitor(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_monitor(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let launchd = self.board.launchd.clone().unwrap_or_default();
         v_flex()
             .p_4()
@@ -1031,6 +1444,18 @@ impl PressureApp {
                     vec![hint.reason.unwrap_or_default(), hint.recovery_command.unwrap_or_default()],
                     cx,
                 ))
+            })
+            .when(self.board.has_recovery_hint || self.board.recovery_hint.is_some(), |this| {
+                this.child(
+                    Button::new("clear-recovery-hint")
+                        .small()
+                        .primary()
+                        .label("Clear recovery hint")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirm = Some(ConfirmKind::ClearRecoveryHint);
+                            cx.notify();
+                        })),
+                )
             })
     }
 
@@ -1162,16 +1587,34 @@ fn stat(label: &'static str, value: String, pct: f32) -> impl IntoElement {
         .child(format!("{label} {value}"))
 }
 
-fn metric(title: &'static str, value: String, cx: &Context<PressureApp>) -> impl IntoElement {
+fn metric_leveled(
+    title: &'static str,
+    value: String,
+    level: PressureLevel,
+    cx: &Context<PressureApp>,
+) -> impl IntoElement {
+    let accent = match level {
+        PressureLevel::Critical | PressureLevel::Red => cx.theme().red,
+        PressureLevel::Warning => cx.theme().yellow,
+        PressureLevel::Normal | PressureLevel::Unknown => cx.theme().foreground,
+    };
     v_flex()
         .flex_1()
         .p_3()
         .gap_1()
         .rounded(cx.theme().radius)
         .border_1()
-        .border_color(cx.theme().border)
+        .border_color(if level.rank() >= PressureLevel::Warning.rank() {
+            accent
+        } else {
+            cx.theme().border
+        })
         .child(div().text_xs().text_color(cx.theme().muted_foreground).child(title))
-        .child(div().text_lg().font_semibold().child(value))
+        .child(div().text_lg().font_semibold().text_color(accent).child(value))
+}
+
+fn metric(title: &'static str, value: String, cx: &Context<PressureApp>) -> impl IntoElement {
+    metric_leveled(title, value, PressureLevel::Normal, cx)
 }
 
 fn card(title: &'static str, lines: Vec<String>, cx: &Context<PressureApp>) -> impl IntoElement {
@@ -1199,7 +1642,7 @@ fn header_row(title: &'static str, subtitle: &str, cx: &Context<PressureApp>) ->
 }
 
 fn work_row(
-    kind: &'static str,
+    kind: &str,
     class_name: &str,
     weight: i64,
     pid: Option<i64>,
