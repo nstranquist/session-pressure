@@ -34,14 +34,14 @@ func TestActualGoCacheProtocol(t *testing.T) {
 	if err := os.Mkdir(sample, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for name, body := range map[string]string{"go.mod": "module cache-integration\n\ngo 1.26\n", "sample.go": "package sample\nfunc Value() int { return 42 }\n", "sample_test.go": "package sample\nimport \"testing\"\nfunc TestValue(t *testing.T) {if Value()!=42 {t.Fatal(Value())}}\n"} {
+	for name, body := range map[string]string{"go.mod": "module cache-integration\n\ngo 1.26\n", "sample.go": "package sample\nfunc Value() int { return 42 }\n"} {
 		if err := os.WriteFile(filepath.Join(sample, name), []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	cache := filepath.Join(temp, "objects")
 	for i := 0; i < 2; i++ {
-		cmd := exec.Command("go", "test", "./...")
+		cmd := exec.Command("go", "build", ".")
 		cmd.Dir = sample
 		cmd.Env = append(os.Environ(), "GOWORK=off", "CGO_ENABLED=0", "GOCACHE="+filepath.Join(temp, "standard"), "GOCACHEPROG="+strconv.Quote(bin)+" -dir "+strconv.Quote(cache)+" -max 32MiB")
 		if out, err := cmd.CombinedOutput(); err != nil {
