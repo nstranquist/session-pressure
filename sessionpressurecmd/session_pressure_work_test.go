@@ -239,6 +239,9 @@ func TestRunPressureWorkRechecksAdmissionAfterLease(t *testing.T) {
 
 func TestRunPressureWorkWaitsForPressureRecovery(t *testing.T) {
 	installDirectPressureWorkCommandFactory(t)
+	// Browser work also reads the host's browser control record. A private
+	// data directory has none, so a paused host browser cannot fail the test.
+	t.Setenv(sessionpressure.DataDirEnv, t.TempDir())
 	originalAdmissionCheck := WorkHostAdmissionCheck
 	originalRetry := pressureWorkAdmissionRetryInterval
 	calls := 0
