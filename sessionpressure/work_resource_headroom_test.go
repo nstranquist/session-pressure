@@ -144,7 +144,7 @@ func TestResourceHeadroomScalesWithHostSize(t *testing.T) {
 	}
 }
 
-// Guard (WORK-1065): no fixed session count or slot count decides resource
+// Guard: no fixed session count or slot count decides resource
 // admission. The decision depends on how much is running only through
 // measured headroom and the "nothing else runs" progress rule.
 func TestResourceAdmissionHasNoFixedCount(t *testing.T) {

@@ -24,8 +24,7 @@ and can fall back to `ndev`, which execs the nicos-tools product CLI.
    ```
 
    Custom installs: optional fail-closed overlay at
-   `~/.nicos-dev/session-pressure/agent-identity.json` (see
-   `docs/active/07-31-1610-session-pressure-product-boundary/FOLLOWUPS-agent-identity-2026-08-04.md`).
+   `~/.nicos-dev/session-pressure/agent-identity.json`.
 4. **Disk Writes** — inspect internal-SSD rate and 15m/24h totals, adaptive confidence, likely process writers, and hourly history. The selected, active pane refreshes one live report every 15 seconds and stops when hidden/inactive. Alerts are opt-in. **Trace paths** requires a fresh live PID, explicit confirmation, and helper authorization; paths remain in memory only.
 5. **Storage** (⌘4) — two tabs. **Disk reclaim** is typed `storage apply` (preview, then confirm `--apply`). The Overview **Storage available** card opens this tab. **Idle trees** is the former Idle Cleanup pane: operator-confirmed SIGTERM of old quiet trees (RAM, not disk). Blocked and factory-only disk providers stay visible and non-actionable. Enable storage policy before `--auto-safe` can mutate. The app never starts Grok, Codex, a PTY, or arbitrary argv.
 6. **Work Queue** — see who holds capacity and who is waiting (builds/tests). While this pane is visible and active, work status refreshes about every 2.5s with live work and backs off to 10s when empty; inactive/minimized windows stop spawning focus reads. Use **Run now** on a waiter to promote that exact live operation for the next admission, or **Run all** to pin the whole queue as one ordered promotion sequence. Neither is modal-confirmed — both only reorder the queue and are undone by promoting something else. Click any lease or waiter row for a detail drawer: identity, lifecycle events, and where process output lives (launching agent/terminal — not stored here). When live ownership ends, the drawer becomes read-only lifecycle history.
@@ -201,6 +200,3 @@ ndev --json session pressure idle --limit 10
 ndev --json session pressure telemetry --since 24h --limit 20
 ```
 
-KEP: `docs/active/07-13-1448-session-host-pressure-guard/session-host-pressure-guard-kep.md`
-
-SSD watchdog KEP: `docs/active/07-22-1704-session-pressure-ssd-write-watchdog/session-pressure-ssd-write-watchdog-kep.md`

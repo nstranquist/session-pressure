@@ -149,8 +149,7 @@ installation retains all local copies and reports the exact maintenance error
 so you can fix the path or clear the setting and rerun
 `session-pressure-release app-maintain`. It never deletes history on failure. A
 legacy empty `.install.lock` beside the app is intentionally retained for
-older-installer coordination. See the
-[migration decisions and proof](../../corpus/app-install-history.md).
+older-installer coordination.
 
 Run installed integration checks with `PRESSURE_CONTRACT_BIN` set to the
 absolute installed CLI, then `swift test --filter InstalledContractTests` from

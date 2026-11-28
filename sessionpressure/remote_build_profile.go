@@ -35,7 +35,7 @@ const (
 // a cgo build. A per-job path therefore made each job rebuild the standard
 // library and every cgo package from scratch: on the Linux gate runner the
 // catalog-providers build took 53.9 s with a new path and 1.0 s with a
-// reused one, also from another source directory (WORK-1480, 2026-11-21).
+// reused one, also from another source directory (2026-11-21).
 // The preflight makes the link atomically; it changes nothing else.
 const remoteDarwinSharedTools = "/srv/build/cache/pressure-darwin-tools"
 

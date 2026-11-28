@@ -13,7 +13,7 @@ import (
 	"github.com/nstranquist/session-pressure/runnerfleet"
 )
 
-// Per-job SSH connection reuse (WORK-1602). A remote job used to open a new
+// Per-job SSH connection reuse. A remote job used to open a new
 // SSH connection for each step: the fleet probe, the source upload, the
 // runner subscription, the artifact manifest, the artifact and the cleanup.
 // Each new login from the Mac costs about 1.7 s; a reused connection costs

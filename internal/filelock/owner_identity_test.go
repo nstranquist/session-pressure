@@ -34,7 +34,7 @@ func startSleeper(t *testing.T) *exec.Cmd {
 	return child
 }
 
-// WORK-1373: an owner killed inside the lock (or a host restart) leaves its
+// An owner killed inside the lock (or a host restart) leaves its
 // sidecar. When a new process later gets the same PID, the PID is alive but
 // the process started after the sidecar was written, so it cannot be the
 // owner. The sidecar must be reclaimed, not kept until that process exits.
@@ -212,7 +212,7 @@ func deadPIDForTest(t *testing.T) int {
 	return 0
 }
 
-// WORK-1374: a nicos-tools breaker (filelock.BreakStale there) locks the
+// A nicos-tools breaker (filelock.BreakStale there) locks the
 // stale sidecar's own inode, not the guard file. While it holds that lock, a
 // waiter here must not remove the sidecar: it could be past the breaker's
 // checks and about to publish a successor.

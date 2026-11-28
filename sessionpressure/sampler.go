@@ -97,7 +97,7 @@ type Sampler struct {
 // from one enriched process list. They depend only on the processes and the
 // identity catalog. The resident samples every 15 seconds but refreshes the
 // inventory every few minutes, so most samples saw the same list and
-// rebuilt the same projection (WORK-1315).
+// rebuilt the same projection.
 type inventoryProjection struct {
 	processes []Process
 	catalog   *AgentIdentityCatalog

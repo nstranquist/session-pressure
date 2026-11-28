@@ -114,7 +114,7 @@ func TestWorkAdmissionLatchRejectsCachedEvidence(t *testing.T) {
 	}
 }
 
-// WORK-1141: a recovered, unblocked control record must stay byte-identical
+// A recovered, unblocked control record must stay byte-identical
 // across fresh samples, so the resident does not rewrite it every sample.
 func TestBrowserControlSteadyStateDoesNotRewrite(t *testing.T) {
 	dir := t.TempDir()
@@ -159,7 +159,7 @@ func TestBrowserControlSteadyStateDoesNotRewrite(t *testing.T) {
 	}
 }
 
-// WORK-1141: the resident evidence path must not depend on latest.json or
+// The resident evidence path must not depend on latest.json or
 // policy.json on disk.
 func TestBrowserControlResidentEvidenceSkipsDisk(t *testing.T) {
 	dir := t.TempDir()
@@ -181,7 +181,7 @@ func TestBrowserControlResidentEvidenceSkipsDisk(t *testing.T) {
 }
 
 // A Monitor embedded outside the resident (profiler, harness, test) must not
-// signal live host browsers unless it opts in (WORK-1141 incident).
+// signal live host browsers unless it opts in.
 func TestNewMonitorDoesNotEnforceBrowsersByDefault(t *testing.T) {
 	monitor := NewMonitor(nil, NewTelemetryStore(t.TempDir()), DefaultPolicy(16))
 	if monitor.EnforceBrowsers {
@@ -189,7 +189,7 @@ func TestNewMonitorDoesNotEnforceBrowsersByDefault(t *testing.T) {
 	}
 }
 
-// WORK-1141: an unchanged steady-state evaluation from resident evidence must
+// An unchanged steady-state evaluation from resident evidence must
 // not take the control lock (lock-file churn on every sample).
 func TestBrowserControlSteadyResidentPathTakesNoLock(t *testing.T) {
 	dir := t.TempDir()

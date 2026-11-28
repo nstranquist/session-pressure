@@ -22,11 +22,11 @@
 //     grace, is removed only by the one waiter that holds the kernel reclaim
 //     guard (flock on path + ".lock.reclaim") and that judges it stale again
 //     under the guard. Without the guard, a waiter that judged an old sidecar
-//     stale could delete a successor's live sidecar and let two processes in
-//     (WORK-1225). A live owner is never preempted solely because a critical
+//     stale could delete a successor's live sidecar and let two processes in.
+//     A live owner is never preempted solely because a critical
 //     section outlived StaleAge; waiters time out safely. A dead owner's PID
 //     reused by a process that started after the sidecar was written is not
-//     the owner, so that sidecar is stale too (WORK-1373). Temp ownership
+//     the owner, so that sidecar is stale too. Temp ownership
 //     records of dead processes are swept on the same guarded stale path.
 //
 // Sibling to the existing `internal/lock/` package, which is the `ndev lock`
@@ -193,7 +193,7 @@ const (
 // after the n-1 initialization grace. Timestamp age is diagnostic only while
 // the owner is alive: stealing an aged live lock would allow overlapping
 // critical sections. The owner is the recorded PID only if that process
-// started before the sidecar was written (WORK-1373).
+// started before the sidecar was written.
 func judgeSidecar(lockFile string) sidecarState {
 	if i := readLockInfo(lockFile); i != nil {
 		if ownerAlive(i.PID, time.UnixMilli(i.Timestamp)) {
@@ -313,7 +313,7 @@ func reclaimStale(lockFile string) bool {
 	// First lock the judged file's own inode. nicos-tools breakers
 	// (filelock.BreakStale) hold this lock, not the guard file, so taking both
 	// makes this reclaim exclude theirs on files both repositories write, such
-	// as the notify inbox (WORK-1374).
+	// as the notify inbox.
 	judged, err := os.OpenFile(lockFile, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return true

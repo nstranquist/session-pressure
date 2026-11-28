@@ -20,8 +20,7 @@ import (
 // The resident scans on every sample. Argument vectors are fixed at exec, so
 // the result for one process is kept until it exits: the key is the pid, the
 // kernel start time and the command name, and exec changes the name. Without
-// this memo every personal Chrome helper's argv was read again each sample
-// (WORK-1141).
+// this memo every personal Chrome helper's argv was read again each sample.
 type browserArgsKey struct {
 	pid   int
 	start unix.Timeval

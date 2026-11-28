@@ -43,8 +43,7 @@ directory (`~/.nicos-dev/session-pressure/memory-levels.json`).
   thresholds. `policy init` writes `calibrated`.
 - Commands: `session-pressure policy memory-levels show`, `check [FILE]`,
   `calibrated`, `manual`. A bad file fails the policy load and names the file
-  and field. Calibration record:
-  [memory-levels-calibration-2026-11-17](../corpus/memory-levels-calibration-2026-11-17.md).
+  and field.
 
 ## Closed set
 

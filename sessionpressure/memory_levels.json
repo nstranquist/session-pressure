@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "note": "Memory levels for session pressure. Each anchor is a host shape measured from its own monitor history. A host between two anchors gets values interpolated on physical memory. Outside the anchors, MB values scale with memory and percent values stay at the nearest anchor. A host entry overrides single values for one host. A copy in the data directory (memory-levels.json) replaces this file. Calibration record: corpus/memory-levels-calibration-2026-11-17.md.",
+  "note": "Memory levels for session pressure. Each anchor is a host shape measured from its own monitor history. A host between two anchors gets values interpolated on physical memory. Outside the anchors, MB values scale with memory and percent values stay at the nearest anchor. A host entry overrides single values for one host. A copy in the data directory (memory-levels.json) replaces this file.",
   "anchors": [
     {
       "name": "16gib-laptop",

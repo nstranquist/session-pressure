@@ -33,12 +33,12 @@ func browserControlMaxRuntime(state BrowserControl) time.Duration {
 // the finite lifetime. The automatic CPU pause only gates admission: a
 // running browser ends within its lifetime anyway, and stopping it throws
 // away the job and makes the agent retry it, which adds load. There is no
-// count limit: memory admission (browser_admission.go, WORK-1114) decides how
+// count limit: memory admission (browser_admission.go) decides how
 // many run. Before 2026-11-17 an unpaused host spared only the first young
 // browser and stopped every other one, a fixed cap of one that killed a CSP
 // sweep's session when a screenshot ran beside it. A snapref-managed session
 // with a live idle lease is bounded by its own idle watchdog instead of the
-// fixed lifetime (WORK-1170): before, `ndev browser open --idle-timeout 10m`
+// fixed lifetime: before, `ndev browser open --idle-timeout 10m`
 // was stopped at 2 minutes while in use.
 func browserControlStops(operatorPaused bool, age, maxRuntime time.Duration, idleLeased bool) bool {
 	return operatorPaused || (age >= maxRuntime && !idleLeased)

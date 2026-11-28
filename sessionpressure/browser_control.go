@@ -27,7 +27,7 @@ type BrowserControl struct {
 // browserControlEvidence is the resident's in-memory sample and policy. The
 // resident evaluates browser control after every sample; re-reading
 // latest.json and re-validating policy.json from disk there cost more CPU than
-// the sample itself (WORK-1141). CLI callers pass nil and read from disk.
+// the sample itself. CLI callers pass nil and read from disk.
 type browserControlEvidence struct {
 	snapshot Snapshot
 	policy   Policy
@@ -47,7 +47,7 @@ func browserControlStatus(ctx context.Context, dir string, mode string, evidence
 	path := filepath.Join(dir, "browser-control.json")
 	// The resident evaluates control after every sample. Writers replace the
 	// record by atomic rename, so an unlocked read is never torn. Take the
-	// lock only when the record must change (WORK-1141).
+	// lock only when the record must change.
 	if evidence != nil && mode == "" {
 		if state, changed, err := evaluateBrowserControl(dir, path, mode, evidence); err != nil || !changed {
 			return state, err
@@ -147,7 +147,7 @@ func evaluateBrowserControl(dir, path, mode string, evidence *browserControlEvid
 		}
 		// LastSample only spaces recovery samples while blocked. Advancing it
 		// in steady unblocked state made every resident sample rewrite an
-		// otherwise identical record (WORK-1141).
+		// otherwise identical record.
 		if state.Blocked && (state.LastSample.IsZero() || snapshot.Timestamp.After(state.LastSample.Add(5*time.Second))) {
 			state.LastSample = snapshot.Timestamp
 		}

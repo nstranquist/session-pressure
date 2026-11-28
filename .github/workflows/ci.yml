@@ -76,3 +76,29 @@ jobs:
             | tar -xz -C /tmp gitleaks
       - name: Secret scan
         run: /tmp/gitleaks detect --source . --no-git --redact
+
+  public-hygiene:
+    name: public hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Private-name scan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUBLIC_CHECK_PATTERNS: ${{ secrets.PUBLIC_CHECK_PATTERNS }}
+        run: |
+          if [ -z "$PUBLIC_CHECK_PATTERNS" ]; then
+            if [ "$EVENT_NAME" = pull_request ]; then
+              echo "::notice::PUBLIC_CHECK_PATTERNS is not available to this pull request; the push to main runs the scan"
+              exit 0
+            fi
+            echo "::error::secret PUBLIC_CHECK_PATTERNS is not set; this public repository fails CI without the private-name check"
+            exit 1
+          fi
+          patterns="$RUNNER_TEMP/public-check-patterns.txt"
+          printf '%s\n' "$PUBLIC_CHECK_PATTERNS" > "$patterns"
+          NICOS_PUBLIC_CHECK_PATTERNS="$patterns" perl scripts/public-hygiene-scan release HEAD

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// These tests pin the three WORK-1252 defects of the old internal/lockfile.
+// These tests pin the three defects of the old internal/lockfile.
 // Each one fails on that code and passes on internal/filelock. They plant
 // sidecars in the on-disk format that both versions share.
 
@@ -99,7 +99,7 @@ func TestAppendHonoursReclaimGuardAndKeepsSuccessor(t *testing.T) {
 //
 // The owner is PID 1, which has run since boot, so it started long before
 // its sidecar was written. This test's own PID with an old timestamp would be
-// the reused-PID case (WORK-1373), which is stale by design.
+// the reused-PID case, which is stale by design.
 func TestAppendDoesNotPreemptAgedLiveOwner(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
 	plantSidecar(t, path+".lock", 1, time.Now().Add(-time.Minute), successorToken)
@@ -120,7 +120,7 @@ func TestAppendDoesNotStealSidecarDuringInitialization(t *testing.T) {
 	assertLockKept(t, path, err, "")
 }
 
-// WORK-1373: a writer killed inside an append (or a host restart) leaves its
+// A writer killed inside an append (or a host restart) leaves its
 // sidecar, and a new process can later get the same PID. That process started
 // after the sidecar was written, so it is not the owner, and the ledger must
 // not stay blocked until it exits.

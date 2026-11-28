@@ -32,7 +32,7 @@ const managedSessionRecordLimit = 64 << 10
 // managedSessionLeaseActive reports whether root is a snapref-managed browser
 // with an unexpired idle lease. Such a session is bounded by its own idle
 // watchdog, so the resident's fixed lifetime must not end it while it is in
-// use (WORK-1170). The record must name this PID and, when it recorded one,
+// use. The record must name this PID and, when it recorded one,
 // the same process start; a keep-alive or unmanaged session is not exempt.
 // After the lease plus one watchdog poll, the fixed lifetime applies again, so
 // a dead watchdog cannot leave a browser running.

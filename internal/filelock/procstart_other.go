@@ -3,5 +3,5 @@
 package filelock
 
 // platformProcessInfo is not wired on this platform. A live PID then keeps
-// its sidecar, as before WORK-1373.
+// its sidecar, as before the PID-reuse check.
 func platformProcessInfo(int) (processInfo, bool) { return processInfo{}, false }

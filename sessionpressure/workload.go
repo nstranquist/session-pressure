@@ -24,9 +24,8 @@ var workloadBudgets = map[string]int64{
 }
 
 // WorkloadDeliveryDarwin marks commit-delivery Darwin checks. The delivery
-// worker sets it explicitly; it is never inferred from argv. Decision record:
-// corpus/work-queue-v2-2026-11-15.md, "Delivery Darwin ordering". Nico
-// approved red-lane use on 2026-11-15.
+// worker sets it explicitly; it is never inferred from argv. Red-lane use
+// was approved on 2026-11-15.
 const WorkloadDeliveryDarwin = "delivery-darwin"
 
 func ValidateWorkload(workload, cohort string) error {

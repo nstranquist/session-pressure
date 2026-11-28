@@ -43,8 +43,8 @@ the narrowest detail pane (`WindowLayout.narrowestDetailWidth`), when any
 view reaches past the page edge, or when the page draws nothing. When you add
 a page, a selection state or a panel, add a scene for it. Use `ViewProbe`
 and `SceneFixtures` from `Support/` instead of `ImageRenderer` or a new
-helper. Probe limits and their causes:
-`corpus/windowless-view-probe-2026-11-24.md`.
+helper. `Support/ViewProbe.swift` documents the probe limits and their
+causes.
 
 **Do not hand-write CLI fixtures.** Model tests decode a scrubbed recording of
 real output at `Tests/NDevPressureCoreTests/Fixtures/board-full.json`. Two

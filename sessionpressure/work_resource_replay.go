@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Resource-headroom replay (WORK-1065, under WORK-3's `work evaluate`).
+// Resource-headroom replay (under `work evaluate`).
 //
 // The scheduler replay (workreplay.go) models queue order on retained
 // arrivals and runtimes and leaves host pressure out. This replay adds the

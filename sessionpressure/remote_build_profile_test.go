@@ -151,7 +151,7 @@ func TestRemoteToolchainPreflightRefusesWithTheContract(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 	// A stable path keeps CC, and so every cgo action ID, the same across
-	// jobs (WORK-1480). A second job reuses the link and leaves no temp file.
+	// jobs. A second job reuses the link and leaves no temp file.
 	if got := toolsDir(shared); got != shared {
 		t.Fatalf("tool directory = %q, want the shared %q", got, shared)
 	}

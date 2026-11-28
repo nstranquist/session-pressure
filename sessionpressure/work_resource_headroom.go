@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// Resource-headroom admission, shadow stage (WORK-1065, a candidate policy
-// under WORK-3).
+// Resource-headroom admission, shadow stage (a candidate
+// policy).
 //
 // Nico decided on 2026-11-17 that admission must not depend on a fixed,
 // human-set session or slot count. It decides from live headroom and from the

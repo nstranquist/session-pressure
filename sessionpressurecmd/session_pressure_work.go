@@ -292,7 +292,7 @@ func cmdSessionPressureWork(g *Flags, args []string) int {
 		if telemetry, err := sessionpressure.NewTelemetryStore(runtime.dir).ReadEvents(200_000, since); err == nil {
 			stalls := sessionpressure.ReplayQueueStalls(events, sessionpressure.LevelTimeline(telemetry), runtime.policy.WorkLimits, sessionpressure.QueueStallThreshold)
 			replay.QueueStalls = &stalls
-			// The resource-headroom candidate (WORK-1065) is scored here, in
+			// The resource-headroom candidate is scored here, in
 			// the same window. It is evidence only: it does not change
 			// PromotionReady, which describes the scheduler candidate.
 			resource := sessionpressure.ReadResourceReplay(runtime.dir, events, telemetry, runtime.policy.WorkLimits, since)

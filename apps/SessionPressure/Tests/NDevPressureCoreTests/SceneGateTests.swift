@@ -5,8 +5,7 @@ import Testing
 
 /// Every app scene, built from recorded fixtures without a window, must fit
 /// the narrowest detail pane and must draw. This catches a card that widens
-/// its page (corpus/work-queue-slot-bar-overflow-2026-11-24.md) and a page
-/// that renders blank (corpus/app-split-panes-2026-11-19.md).
+/// its page and a page that renders blank.
 /// Look at a scene with `make render SCENES=<name>`.
 @Suite("Scene gate")
 @MainActor

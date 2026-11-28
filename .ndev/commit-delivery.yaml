@@ -8,7 +8,9 @@ maximum_commits: 200
 # Capture runs the repo-owned hook (.ndev/hooks/pre-commit, installed as
 # .git/hooks/pre-commit). Its capture profile refuses private host names,
 # private paths, the private workers.dev handle and secrets in added lines,
-# because this repository is public. See corpus/commit-lane-enrolment-2026-11-17.md.
+# because this repository is public. Working papers live in a private
+# repository, so the hook also refuses new files under corpus/ and docs/
+# active, audits and reviews.
 # No tier: capture also runs go vet on the Mac for the captured packages, so
 # the Darwin-only files (cgo NVMe reader, *_darwin.go and their tests) are
 # type-checked before acceptance.
@@ -19,7 +21,6 @@ capture_checks:
     - module: .
 append_merge:
   - CHANGELOG.md
-  - "corpus/**/*.md"
   - "docs/**/*.md"
 remote:
   require_visibility: PUBLIC
@@ -57,10 +58,9 @@ verification:
     # budgets (native inventory latency, sampler duration, resident RSS, the
     # 64-sample CPU soak, live phase timing), because on a loaded worker host
     # they measure the host's load, not the code. Real-time waits in these
-    # tests are condition-driven or use an injected wait deadline (WORK-1157),
+    # tests are condition-driven or use an injected wait deadline,
     # so host load makes them slower, not red. make test and make
     # publish-ready run the full set, budgets included.
-    # See corpus/commit-lane-enrolment-2026-11-17.md.
     - id: darwin-sessionpressure-tests
       adapter: go
       command:
@@ -91,4 +91,4 @@ verification:
     - adapter: python
       reason: The two Python files are a release-time SVG-to-PNG helper and verify-installed-lifecycle.py, a live check against an installed app; neither is a candidate check.
     - adapter: docs
-      reason: The corpus is Markdown with no repository-owned checker yet; the capture hook checks it for private names and secrets.
+      reason: The Markdown docs have no repository-owned checker yet; the capture hook checks them for private names and secrets.

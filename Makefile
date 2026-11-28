@@ -1,7 +1,7 @@
 GO ?= go
 PREFIX ?= $(CURDIR)/bin
 
-.PHONY: test race vet fmt build desktop-test desktop-gpui publish-ready secret-scan init release-promote release-promote-dry-run
+.PHONY: test race vet fmt build desktop-test desktop-gpui publish-ready secret-scan public-hygiene init release-promote release-promote-dry-run
 
 fmt:
 	$(GO) fmt ./...
@@ -35,10 +35,17 @@ build:
 secret-scan:
 	@if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --source . --no-git --redact; else echo "gitleaks not installed; skipped"; fi
 
+# This repository is public. Fail on a private name (host, address, home path,
+# work item key, private handle) in the tree or in the commits since the last
+# release. The patterns are private: they come from NICOS_PUBLIC_CHECK_PATTERNS
+# or ~/.nicos-dev/public-repo-check/patterns.txt. See scripts/public-hygiene-scan.
+public-hygiene:
+	perl scripts/public-hygiene-scan release
+
 init: build
 	@echo "init: built ./bin/session-pressure. Next: ./bin/session-pressure --json doctor"
 
-publish-ready: fmt vet race desktop-test build secret-scan
+publish-ready: fmt vet race desktop-test build secret-scan public-hygiene
 	@echo "publish-ready: ok"
 
 # Coherent post-land release + headless install from a clean committed HEAD clone.
@@ -50,6 +57,7 @@ RELEASE_BUNDLE ?=
 RELEASE_EXTRA_FLAGS ?=
 
 release-promote:
+	perl scripts/public-hygiene-scan release "$(RELEASE_REF)"
 	$(GO) run ./scripts/release promote \
 	  --repo "$(CURDIR)" \
 	  --ref "$(RELEASE_REF)" \

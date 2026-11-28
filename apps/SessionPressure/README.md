@@ -114,7 +114,5 @@ Adaptive UI poll: ~20s normal, faster under warning/red/critical, backing off to
 
 ## Related
 
-- KEP: `docs/active/07-13-1448-session-host-pressure-guard/session-host-pressure-guard-kep.md`
-- SSD watchdog KEP: `docs/active/07-22-1704-session-pressure-ssd-write-watchdog/session-pressure-ssd-write-watchdog-kep.md`
 - Core package: `nicos-dev/internal/sessionpressure`
 - CLI: `session-pressure --help`

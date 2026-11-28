@@ -116,19 +116,18 @@ dir := t.TempDir()
 <!-- HUMAN-SLAB:START -->
 - Ownership must be complete before the sidecar becomes visible. Writers build
   and close a private same-directory file (no fsync since d4d6151), then
-  publish it with an exclusive rename (WORK-1259), or an atomic hard link
+  publish it with an exclusive rename, or an atomic hard link
   where the file system has none; do not replace this with
   create-then-write O_EXCL because a competitor can mistake the empty
   initialization window for a stale lock.
 - Fresh malformed sidecars receive a fail-closed 30-second n-1 compatibility grace. Older
   malformed files and dead-PID owners are reclaimable; an aged live PID is
   never preempted solely by time.
-- Never remove a sidecar on a single unguarded judgement (WORK-1225). A
+- Never remove a sidecar on a single unguarded judgement. A
   missing sidecar means "retry the create". A stale one is removed only under
   the non-blocking flock on `path + ".lock.reclaim"`, after a second
   judgement. A blind remove after a stale check deleted a successor's live
-  lock and let two processes in. See
-  `corpus/filelock-reclaim-race-2026-11-17.md`.
+  lock and let two processes in.
 - `sessionpressure.WorkCoordinator` depends on this exclusion for lossless
   lease/waiter updates. Its multiprocess tests are incident regressions, not
   only generic lock examples.

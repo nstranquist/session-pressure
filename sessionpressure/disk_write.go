@@ -292,7 +292,7 @@ type DiskWriteObserver struct {
 	// processPassInterval spaces the per-process attribution pass. The
 	// device and swap counters stay on every tick; the per-process pass (one
 	// rusage call per pid, about 1,600 pids) was 26% of the resident's idle
-	// CPU at a 15s tick (WORK-1141). Zero attributes on every tick.
+	// CPU at a 15s tick. Zero attributes on every tick.
 	processPassInterval   time.Duration
 	lastProcessPassAt     time.Time
 	lastProcessErr        error

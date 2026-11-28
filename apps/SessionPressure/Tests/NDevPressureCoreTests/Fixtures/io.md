@@ -14,7 +14,7 @@ and "Read SMART"). The only edits: `io-health.json` has `data_dir` set to
 `/redacted` and the SSD `serial` set to `redacted`. Keys are sorted.
 Re-record with the same three commands and the same two edits.
 
-`io-status.json` was re-recorded on 2026-11-24 at 22:10 UTC (WORK-SP-16),
+`io-status.json` was re-recorded on 2026-11-24 at 22:10 UTC,
 when writer names became full program names instead of the kernel's
 16-character cut. It came from `session-pressure --json io status --live
 --full` built from that change. Of eight back-to-back samples it is the one

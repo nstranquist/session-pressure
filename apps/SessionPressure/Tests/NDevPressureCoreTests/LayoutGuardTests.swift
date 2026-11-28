@@ -5,7 +5,7 @@ import Testing
 /// macOS 26 runs the NavigationSplitView detail column under the floating
 /// sidebar. `HSplitView` and `VSplitView` are `NSSplitView`s that lose the
 /// safe-area inset after a pane toggles, so their content slides under the
-/// sidebar and the page looks blank (corpus/app-split-panes-2026-11-19.md).
+/// sidebar and the page looks blank.
 /// Use `ResizableSplit` in Components.swift instead.
 @Suite("App layout guard")
 struct LayoutGuardTests {

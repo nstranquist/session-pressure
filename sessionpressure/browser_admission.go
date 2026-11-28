@@ -14,7 +14,7 @@ import (
 	"github.com/nstranquist/session-pressure/internal/filelock"
 )
 
-// Browser admission (WORK-1114, under WORK-1065).
+// Browser admission.
 //
 // Until 2026-11-17 every browser work run took one host-wide file lock
 // (browser-execution), so one long CSP sweep blocked console screenshots and
@@ -310,7 +310,7 @@ func newBrowserAdmitterForCommand(coordinator *WorkCoordinator, runtime string, 
 
 // browserMemoryHeadroom is sampled available memory minus the reserve. It
 // leaves out the work queue's in-flight lease predictions: that rule is still
-// a shadow (WORK-1065) and no other class is admitted by it. Its predictions
+// a shadow and no other class is admitted by it. Its predictions
 // also charge a lease whose child only drives a remote gaterunner job with its
 // local p90, so on 2026-11-17 it read -2552 MB with 22 GB available and would
 // have refused every browser. The ledger still charges browsers the sample

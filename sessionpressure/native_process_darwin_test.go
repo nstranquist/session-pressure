@@ -363,7 +363,7 @@ func TestNativeSamplerBuildsAgentTreesWithinOperatorBudget(t *testing.T) {
 	// grows in steps of about 250 ms on the kernel's cadence, not with the
 	// sampler's work: 252-852 ms on 2026-11-24, against about 230 ms of work.
 	// Budget the work, and hold the wait to its own designed cap, so the
-	// kernel's cadence cannot fail the work budget (WORK-1662).
+	// kernel's cadence cannot fail the work budget.
 	waitMS, measured := snapshot.SamplePhaseMS["host_cpu"]
 	if !measured {
 		t.Fatalf("native sample did not report its host_cpu phase: %+v", snapshot.SamplePhaseMS)
@@ -399,7 +399,7 @@ func TestResidentSampler64SampleCPUAndLatencySoak(t *testing.T) {
 	// CPU window of hostCPUMinimumLiveWindow and never waits for one. Called
 	// back to back, every sample would wait for that window instead, and the
 	// duration budget would measure the wait (p95 256-265 ms against 300 ms,
-	// so a load spike failed the test, WORK-1662). Move the sampler clock on
+	// so a load spike failed the test). Move the sampler clock on
 	// by one window between samples: the 64 samples still span 16 s, as
 	// before, and the clock runs at wall speed inside a sample, so durations
 	// stay real.
@@ -458,8 +458,8 @@ const residentRSSBudgetChildEnv = "SESSION_PRESSURE_RSS_BUDGET_CHILD"
 func TestResidentSamplerRepeatedFreshInventoriesStayWithinRSSBudget(t *testing.T) {
 	// The budget is about the resident, which is a fresh process. This test
 	// reads the RSS of its own process, and in a full package run earlier
-	// tests have already grown it (40 MB against 28 MB alone, 2026-11-17,
-	// WORK-1095). Run the measurement in a fresh copy of the test binary so
+	// tests have already grown it (40 MB against 28 MB alone, 2026-11-17).
+	// Run the measurement in a fresh copy of the test binary so
 	// test order cannot change the result.
 	if !liveHostBudgets() {
 		t.Skip("resident RSS budget is a live-host measurement; skipped under -short")

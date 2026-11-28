@@ -169,8 +169,7 @@ const (
 // cores): median 1.6 to 1.7 s, 95th percentile about 2.4 s, maximum 4.05 s.
 // The one pathological login measured earlier took 8 s. 5 s sits above the
 // normal jitter and below that case. Slow is a report, not a refusal: it
-// never changes Healthy or the probe budget. Evidence and reasoning:
-// corpus/fleet-probe-under-load-2026-11-17.md, "Transport state".
+// never changes Healthy or the probe budget.
 var probeSlowAfter = 5 * time.Second
 
 // transportOf classifies an answered probe by its SSH time and attempts.

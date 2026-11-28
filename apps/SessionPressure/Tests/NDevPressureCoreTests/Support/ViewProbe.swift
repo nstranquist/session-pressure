@@ -9,8 +9,7 @@ import SwiftUI
 /// segmented pickers, text fields, `NSViewRepresentable` text views, dark
 /// and light appearance and environment objects. Two things a window
 /// normally does are done here instead: `host` paints the window background
-/// behind the page, and it builds `List` rows (`buildTableRows`)
-/// (corpus/windowless-view-probe-2026-11-24.md).
+/// behind the page, and it builds `List` rows (`buildTableRows`).
 @MainActor
 enum ViewProbe {
     /// Width the view asks for when offered `offered` points of width and
@@ -66,7 +65,7 @@ enum ViewProbe {
     /// A platform view that extends past the host's left or right edge.
     /// SwiftUI widens a page's scroll view to its content's minimum width
     /// and centres it, so a too-wide card pushes most of the page off
-    /// screen (corpus/work-queue-slot-bar-overflow-2026-11-24.md).
+    /// screen.
     struct Escape: CustomStringConvertible {
         let view: String
         let frameInHost: CGRect

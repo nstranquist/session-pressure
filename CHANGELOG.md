@@ -10,6 +10,12 @@
   A file that exists only in the overlay no longer fails the snapshot.
   `--overlay=` and `--tags=` now reach `go list`, and flags after `-args` do
   not.
+- **Public repository hygiene.** Working papers (design notes, audits and
+  reviews) moved to a private repository, and public files no longer link to
+  them. `make publish-ready`, `make release-promote` and CI run
+  `scripts/public-hygiene-scan`, which fails on a private name in the tree or
+  in the commits since the last release. The capture hook also refuses new
+  files under `corpus/`, `docs/active/`, `docs/audits/` and `docs/reviews/`.
 - **Release: the front door links the promoted revision.** Promotion now
   passes the promoted commit to the front-door rebuild in
   `SESSION_PRESSURE_FRONT_DOOR_PIN` (package `frontdoor`), so a commit that
@@ -18,8 +24,7 @@
   revision still fails the promotion and now names the pin. When HEAD moves
   during a promotion and the installed CLI links exactly the promoted
   revision, promotion succeeds and reports the new HEAD in `head_moved_to`
-  instead of failing as "behind HEAD". See
-  `corpus/front-door-pin-2026-11-28.md`.
+  instead of failing as "behind HEAD".
 - **Remote placement: explicit `--placement remote` refusals name the actual
   cause.** When `--placement remote` cannot route a command, the refusal now
   distinguishes non-darwin hosts, disabled remote routing, disabled Node
@@ -27,8 +32,7 @@
   a single control event), and unsupported commands, removes the duplicated
   `local fallback is disabled` suffix and unrelated compiler-profile advice,
   and records `placement_decline_kind` and `command_bin` in
-  `remote_work_declined` events. Local fallback remains disabled. See
-  `corpus/explicit-remote-placement-refusal-2026-11-27.md`.
+  `remote_work_declined` events. Local fallback remains disabled.
 - **Remote Go: missing `go.mod` `replace` targets fail as command errors with
   exact diagnostics.** When a local `replace` target directory or its `go.mod`
   is missing (direct or transitive), remote Go preparation now names the
@@ -36,7 +40,7 @@
   exits with code 1 and omits the coordinator refusal marker and
   `remote Go work blocked:` prefix so delivery workers attribute the source
   error directly instead of holding it as a retryable environment fault. Local
-  fallback remains disabled. See `corpus/remote-replace-target-2026-11-27.md`.
+  fallback remains disabled.
 - **Remote Go: the "requires a module" refusal names the module to run
   from.** A direct `go build`, `go test` or `go vet` from a directory with no
   `go.mod` above it is still refused with the same exit code, marker and
@@ -45,8 +49,7 @@
   for example `(cd scripts && go build -o ../tmp/bin/tool tool/main.go)`,
   instead of the compiler-profile advice. `go build -C dir` gets the same
   help. The express lane reads the one Go flag table, so the value of a flag
-  such as `-shuffle on` is no longer counted as a package. See
-  `corpus/remote-module-refusal-2026-11-27.md`.
+  such as `-shuffle on` is no longer counted as a package.
 - **Remote Go: the suggested module command does what the original does.**
   A `go build` with no `-o` gets `-o ../<name>`, so the binary lands where
   the original build writes it, and `go test -c` gets `-o ../`. Relative
@@ -55,29 +58,28 @@
   symlink that would move an output gives the earlier text. A remote build
   now accepts `--o` and `--o=` like `-o`. The express lane reads `--o`,
   `--C`, `-test.coverprofile` and the other spellings of a Go flag the way
-  `cmd/go` does. See `corpus/remote-module-refusal-2026-11-27.md`.
-- **File lock: zombie owners and one reclaim rule with nicos-tools
-  (WORK-1374).** An owner that exits inside the lock and is not yet reaped
+  `cmd/go` does.
+- **File lock: zombie owners and one reclaim rule with nicos-tools.**
+  An owner that exits inside the lock and is not yet reaped
   is a zombie; it no longer counts as live. Stale reclaim now also holds the
   judged sidecar's inode lock and checks that the path still names it, the
   protocol nicos-tools breakers use, so the two repositories exclude each
   other on shared files such as the notify inbox. A new crash stress test
   (holders die inside the lock) pins the dead-owner path.
-- **File lock: a reused PID no longer keeps a dead owner's lock
-  (WORK-1373).** A writer killed inside the lock, or a host restart, left a
+- **File lock: a reused PID no longer keeps a dead owner's lock.**
+  A writer killed inside the lock, or a host restart, left a
   sidecar whose PID a later process could reuse. That kept the lock "live"
   and blocked every waiter, including the JSONL ledgers, until the new
   process exited. The owner now counts only if its process started before
   the sidecar was written (10 s slack). The guarded stale path also removes
-  temp ownership records of dead processes. See
-  `corpus/jsonl-lock-race-2026-11-17.md`.
-- **File lock: cheaper uncontended acquire (WORK-1259).** The lock sidecar
+  temp ownership records of dead processes.
+- **File lock: cheaper uncontended acquire.** The lock sidecar
   is published with an exclusive rename (`renameat2` RENAME_NOREPLACE on
   Linux, `renamex_np` RENAME_EXCL on Darwin), with the hard link as the
   fallback, and the directory is created only when missing. Uncontended
   acquire on the Mac went from about 0.78 ms to 0.36 ms; on Linux JSONL
-  append went from 95 us to 89 us. See `corpus/jsonl-lock-race-2026-11-17.md`.
-- **JSONL appends: no overlap between processes (WORK-1252).**
+  append went from 95 us to 89 us.
+- **JSONL appends: no overlap between processes.**
   `internal/jsonl` took its lock from `internal/lockfile`, which removed a
   sidecar it judged stale without a second check, preempted live owners
   older than 30 s, and treated a sidecar still being written as stale. Two
@@ -85,20 +87,18 @@
   appends in a Linux stress run). `internal/lockfile` is deleted and
   `internal/jsonl` now uses `internal/filelock`. The sidecar format is
   unchanged, so n-1 binaries still exclude each other. A lock wait that runs
-  out now matches `filelock.ErrTimeout`. See
-  `corpus/jsonl-lock-race-2026-11-17.md`.
-- **File lock: no overlap after a release (WORK-1225).** A waiter that lost
+  out now matches `filelock.ErrTimeout`.
+- **File lock: no overlap after a release.** A waiter that lost
   the create could judge a just-released sidecar stale and then delete the
   successor's live sidecar, so two processes held the lock together. A
   missing sidecar now means "retry", and a dead-owner sidecar is removed only
-  under a non-blocking `flock` reclaim guard after a second judgement. See
-  `corpus/filelock-reclaim-race-2026-11-17.md`.
-- **Commit-delivery lane (WORK-1121).** The repository is enrolled in
+  under a non-blocking `flock` reclaim guard after a second judgement.
+- **Commit-delivery lane.** The repository is enrolled in
   commit-delivery. Linux `go vet` and `go test` run on the gate runner. The
   Darwin-only Go packages and the Swift app run on the Mac, scoped by path.
   A repo-owned capture hook (`.ndev/hooks/pre-commit`) refuses private host
   names, private paths and secrets in added lines, because the repository is
-  public. See `corpus/commit-lane-enrolment-2026-11-17.md`.
+  public.
 - **Per-process `phys_footprint`.** The native inventory keeps the kernel's
   physical footprint from the `proc_pid_rusage` call it already makes (no
   extra syscall). Agent trees, the agent total, latest.json and heartbeats
@@ -118,7 +118,7 @@
 
 ### Memory levels per host, fleet probe under load, resource-headroom shadow
 
-- **Fleet probe reports transport apart from health (WORK-1100).** Each
+- **Fleet probe reports transport apart from health.** Each
   `gaterunner-fleet` observation has `transport`: `ok`, `slow` or
   `unreachable`, beside `probe_ms`. A late answer (5 s or more, or only on
   the retry) keeps the scheduler's own health answer and reports `slow`; it
@@ -128,8 +128,8 @@
   remote command failure is the host's answer, not unreachable. The probe
   budget is unchanged.
 
-- **Resource-headroom admission, shadow only (WORK-1065, a candidate under
-  WORK-3).** Work events now record what admission from live headroom and
+- **Resource-headroom admission, shadow only.** Work events now record
+  what admission from live headroom and
   measured cost would decide: `shadow_resource_decision` as
   `step:dimension:reason`, with the predicted busy cores, the CPU headroom
   and the throttle it would ask for. The ladder is admit, throttle, remote,
@@ -150,7 +150,7 @@
   (`candidate_wait_p95_ms`): the live wait plus the hold until a later host
   sample would release the work. It does not change `promotion_ready`.
 - **Resident RSS budget test no longer depends on test order.** It measures
-  in a fresh copy of the test binary (WORK-1095).
+  in a fresh copy of the test binary.
 - **Opt-in work throttle.** `NDEV_WORK_THROTTLE_CORES=N` limits a leased
   command's parallelism through `GOMAXPROCS`, `GOFLAGS -p`, `MAKEFLAGS -j`
   and the cmake, cargo, rayon, OpenMP, uv and node-gyp job variables. It

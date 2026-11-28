@@ -16,7 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// The SQLite index (WORK-1601). A put no longer replays a journal, a get
+// The SQLite index. A put no longer replays a journal, a get
 // never opens the index, and older binaries that still append to
 // index.jsonl stay accounted for through the journal import.
 

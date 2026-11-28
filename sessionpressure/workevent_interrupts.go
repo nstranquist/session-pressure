@@ -19,7 +19,7 @@ import (
 // shards of the work-event log. It keeps its parse state between counts and
 // reads only complete lines appended since the previous count. A full re-parse
 // of the day's shards (about 24 MB and 110 ms by late afternoon) on every
-// heartbeat was one of the resident's largest idle costs (WORK-1141).
+// heartbeat was one of the resident's largest idle costs.
 //
 // The result equals a fresh full pass: the state resets when the window's
 // first day changes, when the shard list is not the old list plus new names

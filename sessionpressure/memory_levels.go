@@ -22,7 +22,7 @@ import (
 // JSON matches policy.json and every other state file here, decodes strictly
 // with the standard library (no new dependency in the 30 MB resident), and is
 // readable with jq. Each anchor is a host shape measured from its own monitor
-// history; see corpus/memory-levels-calibration-2026-11-17.md.
+// history.
 
 // MemoryLevelsSchemaVersion is the only memory-levels.json schema accepted.
 const MemoryLevelsSchemaVersion = 1

@@ -23,7 +23,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// The cache index lives in SQLite (WORK-1601). It replaced an append-only
+// The cache index lives in SQLite. It replaced an append-only
 // JSONL journal that every client replayed before its first put: on
 // runner-3 (2026-11-21) the journal held about 1.1 M rows (135 MB), and the
 // replay cost each Go process that put anything about 3.8 s and 622 MB under

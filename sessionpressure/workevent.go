@@ -792,7 +792,7 @@ func (store *WorkEventStore) CountWrapperInterruptOperations(since, generatedAt 
 
 // workEventLifecycle is the per-operation validation state. It is compact
 // because the resident keeps one per operation for a whole day (about 5,000
-// by evening, WORK-1141): identities are 64-bit hashes, enum strings are the
+// by evening): identities are 64-bit hashes, enum strings are the
 // package constants, seen event types are a bit set, and the terminal event
 // keeps only the fields the reconciliation rule reads.
 type workEventLifecycle struct {

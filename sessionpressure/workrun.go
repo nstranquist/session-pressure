@@ -1314,7 +1314,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	}
 	applyCoordinatedWorkEvidence(&queuedEvent, initialAdmission, queuedEvent.PressureDimension)
 	shadowMemory.decide(initialAdmission, initialStatus.Leases, time.Now()).apply(&queuedEvent)
-	// The resource candidate (WORK-1065) shares the memory probe's history.
+	// The resource candidate shares the memory probe's history.
 	// Portable means the caller did not pin local placement and the tool
 	// family is one the gate runner serves.
 	shadowResource := &shadowResourceProbe{memory: shadowMemory, session: sessionDigest,

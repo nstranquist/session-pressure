@@ -15,7 +15,7 @@ import (
 // processes back to back and checks from a ledger that no two appends were
 // inside the lock at the same time. Back-to-back releases overlap other
 // processes' create attempts, which is the window where a waiter could
-// delete a successor's live sidecar (WORK-1252).
+// delete a successor's live sidecar.
 //
 // JSONL_STRESS_PROCS, JSONL_STRESS_ROUNDS and JSONL_STRESS_HOLD scale the
 // run for a stress A/B; the defaults keep it to about one second.

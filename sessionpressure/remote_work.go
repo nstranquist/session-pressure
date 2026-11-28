@@ -185,8 +185,8 @@ func remoteRunnerPrelude() string {
 		fmt.Sprintf(" >&2; exit %d; }; ", workExitPolicyDenied) +
 		"export PATH=/srv/build/bin:/usr/local/go/bin:\"$PATH\" && " +
 		// A runner that runs the job as a pool user gives it its own Go
-		// caches and says so with NCD_RUNNER_GO_ENV=pool (nicos-commit-delivery
-		// WORK-1299); the pool cannot write the shared runner caches. Any
+		// caches and says so with NCD_RUNNER_GO_ENV=pool (nicos-commit-delivery);
+		// the pool cannot write the shared runner caches. Any
 		// other environment gets the shared caches, whatever it inherited.
 		"{ test \"${NCD_RUNNER_GO_ENV:-}\" = pool || export GOCACHE=/srv/build/cache/go-build GOMODCACHE=/srv/build/cache/go-mod GOPATH=/srv/build/go; } && " +
 		"umask 0022 && "

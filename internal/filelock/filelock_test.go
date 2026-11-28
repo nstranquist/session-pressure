@@ -241,7 +241,7 @@ func TestAgedLockOwnedByLivePIDIsNotReclaimed(t *testing.T) {
 	// Plant a lock owned by a live process that started long before the
 	// sidecar was written (PID 1, up since boot), with a timestamp older than
 	// StaleAge. Planting this test's own PID with an old timestamp would be the
-	// reused-PID case (WORK-1373), which is stale by design.
+	// reused-PID case, which is stale by design.
 	recordedAt := time.Now().Add(-2 * StaleAge)
 	if proc, ok := readProcessInfo(1); !ok || proc.started.After(recordedAt.Add(-time.Minute)) {
 		t.Skipf("PID 1 start time unknown or too recent (%v, %v)", proc.started, ok)
@@ -308,7 +308,7 @@ func setReclaimHook(t *testing.T, hook func()) {
 	t.Cleanup(func() { testHookBeforeReclaimGuard = nil })
 }
 
-// WORK-1225: a waiter lost the create, the owner released, and a successor
+// A waiter lost the create, the owner released, and a successor
 // published its sidecar before the waiter acted. The waiter must not remove
 // the successor's live sidecar. The old code judged the missing file stale
 // and then deleted whatever was there.
@@ -334,7 +334,7 @@ func TestReclaimNeverRemovesSuccessorAfterOwnerReleased(t *testing.T) {
 	}
 }
 
-// WORK-1225: two waiters judged the same dead owner stale. The faster one
+// Two waiters judged the same dead owner stale. The faster one
 // reclaimed and published its own live sidecar before the slower one took
 // the guard. The slower one must judge again under the guard and keep the
 // successor's sidecar.
@@ -595,7 +595,7 @@ func TestExclusiveCriticalSectionAcrossProcesses(t *testing.T) {
 	ledger := filepath.Join(dir, "critical-section.log")
 	// Each helper takes the lock several times back to back. Releases then
 	// overlap with other helpers' create attempts far more often, which is
-	// the window where WORK-1225 let a waiter delete a successor's sidecar.
+	// the window where the old reclaim let a waiter delete a successor's sidecar.
 	const processCount, roundsPerProcess = 12, 20
 	commands := make([]*exec.Cmd, 0, processCount)
 	for index := 0; index < processCount; index++ {
