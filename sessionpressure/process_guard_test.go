@@ -404,10 +404,27 @@ func TestProcessIncidentObservedExitDoesNotClaimSignal(t *testing.T) {
 func TestBoundedProcessCancellationIsRecorded(t *testing.T) {
 	dir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
-	timer := time.AfterFunc(100*time.Millisecond, cancel)
-	defer timer.Stop()
 	defer cancel()
-	code, err := RunBoundedProcess(ctx, dir, time.Minute, []string{"/bin/sleep", "60"}, nil, nil, nil)
+	// Cancel only once the command runs. A cancel during process-group setup
+	// ends the run before any command starts, and on a loaded host that setup
+	// can take longer than any fixed delay. The context stays cancelled, so the
+	// run records it whenever it reaches its wait.
+	started := filepath.Join(t.TempDir(), "started")
+	go func() {
+		for {
+			if _, err := os.Stat(started); err == nil {
+				cancel()
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}()
+	argv := []string{"/bin/sh", "-c", `: > "$1" && exec /bin/sleep 60`, "sh", started}
+	code, err := RunBoundedProcess(ctx, dir, time.Minute, argv, nil, nil, nil)
 	if code != 124 || err != nil {
 		t.Fatal(code, err)
 	}
