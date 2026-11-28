@@ -124,7 +124,7 @@ Subcommands:
                                       --force skips reclaim cooldown on named --provider only
                                       --full-wipe is required for go-build-cache; it is a rebuild tax
   history [--since D] [--limit N]     Read bounded private reclaim receipts
-  watch [--dry-run] [--test-alert]    Disk, Time Machine, X10 Pro and NicosTM alerts
+  watch [--dry-run] [--test-alert] [--drive PATH]  Disk, Time Machine and optional external drive alerts
                                       (toast + Scratchpad; once per episode, then daily)
   tm-exclude plan [--limit N]         Time Machine exclusion plan with measured sizes
   policy enable|observe               Toggle disk-growth admission independently

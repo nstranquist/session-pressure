@@ -66,25 +66,40 @@ func TestStorageWatchEpisodesAlertOnceEscalateAndRealert(t *testing.T) {
 
 func TestStorageWatchBackupDriveAndQuota(t *testing.T) {
 	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
-	state := storageWatchState{}
+	state := storageWatchState{
+		Episodes: map[string]storageWatchEpisode{
+			"x10-mounted": {Severity: "warning", OpenedAt: now.Add(-48 * time.Hour)},
+		},
+	}
+	// Default watch (no --drive configured) omits external-drive checks and clears legacy x10-mounted episodes.
+	defaultConditions := evaluateStorageWatch(watchProbe(80<<30), &state, now)
+	if conditionByID(defaultConditions, "x10-mounted").ID != "" || conditionByID(defaultConditions, "external-drive").ID != "" {
+		t.Fatalf("default watch should not emit external-drive conditions: %+v", defaultConditions)
+	}
+	if _, legacyStillOpen := state.Episodes["x10-mounted"]; legacyStillOpen {
+		t.Fatalf("legacy x10-mounted episode was not cleared: %+v", state.Episodes)
+	}
+
 	probe := watchProbe(80 << 30)
+	probe.DrivePath = "/Volumes/ArchiveDrive"
 	probe.DriveMounted = true
 	probe.TMConfigured = true
 	probe.TMLatest = now.Add(-49 * time.Hour)
 	probe.TMMounted = true
 	probe.TMUsedBytes, probe.TMTotalBytes = 91, 100
 	conditions := evaluateStorageWatch(probe, &state, now)
-	for id, want := range map[string]string{"time-machine": "warning", "x10-mounted": "ok", "nicostm-quota": "warning"} {
+	for id, want := range map[string]string{"time-machine": "warning", "external-drive": "ok", "nicostm-quota": "warning"} {
 		if got := conditionByID(conditions, id).Severity; got != want {
 			t.Fatalf("%s=%s want %s", id, got, want)
 		}
 	}
 	probe.DriveMounted = false
-	if got := conditionByID(evaluateStorageWatch(probe, &state, now.Add(23*time.Hour)), "x10-mounted").Severity; got != "ok" {
+	if got := conditionByID(evaluateStorageWatch(probe, &state, now.Add(23*time.Hour)), "external-drive").Severity; got != "ok" {
 		t.Fatalf("drive within grace=%s", got)
 	}
-	if got := conditionByID(evaluateStorageWatch(probe, &state, now.Add(25*time.Hour)), "x10-mounted").Severity; got != "warning" {
-		t.Fatalf("drive absent 25h=%s", got)
+	absent := conditionByID(evaluateStorageWatch(probe, &state, now.Add(25*time.Hour)), "external-drive")
+	if absent.Severity != "warning" || !strings.Contains(absent.Summary, "ArchiveDrive") || strings.Contains(absent.Action, "X10") {
+		t.Fatalf("drive absent 25h=%+v", absent)
 	}
 	probe.TMConfigured = false
 	if got := conditionByID(evaluateStorageWatch(probe, &state, now), "time-machine").Severity; got != "info" {

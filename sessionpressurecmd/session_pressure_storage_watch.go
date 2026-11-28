@@ -17,9 +17,10 @@ import (
 	"github.com/nstranquist/session-pressure/sessionpressure"
 )
 
-// storage watch (repo restructure program S2, ST7). One run evaluates four
-// conditions, keeps per-condition episode state, and alerts once when a
-// condition opens or escalates, then again every 24 h while it stays open.
+// storage watch evaluates local disk capacity, Time Machine health, Time
+// Machine volume quota, and an optional explicitly configured external drive,
+// keeping per-condition episode state and alerting once when a condition opens
+// or escalates, then again every 24 h while it stays open.
 //
 // Disk thresholds follow the policy bands so admission and alerts agree:
 // at or below warning_free_bytes (50 GiB) the alert is "warning"; at or
@@ -31,7 +32,6 @@ const (
 	storageWatchBackupMaxAge    = 48 * time.Hour
 	storageWatchDriveMaxAbsence = 24 * time.Hour
 	storageWatchQuotaAlert      = 0.90
-	storageWatchDriveDefault    = "/Volumes/X10 Pro"
 	storageWatchTMDefault       = "/Volumes/NicosTM"
 	// storageWatchNoteCommandEnv opts in to an external note sink (executable
 	// and whitespace-separated arguments, no shell; alert text is written to
@@ -66,6 +66,7 @@ type storageWatchState struct {
 type storageWatchProbe struct {
 	Storage      sessionpressure.StorageSnapshot
 	Policy       sessionpressure.StoragePolicy
+	DrivePath    string
 	DriveMounted bool
 	TMConfigured bool
 	TMLatest     time.Time // zero when no completed backup
@@ -196,16 +197,27 @@ func evaluateStorageWatch(probe storageWatchProbe, state *storageWatchState, now
 		backup.Summary = fmt.Sprintf("latest Time Machine backup %s ago", now.Sub(probe.TMLatest).Round(time.Minute))
 	}
 
-	drive := storageWatchCondition{ID: "x10-mounted", Severity: "ok", Summary: "X10 Pro is mounted"}
-	if probe.DriveMounted {
-		state.DriveLastSeenAt = now
-	} else if state.DriveLastSeenAt.IsZero() {
-		drive.Severity, drive.Summary = "info", "X10 Pro not mounted and never seen by this watch"
-	} else if absent := now.Sub(state.DriveLastSeenAt); absent > storageWatchDriveMaxAbsence {
-		drive.Severity, drive.Summary = "warning", fmt.Sprintf("X10 Pro unmounted for %s; offload links and backups depend on it", absent.Round(time.Hour))
-		drive.Action = "plug in the X10 Pro"
-	} else {
-		drive.Summary = fmt.Sprintf("X10 Pro unmounted for %s (alert after 24h)", absent.Round(time.Minute))
+	conditions := []storageWatchCondition{disk, backup}
+	if state.Episodes != nil {
+		// Retire any legacy x10-mounted episode left in prior state files.
+		delete(state.Episodes, "x10-mounted")
+	}
+	if strings.TrimSpace(probe.DrivePath) != "" {
+		label := filepath.Base(filepath.Clean(probe.DrivePath))
+		drive := storageWatchCondition{ID: "external-drive", Severity: "ok", Summary: label + " is mounted"}
+		if probe.DriveMounted {
+			state.DriveLastSeenAt = now
+		} else if state.DriveLastSeenAt.IsZero() {
+			drive.Severity, drive.Summary = "info", label+" not mounted and never seen by this watch"
+		} else if absent := now.Sub(state.DriveLastSeenAt); absent > storageWatchDriveMaxAbsence {
+			drive.Severity, drive.Summary = "warning", fmt.Sprintf("%s unmounted for %s", label, absent.Round(time.Hour))
+			drive.Action = "connect " + label + " or omit --drive if retired"
+		} else {
+			drive.Summary = fmt.Sprintf("%s unmounted for %s (alert after 24h)", label, absent.Round(time.Minute))
+		}
+		conditions = append(conditions, drive)
+	} else if state.Episodes != nil {
+		delete(state.Episodes, "external-drive")
 	}
 
 	quota := storageWatchCondition{ID: "nicostm-quota", Severity: "ok"}
@@ -222,7 +234,7 @@ func evaluateStorageWatch(probe storageWatchProbe, state *storageWatchState, now
 			quota.Action = "review exclusions (tm-exclude plan); Time Machine will delete oldest history"
 		}
 	}
-	return []storageWatchCondition{disk, backup, drive, quota}
+	return append(conditions, quota)
 }
 
 func storageWatchRank(severity string) int {
@@ -333,7 +345,7 @@ func routeStorageWatchAlerts(due []storageWatchCondition, logPath string, now ti
 }
 
 func cmdSessionPressureStorageWatch(g *Flags, args []string) int {
-	drive, tmVolume := storageWatchDriveDefault, storageWatchTMDefault
+	drive, tmVolume := "", storageWatchTMDefault
 	dryRun, testAlert := false, false
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
@@ -360,7 +372,10 @@ func cmdSessionPressureStorageWatch(g *Flags, args []string) int {
 		return sessionPressureError(err.Error(), 1)
 	}
 	now := time.Now()
-	probe := storageWatchProbe{Storage: sample, Policy: runtime.policy.Storage, DriveMounted: storageWatchMounted(drive), TMMounted: storageWatchMounted(tmVolume)}
+	probe := storageWatchProbe{Storage: sample, Policy: runtime.policy.Storage, DrivePath: drive, TMMounted: storageWatchMounted(tmVolume)}
+	if strings.TrimSpace(drive) != "" {
+		probe.DriveMounted = storageWatchMounted(drive)
+	}
 	probeTimeMachine(&probe)
 	if probe.TMMounted {
 		probe.TMUsedBytes, probe.TMTotalBytes, _ = storageWatchStatfs(tmVolume)
