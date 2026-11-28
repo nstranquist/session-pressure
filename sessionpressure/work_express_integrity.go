@@ -178,12 +178,21 @@ func snapshotExpressSource(command []string, cwdOverride string) (expressSourceS
 	if err != nil {
 		return expressSourceSnapshot{}, err
 	}
+	environment := expressCommandEnvironment(command)
+	goEnv, err := readExpressGoEnvFile(environment, workdir)
+	if err != nil {
+		return expressSourceSnapshot{}, err
+	}
+	overlay, err := loadExpressGoOverlay(expressGoOverlayFlag(rest, environment, goEnv), workdir)
+	if err != nil {
+		return expressSourceSnapshot{}, err
+	}
 	listArgs := expressGoListArgs(verb, rest)
 	ctx, cancel := contextWithExpressSourceTimeout()
 	defer cancel()
 	cmd := exec.CommandContext(ctx, tool, listArgs...)
 	cmd.Dir = workdir
-	cmd.Env = expressCommandEnvironment(command)
+	cmd.Env = environment
 	cmd.Stderr = io.Discard
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -256,9 +265,18 @@ func snapshotExpressSource(command []string, cwdOverride string) (expressSourceS
 		return expressSourceSnapshot{}, fmt.Errorf("express source closure exceeds %d files", workBatchMaximumEntries)
 	}
 	digest := sha256.New()
-	var totalBytes int64
+	totalBytes := overlay.size + goEnv.size
 	for _, path := range paths {
-		info, err := os.Stat(path)
+		input := path
+		if replacement, replaced := overlay.lookup(path); replaced {
+			if replacement == "" {
+				writeWorkBatchFrame(digest, []byte(path))
+				writeWorkBatchFrame(digest, []byte("go-overlay-deleted"))
+				continue
+			}
+			input = replacement
+		}
+		info, err := os.Stat(input)
 		if err != nil {
 			return expressSourceSnapshot{}, fmt.Errorf("stat express source input: %w", err)
 		}
@@ -269,12 +287,22 @@ func snapshotExpressSource(command []string, cwdOverride string) (expressSourceS
 		if totalBytes > workBatchMaximumInputBytes {
 			return expressSourceSnapshot{}, fmt.Errorf("express source closure exceeds %d bytes", workBatchMaximumInputBytes)
 		}
-		contentDigest, err := digestStableWorkBatchFile(path, info)
+		contentDigest, err := digestStableWorkBatchFile(input, info)
 		if err != nil {
 			return expressSourceSnapshot{}, fmt.Errorf("digest express source input: %w", err)
 		}
 		writeWorkBatchFrame(digest, []byte(path))
 		writeWorkBatchFrame(digest, []byte(contentDigest))
+	}
+	// The overlay JSON and the go env file are inputs too: the JSON can delete
+	// or add files, and the env file can set GOFLAGS and other go settings.
+	if overlay.digest != "" {
+		writeWorkBatchFrame(digest, []byte("go-overlay"))
+		writeWorkBatchFrame(digest, []byte(overlay.digest))
+	}
+	if goEnv.digest != "" {
+		writeWorkBatchFrame(digest, []byte("go-env-file"))
+		writeWorkBatchFrame(digest, []byte(goEnv.digest))
 	}
 	return expressSourceSnapshot{Digest: "sha256:" + hex.EncodeToString(digest.Sum(nil))}, nil
 }
@@ -484,7 +512,12 @@ func expressGoListArgs(verb string, rest []string) []string {
 		if arg == "--" {
 			break
 		}
-		name, _, hasValue := strings.Cut(arg, "=")
+		// goFlagName reads -flag, --flag and -flag=value alike. Arguments
+		// after -args belong to the test binary, not to the build.
+		name, _, hasValue := goFlagName(arg)
+		if name == "-args" {
+			break
+		}
 		if !valueFlags[name] {
 			continue
 		}

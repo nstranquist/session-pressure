@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Express reuse: a changed Go `-overlay` no longer replays a stale pass.**
+  The express source digest now hashes the replacement file that the
+  overlay names instead of the file on disk at the same path, binds the
+  overlay JSON and the go env file, and finds the overlay on the command
+  line, in `GOFLAGS` or in the go env file, in the go command's own order.
+  A file that exists only in the overlay no longer fails the snapshot.
+  `--overlay=` and `--tags=` now reach `go list`, and flags after `-args` do
+  not.
 - **Release: the front door links the promoted revision.** Promotion now
   passes the promoted commit to the front-door rebuild in
   `SESSION_PRESSURE_FRONT_DOOR_PIN` (package `frontdoor`), so a commit that
