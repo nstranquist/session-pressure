@@ -198,7 +198,7 @@ func remoteModuleClosure(start string) ([]string, string, error) {
 		}
 		parent := filepath.Dir(root)
 		if parent == root {
-			return nil, "", errors.New("remote Go work requires a module")
+			return nil, "", errRemoteNoModule
 		}
 		root = parent
 	}
@@ -532,6 +532,9 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	finishStage := func() { timingMS[stage] += time.Since(stageStarted).Milliseconds() }
 	nextStage := func(name string) { finishStage(); stage, stageStarted = name, time.Now() }
 	modules, common, err := remoteModuleClosure(cwd)
+	if errors.Is(err, errRemoteNoModule) {
+		return rejectRemoteModule(dir, cwd, options.Command)
+	}
 	if err != nil {
 		return reject(err.Error())
 	}
@@ -734,11 +737,25 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	return true, 0, nil
 }
 
+// remoteRunnerAdvice ends a remote refusal that a runner profile can fix.
+const remoteRunnerAdvice = "use the Hetzner gate-runner with an explicit compiler profile"
+
 // rejectRemoteWork marks the command handled so callers cannot enter local
 // admission after a profile or source rejection.
 func rejectRemoteWork(dir, operation, reason string) (bool, int, error) {
-	recordControlEvent(dir, map[string]any{"event": "remote_work_declined", "operation": operation, "reason": reason, "local_blocked": true})
-	return true, workExitPolicyDenied, workRefusal(WorkRefusalRemoteProfile, fmt.Errorf("remote Go work blocked: %s; use the Hetzner gate-runner with an explicit compiler profile; local fallback is disabled", reason))
+	return refuseRemoteGo(dir, operation, reason, remoteRunnerAdvice, nil)
+}
+
+// refuseRemoteGo records the decline and returns the refusal. Callers match
+// the marker and kind, and people read the "remote Go work blocked:" prefix,
+// so only the reason and the advice change between refusals.
+func refuseRemoteGo(dir, operation, reason, advice string, attrs map[string]any) (bool, int, error) {
+	event := map[string]any{"event": "remote_work_declined", "operation": operation, "reason": reason, "local_blocked": true}
+	for key, value := range attrs {
+		event[key] = value
+	}
+	recordControlEvent(dir, event)
+	return true, workExitPolicyDenied, workRefusal(WorkRefusalRemoteProfile, fmt.Errorf("remote Go work blocked: %s; %s; local fallback is disabled", reason, advice))
 }
 
 // remoteLane picks the runner lane and the Go limits that fit it. Only an

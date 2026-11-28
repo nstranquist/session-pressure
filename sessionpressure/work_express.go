@@ -472,12 +472,7 @@ func goTestRunsBenchmark(args []string) bool {
 		if strings.Contains(arg, "=") {
 			continue
 		}
-		switch arg {
-		case "-run", "-benchtime", "-count", "-cpu", "-parallel", "-timeout",
-			"-coverprofile", "-coverpkg", "-covermode", "-tags", "-mod", "-modfile",
-			"-exec", "-o", "-p", "-asmflags", "-gcflags", "-ldflags", "-toolexec",
-			"-C", "-overlay", "-pgo", "-vet", "-fuzz", "-fuzztime", "-skip",
-			"-blockprofile", "-cpuprofile", "-memprofile", "-mutexprofile", "-outputdir", "-trace":
+		if name, _, _ := goFlagName(arg); goFlagsWithValue[name] {
 			i++
 		}
 	}
@@ -1015,16 +1010,8 @@ func goPackageTargets(args []string) []string {
 			if strings.Contains(arg, "=") {
 				continue
 			}
-			switch arg {
-			case "-run", "-bench", "-benchtime", "-count", "-cpu", "-parallel", "-timeout",
-				"-coverprofile", "-coverpkg", "-covermode", "-tags", "-mod", "-modfile",
-				"-exec", "-o", "-p", "-asmflags", "-gcflags", "-ldflags", "-toolexec",
-				"-C", "-overlay", "-pgo", "-vet", "-fuzz", "-fuzztime", "-skip",
-				"-blockprofile", "-cpuprofile", "-memprofile", "-mutexprofile",
-				"-outputdir", "-trace":
-				if i+1 < len(args) {
-					i++
-				}
+			if name, _, _ := goFlagName(arg); goFlagsWithValue[name] && i+1 < len(args) {
+				i++
 			}
 			continue
 		}

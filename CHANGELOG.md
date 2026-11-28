@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Remote Go: the "requires a module" refusal names the module to run
+  from.** A direct `go build`, `go test` or `go vet` from a directory with no
+  `go.mod` above it is still refused with the same exit code, marker and
+  prefix. When the named files or packages belong to a nested module, the
+  refusal now names that `go.mod` and gives the same command run from it,
+  for example `(cd scripts && go build -o ../tmp/bin/tool tool/main.go)`,
+  instead of the compiler-profile advice. `go build -C dir` gets the same
+  help. The express lane reads the one Go flag table, so the value of a flag
+  such as `-shuffle on` is no longer counted as a package. See
+  `corpus/remote-module-refusal-2026-11-27.md`.
 - **File lock: zombie owners and one reclaim rule with nicos-tools
   (WORK-1374).** An owner that exits inside the lock and is not yet reaped
   is a zombie; it no longer counts as live. Stale reclaim now also holds the

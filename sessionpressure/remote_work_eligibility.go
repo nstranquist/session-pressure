@@ -13,7 +13,8 @@ import (
 // onto the Mac.
 
 // goFlagsWithValue are the go build/test/vet flags that consume the next
-// argument when it is not given in -flag=value form.
+// argument when it is not given in -flag=value form. It is the one table for
+// every Go argument parser in this package (go help build, go help testflag).
 var goFlagsWithValue = map[string]bool{
 	"-o": true, "-p": true, "-C": true, "-tags": true, "-mod": true, "-modfile": true,
 	"-overlay": true, "-pgo": true, "-toolexec": true, "-exec": true,
@@ -24,7 +25,8 @@ var goFlagsWithValue = map[string]bool{
 	"-outputdir": true, "-run": true, "-skip": true, "-bench": true, "-benchtime": true,
 	"-count": true, "-cpu": true, "-parallel": true, "-timeout": true, "-shuffle": true,
 	"-fuzz": true, "-fuzztime": true, "-fuzzminimizetime": true, "-list": true,
-	"-json": false, "-vettool": true,
+	"-vet": true, "-blockprofilerate": true, "-memprofilerate": true,
+	"-mutexprofilefraction": true, "-json": false, "-vettool": true,
 }
 
 // goFlagsNamingLocalFiles always reference a file the runner does not have
