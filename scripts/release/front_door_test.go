@@ -15,7 +15,8 @@ import (
 // its doctor reports that revision next to the installed CLI and helper.
 type fakeHost struct {
 	linked        string
-	afterBuild    string
+	afterBuild    string // what the republish links without a pin (its HEAD)
+	honoursPin    bool   // the republish links frontdoor.PinEnv when set
 	installed     string
 	republishErr  error
 	omitFrontDoor bool
@@ -32,6 +33,11 @@ func (h *fakeHost) run(argv, env []string, _ io.Writer) ([]byte, error) {
 			return []byte("build log\ncompile error: boom"), h.republishErr
 		}
 		h.linked = h.afterBuild
+		for _, item := range env {
+			if pin, ok := strings.CutPrefix(item, frontdoor.PinEnv+"="); ok && h.honoursPin {
+				h.linked = pin
+			}
+		}
 		return []byte("built"), nil
 	case "/opt/wrapper":
 		front := h.linked
@@ -75,10 +81,60 @@ func TestPromoteFrontDoorRepublishesAndVerifiesThroughIt(t *testing.T) {
 	if !reflect.DeepEqual(host.calls, want) {
 		t.Fatalf("calls = %v, want %v", host.calls, want)
 	}
-	for _, got := range host.envs {
-		if !reflect.DeepEqual(got, env) {
-			t.Fatalf("child env = %v, want the promotion's stripped env %v", got, env)
-		}
+	wantEnvs := [][]string{append(append([]string(nil), env...), frontdoor.PinEnv+"="+targetRev), env}
+	if !reflect.DeepEqual(host.envs, wantEnvs) {
+		t.Fatalf("child envs = %v, want the stripped env with the pin for the republish only: %v", host.envs, wantEnvs)
+	}
+}
+
+// A commit that lands in the session-pressure checkout while the front door
+// builds moves the HEAD that an unpinned build links. The pin keeps the
+// front door on the promoted revision; a republish that ignores it fails.
+func TestPromoteFrontDoorPinsThePromotedRevisionWhenHeadMoves(t *testing.T) {
+	movedRev := strings.Repeat("c", 40)
+	host := &fakeHost{linked: oldRev, afterBuild: movedRev, honoursPin: true, installed: targetRev}
+	receipt, err := promoteFrontDoor(host.run, wrapperStatus(), targetRev, targetRev, nil)
+	if err != nil {
+		t.Fatalf("promoteFrontDoor with a pinned republish: %v", err)
+	}
+	if receipt.Status != frontDoorRepublished || receipt.Revision != targetRev {
+		t.Fatalf("receipt = %+v, want the front door on %s", receipt, targetRev)
+	}
+
+	unpinned := &fakeHost{linked: oldRev, afterBuild: movedRev, installed: targetRev}
+	receipt, err = promoteFrontDoor(unpinned.run, wrapperStatus(), targetRev, targetRev, nil)
+	if err == nil || !strings.Contains(err.Error(), "links "+movedRev[:12]) || !strings.Contains(err.Error(), frontdoor.PinEnv) {
+		t.Fatalf("err = %v, want the moved revision and %s named", err, frontdoor.PinEnv)
+	}
+	if receipt.Status == frontDoorRepublished {
+		t.Fatalf("a front door on the moved HEAD was reported as %s", receipt.Status)
+	}
+}
+
+func TestCheckPromotedSourceLagAllowsOnlyAMovedHead(t *testing.T) {
+	movedRev := strings.Repeat("c", 40)
+	cases := map[string]struct {
+		lag       doctorSourceLag
+		head      string
+		wantMoved string
+		wantErr   bool
+	}{
+		"current":                   {lag: doctorSourceLag{Checked: true, SourceRevision: targetRev, InstalledRevision: targetRev}, head: targetRev},
+		"head moved after install":  {lag: doctorSourceLag{Checked: true, CommitsBehind: 1, SourceRevision: movedRev, InstalledRevision: targetRev}, head: targetRev, wantMoved: movedRev},
+		"install stayed behind":     {lag: doctorSourceLag{Checked: true, CommitsBehind: 1, SourceRevision: targetRev, InstalledRevision: oldRev}, head: targetRev, wantErr: true},
+		"behind with no revisions":  {lag: doctorSourceLag{Checked: true, CommitsBehind: 2}, head: targetRev, wantErr: true},
+		"behind and head moved too": {lag: doctorSourceLag{Checked: true, CommitsBehind: 2, SourceRevision: movedRev, InstalledRevision: oldRev}, head: targetRev, wantErr: true},
+		"promoting a non-HEAD ref":  {lag: doctorSourceLag{Checked: true, CommitsBehind: 3, SourceRevision: movedRev, InstalledRevision: targetRev}, head: oldRev},
+		"lag not checked":           {lag: doctorSourceLag{CommitsBehind: 1}, head: targetRev},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			lag := tc.lag
+			moved, err := checkPromotedSourceLag(&lag, targetRev, tc.head)
+			if (err != nil) != tc.wantErr || moved != tc.wantMoved {
+				t.Fatalf("checkPromotedSourceLag = %q, %v; want %q, error %v", moved, err, tc.wantMoved, tc.wantErr)
+			}
+		})
 	}
 }
 

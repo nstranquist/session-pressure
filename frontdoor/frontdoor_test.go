@@ -132,6 +132,7 @@ func TestWithoutWrapperEnvDropsOnlyWrapperVariables(t *testing.T) {
 		MarkerEnv + "=1",
 		RevisionEnv + "=" + strings.Repeat("a", 40),
 		Env + `={"name":"w"}`,
+		PinEnv + "=" + strings.Repeat("b", 40),
 		"SESSION_PRESSURE_FRONT_DOOR_OTHER=kept",
 		"LANG=C",
 	})

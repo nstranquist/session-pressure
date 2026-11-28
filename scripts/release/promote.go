@@ -56,6 +56,7 @@ type promoteReceipt struct {
 	DoctorOK        bool              `json:"doctor_ok,omitempty"`
 	SourceLagStatus string            `json:"source_lag_status,omitempty"`
 	CommitsBehind   int               `json:"commits_behind,omitempty"`
+	HeadMovedTo     string            `json:"head_moved_to,omitempty"`
 	FrontDoor       *frontDoorReceipt `json:"front_door,omitempty"`
 	LifecycleOK     bool              `json:"lifecycle_ok,omitempty"`
 	Steps           []string          `json:"steps"`
@@ -108,6 +109,10 @@ func promote(args []string) error {
 		mode, shortSHA(receipt.TargetRevision), receipt.Prefix, shortSHA(receipt.ExpectedCurrent),
 		receipt.MonitorPromoted, receipt.AppPromoted, receipt.DoctorChecked,
 		firstStringOr(receipt.SourceLagStatus, "unchecked"), receipt.CommitsBehind)
+	if receipt.HeadMovedTo != "" {
+		fmt.Printf("session-pressure HEAD moved to %s during the promotion; %s is installed everywhere. Promote again to install the new HEAD.\n",
+			shortSHA(receipt.HeadMovedTo), shortSHA(receipt.TargetRevision))
+	}
 	return nil
 }
 
@@ -311,9 +316,11 @@ func runPromote(opts promoteOptions) (promoteReceipt, error) {
 		if lag := report.Doctor.SourceLag; lag != nil {
 			receipt.SourceLagStatus = lag.Status
 			receipt.CommitsBehind = lag.CommitsBehind
-			if targetRev == headRev && lag.Checked && lag.CommitsBehind > 0 {
-				return promoteReceipt{}, fmt.Errorf("post-install verification failed: installed binary is still %d commit(s) behind HEAD", lag.CommitsBehind)
+			moved, err := checkPromotedSourceLag(lag, targetRev, headRev)
+			if err != nil {
+				return promoteReceipt{}, err
 			}
+			receipt.HeadMovedTo = moved
 		}
 		receipt.Steps = append(receipt.Steps, "verify-doctor-source-lag")
 
@@ -358,6 +365,21 @@ func readCLIAuthority(prefix string) (string, error) {
 		return "", errors.New("invalid installed CLI authority link")
 	}
 	return target, nil
+}
+
+// checkPromotedSourceLag fails when a promotion of HEAD left the installed
+// binary behind the checkout. Doctor measures the lag against the
+// checkout's HEAD now, which another commit can move during a promotion.
+// When the installed binary links exactly the promoted revision, that lag
+// is the new commit, not a failed install: it returns the new HEAD instead.
+func checkPromotedSourceLag(lag *doctorSourceLag, targetRev, headRev string) (movedTo string, err error) {
+	if targetRev != headRev || !lag.Checked || lag.CommitsBehind == 0 {
+		return "", nil
+	}
+	if lag.InstalledRevision == targetRev && lag.SourceRevision != "" && lag.SourceRevision != targetRev {
+		return lag.SourceRevision, nil
+	}
+	return "", fmt.Errorf("post-install verification failed: installed binary is still %d commit(s) behind HEAD", lag.CommitsBehind)
 }
 
 func cloneCleanRevision(repoRoot, targetRev, dest string) error {

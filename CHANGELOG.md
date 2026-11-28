@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Release: the front door links the promoted revision.** Promotion now
+  passes the promoted commit to the front-door rebuild in
+  `SESSION_PRESSURE_FRONT_DOOR_PIN` (package `frontdoor`), so a commit that
+  lands in the checkout during the rebuild no longer leaves the front door on
+  a different revision than the CLI and helper. A rebuild that links another
+  revision still fails the promotion and now names the pin. When HEAD moves
+  during a promotion and the installed CLI links exactly the promoted
+  revision, promotion succeeds and reports the new HEAD in `head_moved_to`
+  instead of failing as "behind HEAD". See
+  `corpus/front-door-pin-2026-11-28.md`.
 - **Remote placement: explicit `--placement remote` refusals name the actual
   cause.** When `--placement remote` cannot route a command, the refusal now
   distinguishes non-darwin hosts, disabled remote routing, disabled Node

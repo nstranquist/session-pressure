@@ -62,11 +62,7 @@ type doctorReport struct {
 			InstalledHelper string `json:"installed_helper"`
 			Mismatch        bool   `json:"mismatch"`
 		} `json:"source_revisions"`
-		SourceLag *struct {
-			Checked       bool   `json:"checked"`
-			Status        string `json:"status"`
-			CommitsBehind int    `json:"commits_behind"`
-		} `json:"source_lag"`
+		SourceLag *doctorSourceLag  `json:"source_lag"`
 		FrontDoor *frontdoor.Status `json:"front_door"`
 	} `json:"doctor"`
 }
@@ -83,11 +79,23 @@ func runDoctor(run commandRunner, argv, env []string) (doctorReport, error) {
 	return report, nil
 }
 
+type doctorSourceLag struct {
+	Checked           bool   `json:"checked"`
+	Status            string `json:"status"`
+	SourceRevision    string `json:"source_revision"`
+	InstalledRevision string `json:"installed_revision"`
+	CommitsBehind     int    `json:"commits_behind"`
+}
+
 // promoteFrontDoor rebuilds the recorded front door and checks, through it,
-// that it now links targetRev and that every executing binary agrees. A
-// front door whose executable is gone, or a promotion of a ref other than
-// HEAD, is reported and not treated as a failure: the front door's own build
-// always links the sibling checkout's HEAD.
+// that it now links targetRev and that every executing binary agrees. The
+// rebuild gets targetRev in frontdoor.PinEnv, so a commit that lands in the
+// session-pressure checkout during the build does not change what the front
+// door links. A front door whose executable is gone, or a promotion of a ref
+// other than HEAD, is reported and not treated as a failure: the front door
+// builds its own HEAD, which need not compile against an older
+// session-pressure, and a Republish command that predates PinEnv links the
+// checkout's HEAD.
 func promoteFrontDoor(run commandRunner, status frontdoor.Status, targetRev, headRev string, env []string) (frontDoorReceipt, error) {
 	receipt := frontDoorReceipt{Name: status.Name}
 	switch {
@@ -103,7 +111,8 @@ func promoteFrontDoor(run commandRunner, status frontdoor.Status, targetRev, hea
 			status.Name, shortSHA(headRev), shortSHA(targetRev), strings.Join(status.Republish, " "))
 		return receipt, nil
 	}
-	if raw, err := run(status.Republish, env, os.Stderr); err != nil {
+	republishEnv := append(append([]string(nil), env...), frontdoor.PinEnv+"="+targetRev)
+	if raw, err := run(status.Republish, republishEnv, os.Stderr); err != nil {
 		receipt.Status = "republish-failed"
 		return receipt, fmt.Errorf("republish front door %s (`%s`): %w: %s", status.Name, strings.Join(status.Republish, " "), err, tail(raw))
 	}
@@ -121,8 +130,8 @@ func promoteFrontDoor(run commandRunner, status frontdoor.Status, targetRev, hea
 	receipt.Revision = revisions.FrontDoor
 	if revisions.FrontDoor != targetRev {
 		receipt.Status = "verify-failed"
-		return receipt, fmt.Errorf("post-install verification failed: front door %s links %s after republish, want %s",
-			status.Name, shortSHA(revisions.FrontDoor), shortSHA(targetRev))
+		return receipt, fmt.Errorf("post-install verification failed: front door %s links %s after republish, want %s; its republish command must link the commit in %s",
+			status.Name, shortSHA(revisions.FrontDoor), shortSHA(targetRev), frontdoor.PinEnv)
 	}
 	if revisions.Mismatch {
 		receipt.Status = "verify-failed"

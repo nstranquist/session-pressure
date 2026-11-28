@@ -24,7 +24,10 @@ parallel edits never contaminate a release, installs the CLI and resident
 helper under their kernel locks, builds and installs the signed macOS app
 headlessly (no `open`, no focus steal), rebuilds the recorded front door
 (below), and verifies `session-pressure --json doctor` reports zero revision
-mismatch and zero commit lag.
+mismatch and zero commit lag. When a commit lands in the checkout during the
+promotion and the installed CLI links exactly the promoted revision, the lag
+is that new commit: the receipt's `head_moved_to` names it, and the command
+asks for another promotion instead of failing.
 
 ### Front door
 
@@ -40,14 +43,19 @@ rebuilds it too:
 2. The doctor check runs the installed CLI directly, without the wrapper
    variables it may have inherited. An inherited front-door revision names
    whatever wrapped the promotion, not what is installed.
-3. When `doctor` reports a front door, promotion runs its rebuild, then runs
-   `doctor` through it and requires that it links the promoted revision and
-   that the CLI, front door and helper agree. The receipt's `front_door`
-   records the result.
+3. When `doctor` reports a front door, promotion runs its rebuild with the
+   promoted commit in `SESSION_PRESSURE_FRONT_DOOR_PIN`, then runs `doctor`
+   through it and requires that it links the promoted revision and that the
+   CLI, front door and helper agree. The receipt's `front_door` records the
+   result. The pin keeps a commit that lands during the rebuild out of the
+   front door. A rebuild must link the pinned commit or fail; one that links
+   another revision fails the promotion.
 
 A front door whose executable is gone, an unreadable record, or a `--ref`
-other than `HEAD` (a front door builds the sibling checkout's `HEAD`) is
-reported in `front_door.status` and does not fail the promotion.
+other than `HEAD` is reported in `front_door.status` and does not fail the
+promotion. A front door builds its own `HEAD`, which need not compile
+against an older session-pressure, and a rebuild command that predates the
+pin links the checkout's `HEAD`.
 `--skip-front-door` leaves the front door alone. `--skip-doctor` also skips
 it, because doctor is what names it. A host with no front door is
 unaffected. To forget a removed front door, delete `front-door.json`.

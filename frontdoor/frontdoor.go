@@ -32,6 +32,12 @@ const (
 	// MarkerEnv marks a process the wrapper execed. A wrapper refuses to
 	// run under it, to stop a forwarding loop.
 	MarkerEnv = "NDEV_PRESSURE_WRAPPER"
+	// PinEnv carries the exact 40-hex session-pressure commit that a
+	// Republish command must link. Promotion sets it so the front door
+	// links the promoted revision even when the sibling checkout's HEAD
+	// moves during the build. A Republish command that cannot link that
+	// commit must fail, not link another one.
+	PinEnv = "SESSION_PRESSURE_FRONT_DOOR_PIN"
 	// FileName is the recorded registration in the state directory.
 	FileName = "front-door.json"
 
@@ -118,7 +124,7 @@ func WithoutWrapperEnv(environ []string) []string {
 	out := make([]string, 0, len(environ))
 	for _, item := range environ {
 		switch name, _, _ := strings.Cut(item, "="); name {
-		case Env, RevisionEnv, MarkerEnv:
+		case Env, RevisionEnv, MarkerEnv, PinEnv:
 			continue
 		}
 		out = append(out, item)
