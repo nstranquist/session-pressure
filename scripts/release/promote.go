@@ -110,8 +110,8 @@ func promote(args []string) error {
 		receipt.MonitorPromoted, receipt.AppPromoted, receipt.DoctorChecked,
 		firstStringOr(receipt.SourceLagStatus, "unchecked"), receipt.CommitsBehind)
 	if receipt.HeadMovedTo != "" {
-		fmt.Printf("session-pressure HEAD moved to %s during the promotion; %s is installed everywhere. Promote again to install the new HEAD.\n",
-			shortSHA(receipt.HeadMovedTo), shortSHA(receipt.TargetRevision))
+		fmt.Printf("session-pressure HEAD moved to %s during the promotion; %s link %s. Promote again to install the new HEAD.\n",
+			shortSHA(receipt.HeadMovedTo), promotedParts(receipt), shortSHA(receipt.TargetRevision))
 	}
 	return nil
 }
@@ -148,9 +148,15 @@ func runPromote(opts promoteOptions) (promoteReceipt, error) {
 	if err != nil {
 		return promoteReceipt{}, fmt.Errorf("resolve ref %q: %w", opts.Ref, err)
 	}
-	headRev, err := commandInDir(repoRoot, "git", "rev-parse", "HEAD")
-	if err != nil {
-		return promoteReceipt{}, fmt.Errorf("resolve HEAD: %w", err)
+	// Read HEAD once when it is the target: a second read can see a commit
+	// that landed in between, and the promotion would then skip the front
+	// door as if a ref other than HEAD had been promoted.
+	headRev := targetRev
+	if opts.Ref != "HEAD" {
+		headRev, err = commandInDir(repoRoot, "git", "rev-parse", "HEAD")
+		if err != nil {
+			return promoteReceipt{}, fmt.Errorf("resolve HEAD: %w", err)
+		}
 	}
 
 	// Capture both authorities BEFORE building so a concurrent promotion fails
@@ -347,8 +353,43 @@ func runPromote(opts promoteOptions) (promoteReceipt, error) {
 		receipt.Steps = append(receipt.Steps, "verify-installed-lifecycle")
 	}
 
+	if targetRev == headRev {
+		// The front-door rebuild is the longest step, so read HEAD again
+		// at the end: a commit that landed at any point is reported.
+		if moved := headMovedSince(repoRoot, targetRev); moved != "" {
+			receipt.HeadMovedTo = moved
+		}
+	}
 	receipt.CompletedAt = time.Now().UTC()
 	return receipt, nil
+}
+
+// headMovedSince returns the checkout's HEAD when it is no longer
+// targetRev, or "" when it is (or cannot be read).
+func headMovedSince(repoRoot, targetRev string) string {
+	head, err := commandInDir(repoRoot, "git", "rev-parse", "HEAD")
+	if err != nil || head == targetRev {
+		return ""
+	}
+	return head
+}
+
+// promotedParts names what a promotion installed at its target revision.
+func promotedParts(r promoteReceipt) string {
+	parts := []string{"the CLI"}
+	if r.MonitorPromoted {
+		parts = append(parts, "helper")
+	}
+	if r.AppPromoted {
+		parts = append(parts, "app")
+	}
+	if r.FrontDoor != nil && r.FrontDoor.Status == frontDoorRepublished {
+		parts = append(parts, "front door")
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
 }
 
 func readCLIAuthority(prefix string) (string, error) {

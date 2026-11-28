@@ -24,10 +24,12 @@ parallel edits never contaminate a release, installs the CLI and resident
 helper under their kernel locks, builds and installs the signed macOS app
 headlessly (no `open`, no focus steal), rebuilds the recorded front door
 (below), and verifies `session-pressure --json doctor` reports zero revision
-mismatch and zero commit lag. When a commit lands in the checkout during the
-promotion and the installed CLI links exactly the promoted revision, the lag
-is that new commit: the receipt's `head_moved_to` names it, and the command
-asks for another promotion instead of failing.
+mismatch and zero commit lag. A promotion of `HEAD` reads `HEAD` once at the
+start and again at the end. When a commit lands in the checkout at any point
+of the promotion, including the front-door rebuild, and the installed CLI
+links exactly the promoted revision, the lag is that new commit: the
+receipt's `head_moved_to` names it, and the command names what it installed
+at the promoted revision and asks for another promotion instead of failing.
 
 ### Front door
 

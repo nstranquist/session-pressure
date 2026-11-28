@@ -126,6 +126,7 @@ func TestCheckPromotedSourceLagAllowsOnlyAMovedHead(t *testing.T) {
 		"behind and head moved too": {lag: doctorSourceLag{Checked: true, CommitsBehind: 2, SourceRevision: movedRev, InstalledRevision: oldRev}, head: targetRev, wantErr: true},
 		"promoting a non-HEAD ref":  {lag: doctorSourceLag{Checked: true, CommitsBehind: 3, SourceRevision: movedRev, InstalledRevision: targetRev}, head: oldRev},
 		"lag not checked":           {lag: doctorSourceLag{CommitsBehind: 1}, head: targetRev},
+		"dirty install of target":   {lag: doctorSourceLag{Checked: true, CommitsBehind: 1, SourceRevision: movedRev, InstalledRevision: targetRev + "-dirty"}, head: targetRev, wantErr: true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

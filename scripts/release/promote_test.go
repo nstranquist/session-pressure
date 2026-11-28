@@ -89,3 +89,56 @@ func TestReadCLIAuthorityReadsActiveLinkOrNone(t *testing.T) {
 		t.Fatalf("active authority got=%q err=%v, want %q", got, err, rev)
 	}
 }
+
+// A commit that lands while a HEAD promotion runs, including during the
+// front-door rebuild, is found by reading HEAD again at the end.
+func TestHeadMovedSinceReportsANewHead(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	repo := t.TempDir()
+	runGit := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	runGit("init", "-b", "main")
+	runGit("commit", "--allow-empty", "-m", "promoted")
+	promoted := runGit("rev-parse", "HEAD")
+	if got := headMovedSince(repo, promoted); got != "" {
+		t.Fatalf("headMovedSince with an unmoved HEAD = %q", got)
+	}
+	runGit("commit", "--allow-empty", "-m", "landed during the promotion")
+	landed := runGit("rev-parse", "HEAD")
+	if got := headMovedSince(repo, promoted); got != landed {
+		t.Fatalf("headMovedSince = %q, want %q", got, landed)
+	}
+	if got := headMovedSince(filepath.Join(repo, "missing"), promoted); got != "" {
+		t.Fatalf("headMovedSince of an unreadable checkout = %q", got)
+	}
+}
+
+// The moved-HEAD message names only what the promotion installed.
+func TestPromotedPartsNamesWhatWasInstalled(t *testing.T) {
+	republished := &frontDoorReceipt{Status: frontDoorRepublished}
+	for _, tc := range []struct {
+		receipt promoteReceipt
+		want    string
+	}{
+		{promoteReceipt{}, "the CLI"},
+		{promoteReceipt{MonitorPromoted: true}, "the CLI and helper"},
+		{promoteReceipt{MonitorPromoted: true, AppPromoted: true}, "the CLI, helper and app"},
+		{promoteReceipt{MonitorPromoted: true, AppPromoted: true, FrontDoor: republished}, "the CLI, helper, app and front door"},
+		{promoteReceipt{MonitorPromoted: true, FrontDoor: &frontDoorReceipt{Status: frontDoorBinaryMissing}}, "the CLI and helper"},
+	} {
+		if got := promotedParts(tc.receipt); got != tc.want {
+			t.Errorf("promotedParts(%+v) = %q, want %q", tc.receipt, got, tc.want)
+		}
+	}
+}
