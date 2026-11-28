@@ -8,8 +8,11 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/nstranquist/session-pressure/internal/filelock"
 )
 
 const (
@@ -145,6 +148,26 @@ func TestWorkEventStoreSerializesConcurrentIdenticalAppends(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 14, 14, 0, 0, 0, time.UTC)
 	store := NewWorkEventStore(dir)
+	// The 16 appends queue on one lock. Wait for the queue: under a deadline
+	// the test measured the host's load.
+	waitForWorkEventLocks(t)
+	// The first append that passes the duplicate check keeps the window
+	// before its write open. Another append can enter it only when nothing
+	// serializes the check and the write, so a missing lock fails every run,
+	// not only when the scheduler happens to interleave the calls.
+	var entries atomic.Int32
+	other := make(chan struct{})
+	store.appendWindowHook = func() {
+		switch entries.Add(1) {
+		case 1:
+			select {
+			case <-other:
+			case <-time.After(100 * time.Millisecond):
+			}
+		case 2:
+			close(other)
+		}
+	}
 	event := validWorkEvent(now, WorkEventQueued)
 	var group sync.WaitGroup
 	errors := make(chan error, 16)
@@ -157,6 +180,9 @@ func TestWorkEventStoreSerializesConcurrentIdenticalAppends(t *testing.T) {
 	}
 	group.Wait()
 	close(errors)
+	if n := entries.Load(); n != 1 {
+		t.Fatalf("%d identical appends passed the duplicate check, want 1", n)
+	}
 	for err := range errors {
 		if err != nil {
 			t.Fatal(err)
@@ -165,6 +191,104 @@ func TestWorkEventStoreSerializesConcurrentIdenticalAppends(t *testing.T) {
 	events, err := store.Read(WorkEventFilter{})
 	if err != nil || len(events) != 1 {
 		t.Fatalf("events=%+v err=%v", events, err)
+	}
+}
+
+// waitForWorkEventLocks raises the append lock deadlines to the test watchdog
+// for one test. The test must not run in parallel.
+func waitForWorkEventLocks(t *testing.T) {
+	t.Helper()
+	identity, host := workEventIdentityLockTimeout, workHostIdentityLockTimeout
+	workEventIdentityLockTimeout, workHostIdentityLockTimeout = testWatchdog, testWatchdog
+	t.Cleanup(func() { workEventIdentityLockTimeout, workHostIdentityLockTimeout = identity, host })
+}
+
+// Every append reads the host identity. Once it exists the read takes no
+// lock: a lock there made concurrent appends queue on one 1 s deadline, and
+// on a CPU-saturated host the queue ran out and the appends failed.
+func TestWorkEventAppendReadsHostIdentityWithoutItsLock(t *testing.T) {
+	dir := t.TempDir()
+	id, err := workHostIdentity(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := filelock.Acquire(filepath.Join(dir, "work-host-id"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	store := NewWorkEventStore(dir)
+	if err := store.AppendDurable(validWorkEvent(time.Date(2026, 7, 14, 14, 0, 0, 0, time.UTC), WorkEventQueued)); err != nil {
+		t.Fatalf("the append waited for the host identity lock: %v", err)
+	}
+	events, err := store.Read(WorkEventFilter{})
+	if err != nil || len(events) != 1 || events[0].HostID != id {
+		t.Fatalf("events=%+v err=%v want host %s", events, err, id)
+	}
+}
+
+func TestWorkHostIdentityConcurrentCreationAgrees(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	ids := make(chan string, 16)
+	errs := make(chan error, cap(ids))
+	var group sync.WaitGroup
+	for index := 0; index < cap(ids); index++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			id, err := workHostIdentity(dir)
+			ids <- id
+			errs <- err
+		}()
+	}
+	group.Wait()
+	close(ids)
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := readWorkHostIdentity(filepath.Join(dir, "work-host-id"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id := range ids {
+		if id != want {
+			t.Fatalf("a caller got identity %s, the file has %s", id, want)
+		}
+	}
+}
+
+// A caller that waited for the creation lock uses the identity that another
+// process wrote meanwhile, not a second one of its own.
+func TestWorkHostIdentityUsesIdentityWrittenWhileItWaited(t *testing.T) {
+	waitForWorkEventLocks(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "work-host-id")
+	unlock, err := filelock.Acquire(path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan string, 1)
+	go func() {
+		id, err := workHostIdentity(dir)
+		if err != nil {
+			id = "error: " + err.Error()
+		}
+		result <- id
+	}()
+	// Let the caller find no identity and queue on the lock. A caller that is
+	// slower than this finds the identity on its first read, which also passes.
+	time.Sleep(50 * time.Millisecond)
+	const written = "0123456789abcdef0123456789abcdef"
+	if err := atomicWrite(path, []byte(written+"\n"), 0o600); err != nil {
+		unlock()
+		t.Fatal(err)
+	}
+	unlock()
+	if got := <-result; got != written {
+		t.Fatalf("identity %q, want the one written while the caller waited", got)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nstranquist/session-pressure/internal/filelock"
@@ -479,7 +480,19 @@ type WorkEventStore struct {
 	Now func() time.Time
 	// scanOnly bypasses the SQLite read index (benchmarks and parity tests).
 	scanOnly bool
+	// appendWindowHook runs while an append holds the shard's event identity
+	// lock, after the duplicate check and before the write. Tests use it to
+	// prove that the lock serializes this window.
+	appendWindowHook func()
 }
+
+// Lock deadlines of a work event append. They are variables so that a test
+// that queues many appends on one lock can wait for the queue instead of
+// measuring the host's load.
+var (
+	workEventIdentityLockTimeout = 5 * time.Second
+	workHostIdentityLockTimeout  = time.Second
+)
 
 func NewWorkEventStore(dir string) *WorkEventStore {
 	return &WorkEventStore{Dir: dir, Now: time.Now}
@@ -528,12 +541,12 @@ func (store *WorkEventStore) AppendDurable(event WorkEvent) error {
 		return err
 	}
 	path := store.dayPath(event.Timestamp)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), workEventIdentityLockTimeout)
 	defer cancel()
 	// jsonl.AppendLineDurable owns the shard lock. A separate identity lock
 	// serializes the read-before-append idempotency check without recursively
 	// acquiring the same non-reentrant file lock.
-	unlock, err := filelock.AcquireContext(ctx, path+".identity", 5*time.Second)
+	unlock, err := filelock.AcquireContext(ctx, path+".identity", workEventIdentityLockTimeout)
 	if err != nil {
 		return fmt.Errorf("lock work event ledger: %w", err)
 	}
@@ -548,6 +561,9 @@ func (store *WorkEventStore) AppendDurable(event WorkEvent) error {
 	}
 	if exists {
 		return nil
+	}
+	if hook := store.appendWindowHook; hook != nil {
+		hook()
 	}
 	if err := jsonl.AppendLineDurable(path, body, 0o600); err != nil {
 		return err
@@ -1952,33 +1968,63 @@ func durationStats(values []int64) WorkDurationStats {
 	return WorkDurationStats{AverageMS: total / int64(len(ordered)), P95MS: ordered[p95-1], MaximumMS: ordered[len(ordered)-1]}
 }
 
-// Random per-state identity separates hosts without recording a hostname,
-// user name, network address, or hardware serial number.
+// workHostIdentityCreating holds a channel for each identity this process is
+// creating. The channel closes when that creation ends, so the callers that
+// found no identity wake together and read it, instead of queueing one by one.
+var (
+	workHostIdentityMu       sync.Mutex
+	workHostIdentityCreating = map[string]chan struct{}{}
+)
+
+// workHostIdentity returns the random per-state identity that separates hosts
+// without recording a hostname, user name, network address, or hardware
+// serial number.
+//
+// The identity is written once, by an atomic rename, and never rewritten, so
+// a reader sees no file or the whole file and needs no lock. Only creation
+// takes the file lock. Every work event append reads the identity, so a lock
+// on the read path made concurrent appends queue on it and share its 1 s
+// deadline: on a CPU-saturated host the queue ran out and the append, and the
+// work run, failed.
 func workHostIdentity(dir string) (string, error) {
+	path := filepath.Join(dir, "work-host-id")
+	for {
+		if id, err := readWorkHostIdentity(path); !errors.Is(err, os.ErrNotExist) {
+			return id, err
+		}
+		workHostIdentityMu.Lock()
+		creating, busy := workHostIdentityCreating[path]
+		if !busy {
+			creating = make(chan struct{})
+			workHostIdentityCreating[path] = creating
+		}
+		workHostIdentityMu.Unlock()
+		if !busy {
+			return createWorkHostIdentity(dir, path, creating)
+		}
+		// Read again when the creation ends. If it failed, this caller tries.
+		<-creating
+	}
+}
+
+func createWorkHostIdentity(dir, path string, creating chan struct{}) (string, error) {
+	defer func() {
+		workHostIdentityMu.Lock()
+		delete(workHostIdentityCreating, path)
+		workHostIdentityMu.Unlock()
+		close(creating)
+	}()
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, "work-host-id")
-	unlock, err := filelock.AcquireContext(context.Background(), path, time.Second)
+	unlock, err := filelock.AcquireContext(context.Background(), path, workHostIdentityLockTimeout)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("lock work host identity: %w", err)
 	}
 	defer unlock()
-	if info, err := os.Lstat(path); err == nil {
-		if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 64 {
-			return "", errors.New("invalid work host identity authority")
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return "", err
-		}
-		id := strings.TrimSpace(string(raw))
-		if !validPrivateID(id) {
-			return "", errors.New("invalid work host identity")
-		}
-		return id, nil
-	} else if !os.IsNotExist(err) {
-		return "", err
+	// Another process can have created it while this one waited.
+	if id, err := readWorkHostIdentity(path); !errors.Is(err, os.ErrNotExist) {
+		return id, err
 	}
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
@@ -1989,4 +2035,25 @@ func workHostIdentity(dir string) (string, error) {
 		return "", err
 	}
 	return value, nil
+}
+
+// readWorkHostIdentity reads an existing identity. It returns an error that
+// matches os.ErrNotExist when there is none yet.
+func readWorkHostIdentity(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 64 {
+		return "", errors.New("invalid work host identity authority")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	id := strings.TrimSpace(string(raw))
+	if !validPrivateID(id) {
+		return "", errors.New("invalid work host identity")
+	}
+	return id, nil
 }

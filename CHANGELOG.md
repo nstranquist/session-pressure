@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Work events: concurrent appends no longer fail on the host identity
+  lock.** Every work event append read the host identity under a file lock
+  with a 1 s deadline. On a CPU-saturated host, concurrent appends queued on
+  that lock, ran out of time, and failed the append and its `work run`
+  (`persist queued work event`). The identity is written once, by an atomic
+  rename, so it is now read without a lock. Only its creation takes the lock,
+  and callers in the same process wait for that creation together. A timeout
+  there now names the host identity lock.
 - **Express reuse: a changed Go `-overlay` no longer replays a stale pass.**
   The express source digest now hashes the replacement file that the
   overlay names instead of the file on disk at the same path, binds the
