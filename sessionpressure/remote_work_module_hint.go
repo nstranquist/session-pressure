@@ -3,18 +3,10 @@ package sessionpressure
 import (
 	"errors"
 	"fmt"
-	"go/build"
-	"io/fs"
-	"maps"
 	"os"
-	pathpkg "path"
 	"path/filepath"
 	"regexp"
-	"slices"
-	"strconv"
 	"strings"
-
-	"golang.org/x/mod/modfile"
 )
 
 // errRemoteNoModule is the module check's refusal: no go.mod is at or above
@@ -50,14 +42,16 @@ func rejectRemoteModule(dir, cwd, workdir string, argv []string) (bool, int, err
 // moved path differently. modules are the go.mod paths as shown, in argument
 // order.
 //
-// It does not run the command. Following the file paths automatically was
-// considered and rejected: the refusal stays, and its text names the way out.
+// It does not run the command. For a build without -o it asks go list in the
+// owning module which binary the build writes, as the remote route does.
+// Following the file paths automatically was considered and rejected: the
+// refusal stays, and its text names the way out.
 func remoteModuleHint(cwd, workdir string, argv []string) (string, []string) {
 	if len(argv) < 2 {
 		return "", nil
 	}
 	head, args := argv[:2], argv[2:]
-	plan, ok := planModuleRewrite(workdir, argv[1], args)
+	plan, ok := planModuleRewrite(workdir, argv[0], argv[1], args)
 	if !ok || len(plan.modules) == 0 {
 		return "", nil
 	}
@@ -180,10 +174,6 @@ type moduleToken struct {
 // written.
 var goPathFlags = map[string]bool{"-o": true, "-pkgdir": true}
 
-// goBuildSelectionFlags change which files go build selects or how it names
-// the default binary; the planner reads them for buildExecutable.
-var goBuildSelectionFlags = map[string]bool{"-tags": true, "-race": true, "-msan": true, "-asan": true, "-buildmode": true}
-
 // goPerPackageFlags take "[pattern=]arguments", where a relative pattern is
 // read from the working directory (go help build).
 var goPerPackageFlags = map[string]bool{"-gcflags": true, "-ldflags": true, "-asmflags": true, "-gccgoflags": true}
@@ -205,10 +195,9 @@ func goFlagKind(name string) goArgKind {
 // package as a package, so a later flag makes the command fail as written.
 // go test reads one package list and passes the positional arguments after
 // it to the test binary (cmd/go testflag.go).
-func planModuleRewrite(workdir, op string, args []string) (moduleRewrite, bool) {
+func planModuleRewrite(workdir, goCmd, op string, args []string) (moduleRewrite, bool) {
 	plan := moduleRewrite{filesOnly: true}
 	outputs := 0
-	selection := map[string]string{}
 	inList, listClosed, afterUnknownFlag := false, false, false
 	seen := map[string]bool{}
 	var positionals []goPositional
@@ -254,12 +243,6 @@ func planModuleRewrite(workdir, op string, args []string) (moduleRewrite, bool) 
 				}
 				plan.writes = plan.writes || token.value != "/dev/null"
 			}
-			if goBuildSelectionFlags[name] {
-				if !inline && goBoolFlags[name] {
-					token.value = "true"
-				}
-				selection[name] = token.value
-			}
 			plan.tokens = append(plan.tokens, token)
 			continue
 		}
@@ -300,178 +283,25 @@ func planModuleRewrite(workdir, op string, args []string) (moduleRewrite, bool) 
 		// the one build of every package does not.
 		plan.writes = true
 	default:
-		ctxt, ok := goBuildContext(selection, os.Getenv("GOFLAGS"))
+		// Ask go list in the module what the build writes, as the remote
+		// route does once the command runs there.
+		module := plan.modules[0]
+		args, ok := plan.argsFor(workdir, module)
 		if !ok {
 			return plan, false
 		}
-		name, determined := buildExecutable(ctxt, positionals, plan.filesOnly)
-		if !determined || (name != "" && isDir(filepath.Join(workdir, name))) {
-			// Go refuses a default output that is an existing directory.
+		implicit, err := goBuildImplicitOutput(module, goCmd, args)
+		if err != nil || implicit.fails {
+			return plan, false // Go fails on the arguments
+		}
+		if implicit.name != "" && isDir(filepath.Join(workdir, implicit.name)) {
+			// Go refuses a default output that is an existing directory, but
+			// writes into one that -o names.
 			return plan, false
 		}
-		// A file, not the directory: the remote route places a directory
-		// output only where nothing exists yet.
-		plan.implicitOutput, plan.writes = name, name != ""
+		plan.implicitOutput, plan.writes = implicit.name, implicit.name != ""
 	}
 	return plan, true
-}
-
-// goBuildContext is the go/build context in which go build selects the files
-// of a package: the host context (GOOS, GOARCH and CGO_ENABLED from the
-// environment) plus the -tags list and the race, msan and asan tags. flags
-// holds the command line's values of goBuildSelectionFlags; a flag it lacks
-// comes from GOFLAGS. ok is false when the default binary name cannot be
-// known: a -buildmode other than exe or pie changes it, a -tags value in the
-// deprecated quoted or space-separated form is not read here, and Go rejects
-// a boolean it cannot parse. The release tags are those of the Go that built
-// this program, which can differ from the caller's go for a file whose
-// constraint names a newer release.
-func goBuildContext(flags map[string]string, goflags string) (build.Context, bool) {
-	merged := map[string]string{}
-	for _, field := range strings.Fields(goflags) {
-		if name, value, inline := goFlagName(field); goBuildSelectionFlags[name] {
-			if !inline {
-				value = "true"
-			}
-			merged[name] = value
-		}
-	}
-	maps.Copy(merged, flags)
-	switch merged["-buildmode"] {
-	case "", "default", "exe", "pie":
-	default:
-		return build.Context{}, false
-	}
-	ctxt := build.Default
-	ctxt.BuildTags = slices.Clone(ctxt.BuildTags)
-	tags := merged["-tags"]
-	if strings.ContainsAny(tags, " '") {
-		return build.Context{}, false
-	}
-	for tag := range strings.SplitSeq(tags, ",") {
-		if tag != "" {
-			ctxt.BuildTags = append(ctxt.BuildTags, tag)
-		}
-	}
-	for _, tool := range []string{"race", "msan", "asan"} {
-		value, set := merged["-"+tool]
-		if !set {
-			continue
-		}
-		on, err := strconv.ParseBool(value)
-		if err != nil {
-			return build.Context{}, false
-		}
-		if on {
-			ctxt.BuildTags = append(ctxt.BuildTags, tool)
-		}
-	}
-	return ctxt, true
-}
-
-// buildExecutable is the binary go build writes into the working directory
-// with no -o, or "" when it writes none. Go writes one when the arguments are
-// one main package: named as files, or as one package directory. Several
-// packages only compile. A pattern stays a check here because the remote
-// route treats every pattern build as one and returns no binary for it,
-// although Go writes the binary of a pattern that matches a single main
-// package. determined is false when Go would fail on the arguments.
-func buildExecutable(ctxt build.Context, positionals []goPositional, filesOnly bool) (name string, determined bool) {
-	var pkg *build.Package
-	var err error
-	switch {
-	case filesOnly:
-		pkg, err = importGoFiles(ctxt, positionals)
-	case len(positionals) != 1 || positionals[0].pattern:
-		return "", true
-	default:
-		pkg, err = ctxt.ImportDir(positionals[0].path, 0)
-	}
-	if err != nil {
-		return "", false
-	}
-	if pkg.Name != "main" {
-		return "", true
-	}
-	if filesOnly {
-		name = goFilesExecutableName(pkg)
-	} else if len(pkg.GoFiles)+len(pkg.CgoFiles) > 0 {
-		name = goPackageExecutableName(positionals[0])
-	}
-	return name, name != ""
-}
-
-// importGoFiles reads named .go files the way cmd/go does
-// (load.GoFilesPackage): as one package made of exactly those files, in
-// command-line order, whatever their build constraints say. go/build leaves
-// out _test.go files, names that start with "_" or ".", and files of package
-// documentation, as cmd/go does.
-func importGoFiles(ctxt build.Context, files []goPositional) (*build.Package, error) {
-	dir := filepath.Dir(files[0].path)
-	infos := make([]fs.FileInfo, len(files))
-	for i, file := range files {
-		if filepath.Dir(file.path) != dir {
-			return nil, errors.New("named files must all be in one directory")
-		}
-		info, err := os.Stat(file.path)
-		if err != nil {
-			return nil, err
-		}
-		infos[i] = info
-	}
-	ctxt.UseAllFiles = true
-	ctxt.ReadDir = func(string) ([]fs.FileInfo, error) { return infos, nil }
-	return ctxt.ImportDir(dir, 0)
-}
-
-// goFilesExecutableName is cmd/go's name for the binary of a file list
-// (Package.exeFromFiles): its first Go file without cgo, else its first cgo
-// file.
-func goFilesExecutableName(pkg *build.Package) string {
-	files := pkg.GoFiles
-	if len(files) == 0 {
-		files = pkg.CgoFiles
-	}
-	if len(files) == 0 {
-		return ""
-	}
-	return strings.TrimSuffix(files[0], ".go")
-}
-
-// goPackageExecutableName is cmd/go's name for the binary of a package: the
-// last element of its import path, or the one before a major version
-// element such as v2.
-func goPackageExecutableName(positional goPositional) string {
-	data, err := os.ReadFile(filepath.Join(positional.module, "go.mod"))
-	if err != nil {
-		return ""
-	}
-	importPath := modfile.ModulePath(data)
-	rel, err := filepath.Rel(positional.module, positional.path)
-	if importPath == "" || err != nil {
-		return ""
-	}
-	if rel != "." {
-		importPath += "/" + filepath.ToSlash(rel)
-	}
-	elem := pathpkg.Base(importPath)
-	if elem != importPath && isGoVersionElement(elem) {
-		elem = pathpkg.Base(pathpkg.Dir(importPath))
-	}
-	return elem
-}
-
-// isGoVersionElement is cmd/go's test for a major version path element.
-func isGoVersionElement(s string) bool {
-	if len(s) < 2 || s[0] != 'v' || s[1] == '0' || s[1] == '1' && len(s) == 2 {
-		return false
-	}
-	for i := 1; i < len(s); i++ {
-		if s[i] < '0' || '9' < s[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // argsFor rebuilds the arguments for a run from module: its own positionals

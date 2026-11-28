@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -85,59 +86,69 @@ func TestAutomatedBrowserRootExcludesPersonalAndChildren(t *testing.T) {
 	}
 }
 
-func TestNormalizeRemoteBuildArgv(t *testing.T) {
+func TestPlanRemoteBuildArgv(t *testing.T) {
+	// A module with one main package, ./cmd/x, and two libraries.
+	workdir := writeGoTree(t, map[string]string{
+		"go.mod":        "module example.test/plan\ngo 1.26\n",
+		"cmd/x/main.go": "package main\n\nfunc main() {}\n",
+		"a/a.go":        "package a\n",
+		"b/b.go":        "package b\n",
+	})
+	const out = remoteBuildCandidate
 	tests := []struct {
 		name       string
 		argv       []string
 		wantArgv   []string
 		wantOutput string
-		wantErr    bool
+		wantKind   string
 	}{
-		{name: "bare build", argv: []string{"go", "build"}, wantErr: true},
-		{name: "build dot", argv: []string{"go", "build", "."}, wantErr: true},
-		{name: "build single package", argv: []string{"go", "build", "./cmd/x"}, wantErr: true},
-		{name: "explicit -o separate", argv: []string{"go", "build", "-o", "bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-o", "/srv/build/candidates/OUTPUT", "./cmd/x"}, wantOutput: "bin/app"},
-		{name: "explicit -o equals", argv: []string{"go", "build", "-o=bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-o=/srv/build/candidates/OUTPUT", "./cmd/x"}, wantOutput: "bin/app"},
-		{name: "explicit --o separate", argv: []string{"go", "build", "--o", "bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "--o", "/srv/build/candidates/OUTPUT", "./cmd/x"}, wantOutput: "bin/app"},
-		{name: "explicit --o equals directory", argv: []string{"go", "build", "--o=bin/", "./cmd/x"}, wantArgv: []string{"go", "build", "--o=/srv/build/candidates/OUTPUT/", "./cmd/x"}, wantOutput: "bin/"},
-		{name: "-o after a value flag", argv: []string{"go", "build", "-tags", "x", "-o", "bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-tags", "x", "-o", "/srv/build/candidates/OUTPUT", "./cmd/x"}, wantOutput: "bin/app"},
-		{name: "-o as a flag value", argv: []string{"go", "build", "-ldflags", "-o", "./cmd/x"}, wantErr: true},
-		{name: "-o after --", argv: []string{"go", "build", "--", "-o", "bin/app"}, wantErr: true},
-		{name: "multi-package check-only", argv: []string{"go", "build", "./..."}, wantArgv: []string{"go", "build", "./..."}, wantOutput: ""},
-		{name: "two packages without -o", argv: []string{"go", "build", "./a", "./b"}, wantArgv: []string{"go", "build", "./a", "./b"}, wantErr: true},
-		{name: "non-build untouched", argv: []string{"go", "test", "./..."}, wantArgv: []string{"go", "test", "./..."}, wantOutput: ""},
+		// No package at the module root: Go fails and writes nothing.
+		{name: "bare build", argv: []string{"go", "build"}, wantArgv: []string{"go", "build"}, wantKind: "none"},
+		{name: "build dot", argv: []string{"go", "build", "."}, wantArgv: []string{"go", "build", "."}, wantKind: "none"},
+		// Go writes the binary of one main package into the working directory.
+		{name: "build single main package", argv: []string{"go", "build", "./cmd/x"}, wantArgv: []string{"go", "build", "-o", out, "./cmd/x"}, wantOutput: "x", wantKind: "implicit"},
+		{name: "pattern of one main package", argv: []string{"go", "build", "./cmd/..."}, wantArgv: []string{"go", "build", "-o", out, "./cmd/..."}, wantOutput: "x", wantKind: "implicit"},
+		{name: "explicit -o separate", argv: []string{"go", "build", "-o", "bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-o", out, "./cmd/x"}, wantOutput: "bin/app", wantKind: "explicit"},
+		{name: "explicit -o equals", argv: []string{"go", "build", "-o=bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-o=" + out, "./cmd/x"}, wantOutput: "bin/app", wantKind: "explicit"},
+		{name: "explicit --o separate", argv: []string{"go", "build", "--o", "bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "--o", out, "./cmd/x"}, wantOutput: "bin/app", wantKind: "explicit"},
+		{name: "explicit --o equals directory", argv: []string{"go", "build", "--o=bin/", "./cmd/x"}, wantArgv: []string{"go", "build", "--o=" + out + "/", "./cmd/x"}, wantOutput: "bin/", wantKind: "directory"},
+		{name: "-o after a value flag", argv: []string{"go", "build", "-tags", "x", "-o", "bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-tags", "x", "-o", out, "./cmd/x"}, wantOutput: "bin/app", wantKind: "explicit"},
+		// The value of another flag is never -o; the added -o follows every flag.
+		{name: "-o as a flag value", argv: []string{"go", "build", "-ldflags", "-o", "./cmd/x"}, wantArgv: []string{"go", "build", "-ldflags", "-o", "-o", out, "./cmd/x"}, wantOutput: "x", wantKind: "implicit"},
+		// After "--" every argument is a package; Go fails on "-o".
+		{name: "-o after --", argv: []string{"go", "build", "--", "-o", "bin/app"}, wantArgv: []string{"go", "build", "--", "-o", "bin/app"}, wantKind: "none"},
+		// Go stops reading flags at the first package.
+		{name: "-o after a package", argv: []string{"go", "build", "./cmd/x", "-o", "bin/app"}, wantArgv: []string{"go", "build", "./cmd/x", "-o", "bin/app"}, wantKind: "none"},
+		{name: "multi-package check-only", argv: []string{"go", "build", "./..."}, wantArgv: []string{"go", "build", "./..."}, wantKind: "none"},
+		{name: "two libraries", argv: []string{"go", "build", "./a", "./b"}, wantArgv: []string{"go", "build", "./a", "./b"}, wantKind: "none"},
+		{name: "a main and a library", argv: []string{"go", "build", "./cmd/x", "./a"}, wantArgv: []string{"go", "build", "./cmd/x", "./a"}, wantKind: "none"},
+		{name: "non-build untouched", argv: []string{"go", "test", "./..."}, wantArgv: []string{"go", "test", "./..."}},
 		// Go keeps the last -o, and an empty -o is no -o.
-		{name: "last -o wins", argv: []string{"go", "build", "-o", "a", "-o=bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-o", "a", "-o=/srv/build/candidates/OUTPUT", "./cmd/x"}, wantOutput: "bin/app"},
-		{name: "empty -o needs an output", argv: []string{"go", "build", "-o=", "./cmd/x"}, wantErr: true},
-		{name: "last -o empty", argv: []string{"go", "build", "-o", "bin/app", "-o", "", "./cmd/x"}, wantErr: true},
-		{name: "empty -o pattern check", argv: []string{"go", "build", "-o", "", "./..."}, wantArgv: []string{"go", "build", "-o", "", "./..."}, wantOutput: ""},
-		{name: "/dev/null stays", argv: []string{"go", "build", "-o", "/dev/null", "./cmd/x"}, wantArgv: []string{"go", "build", "-o", "/dev/null", "./cmd/x"}, wantOutput: "/dev/null"},
-		// Only a package argument makes a pattern build.
-		{name: "pattern in a flag value", argv: []string{"go", "build", "-gcflags=./...=-N", "./cmd/x"}, wantErr: true},
-		{name: "pattern after --", argv: []string{"go", "build", "--", "./..."}, wantArgv: []string{"go", "build", "--", "./..."}, wantOutput: ""},
+		{name: "last -o wins", argv: []string{"go", "build", "-o", "a", "-o=bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-o", "a", "-o=" + out, "./cmd/x"}, wantOutput: "bin/app", wantKind: "explicit"},
+		{name: "empty -o is the default output", argv: []string{"go", "build", "-o=", "./cmd/x"}, wantArgv: []string{"go", "build", "-o=", "-o", out, "./cmd/x"}, wantOutput: "x", wantKind: "implicit"},
+		{name: "last -o empty", argv: []string{"go", "build", "-o", "bin/app", "-o", "", "./cmd/x"}, wantArgv: []string{"go", "build", "-o", "bin/app", "-o", "", "-o", out, "./cmd/x"}, wantOutput: "x", wantKind: "implicit"},
+		{name: "empty -o pattern check", argv: []string{"go", "build", "-o", "", "./..."}, wantArgv: []string{"go", "build", "-o", "", "./..."}, wantKind: "none"},
+		{name: "/dev/null stays", argv: []string{"go", "build", "-o", "/dev/null", "./cmd/x"}, wantArgv: []string{"go", "build", "-o", "/dev/null", "./cmd/x"}, wantKind: "discard"},
+		{name: "pattern in a flag value", argv: []string{"go", "build", "-gcflags=./...=-N", "./cmd/x"}, wantArgv: []string{"go", "build", "-gcflags=./...=-N", "-o", out, "./cmd/x"}, wantOutput: "x", wantKind: "implicit"},
+		{name: "pattern after --", argv: []string{"go", "build", "--", "./..."}, wantArgv: []string{"go", "build", "--", "./..."}, wantKind: "none"},
+		// -n prints the commands and writes nothing, also with -o.
+		{name: "-n with -o", argv: []string{"go", "build", "-n", "-o", "bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-n", "-o", "bin/app", "./cmd/x"}, wantKind: "none"},
+		{name: "-n without -o", argv: []string{"go", "build", "-n", "./cmd/x"}, wantArgv: []string{"go", "build", "-n", "./cmd/x"}, wantKind: "none"},
+		{name: "-n=false", argv: []string{"go", "build", "-n=false", "./cmd/x"}, wantArgv: []string{"go", "build", "-n=false", "-o", out, "./cmd/x"}, wantOutput: "x", wantKind: "implicit"},
+		{name: "a value flag without its value", argv: []string{"go", "build", "-tags"}, wantArgv: []string{"go", "build", "-tags"}, wantKind: "none"},
+		{name: "-json goes to go build only", argv: []string{"go", "build", "-json", "./cmd/x"}, wantArgv: []string{"go", "build", "-json", "-o", out, "./cmd/x"}, wantOutput: "x", wantKind: "implicit"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			gotArgv, gotOutput, err := normalizeRemoteBuildArgv(tc.argv)
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("expected error, got argv=%v output=%q", gotArgv, gotOutput)
-				}
-				return
-			}
+			plan, err := planRemoteBuild(workdir, tc.argv)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if gotOutput != tc.wantOutput {
-				t.Errorf("output = %q, want %q", gotOutput, tc.wantOutput)
+			if plan.output != tc.wantOutput || plan.kind != tc.wantKind {
+				t.Errorf("output = %q kind = %q, want %q %q", plan.output, plan.kind, tc.wantOutput, tc.wantKind)
 			}
-			if len(gotArgv) != len(tc.wantArgv) {
-				t.Fatalf("argv = %v, want %v", gotArgv, tc.wantArgv)
-			}
-			for i := range tc.wantArgv {
-				if gotArgv[i] != tc.wantArgv[i] {
-					t.Fatalf("argv = %v, want %v", gotArgv, tc.wantArgv)
-				}
+			if !reflect.DeepEqual(plan.argv, tc.wantArgv) {
+				t.Fatalf("argv = %q, want %q", plan.argv, tc.wantArgv)
 			}
 		})
 	}

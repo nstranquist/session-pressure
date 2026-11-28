@@ -135,63 +135,6 @@ func RemoteGoCommand(argv []string) bool {
 	return false
 }
 
-// normalizeRemoteBuildArgv redirects explicit build outputs for fetch-back.
-// Multi-package validation builds do not produce an executable. Other builds
-// need an explicit local output so the remote route preserves the artifact
-// contract instead of silently discarding the executable.
-func normalizeRemoteBuildArgv(argv []string) ([]string, string, error) {
-	out := append([]string(nil), argv...)
-	if len(out) < 2 || out[1] != "build" {
-		return out, "", nil
-	}
-	remoteOutput := func(output string) string {
-		if remoteBuildDirectory(output) {
-			return "/srv/build/candidates/OUTPUT/"
-		}
-		return "/srv/build/candidates/OUTPUT"
-	}
-	// goFlagName reads -o in every spelling go build accepts (-o, --o,
-	// -o=, --o=). The value of another flag is never read as -o, Go keeps
-	// the last -o, and an empty -o is no -o. Only a package argument makes a
-	// pattern build; after "--" every argument is one.
-	at, output, inline, pattern := -1, "", false, false
-	for i := 2; i < len(out); i++ {
-		arg := out[i]
-		if arg == "--" {
-			for _, rest := range out[i+1:] {
-				pattern = pattern || strings.Contains(rest, "...")
-			}
-			break
-		}
-		name, value, isInline := goFlagName(arg)
-		switch {
-		case name == "-o" && isInline:
-			at, output, inline = i, value, true
-		case name == "-o" && i+1 < len(out):
-			i++
-			at, output, inline = i, out[i], false
-		case name != "" && !isInline && goFlagsWithValue[name]:
-			i++
-		case name == "":
-			pattern = pattern || strings.Contains(arg, "...")
-		}
-	}
-	switch {
-	case output == "/dev/null":
-		// Go builds and writes nothing; the runner's /dev/null does the same.
-		return out, output, nil
-	case output != "" && inline:
-		out[at] = out[at][:strings.IndexByte(out[at], '=')+1] + remoteOutput(output)
-		return out, output, nil
-	case output != "":
-		out[at] = remoteOutput(output)
-		return out, output, nil
-	case pattern:
-		return out, "", nil
-	}
-	return out, "", errors.New("remote go build requires -o <local-output> so its executable can be returned; use go build -o ./bin/<name> <package>, or go build ./... for validation")
-}
-
 // remoteWorkDirectory is the directory Go runs command from, and command
 // without the -C that moved it there. cmd/go handles a -C that is the first
 // flag after the subcommand before anything else: it changes to that
@@ -657,13 +600,27 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if err != nil {
 		return reject(err.Error())
 	}
-	// Explicit outputs can be returned without guessing package/main names.
-	argv := append([]string(nil), goArgv...)
-	argv[0] = "go"
-	argv, output, err := normalizeRemoteBuildArgv(argv)
-	if err != nil {
+	// The runner writes the build output where the route fetches it from,
+	// or the build fails or is refused here, before upload.
+	nextStage("output_probe_ms")
+	build, err := planRemoteBuild(workdir, goArgv)
+	nextStage("preparation_ms")
+	var outputFailure *goBuildOutputFailure
+	var outputRefusal *remoteBuildOutputRefusal
+	var probeAttrs map[string]any
+	if build.probe != "" {
+		probeAttrs = map[string]any{"build_output_probe": build.probe}
+	}
+	switch {
+	case errors.As(err, &outputFailure):
+		return failRemoteBuildOutput(dir, goArgv[1], outputFailure, probeAttrs)
+	case errors.As(err, &outputRefusal):
+		return refuseRemoteGo(dir, goArgv[1], outputRefusal.reason, outputRefusal.advice, probeAttrs)
+	case err != nil:
 		return reject(err.Error())
 	}
+	argv, output := build.argv, build.output
+	argv[0] = "go"
 	placementKeys := NewPlacementKeys(cwd, options.Command)
 	placementKey := placementKeys.Exact
 	if placeLocally(dir, policy, options, placementKeys, ToolFamilyGo, streams.Stderr) {
@@ -704,6 +661,12 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 			if sourceDelta.mode != "" {
 				event["source_collect_ms"], event["source_hash_ms"], event["source_send_ms"], event["source_files_hashed"] = sourceDelta.collectMS, sourceDelta.hashMS, sourceDelta.sendMS, sourceDelta.hashed
 			}
+		}
+		if build.kind != "" {
+			event["build_output"] = build.kind
+		}
+		if build.probe != "" {
+			event["build_output_probe"] = build.probe
 		}
 		recordControlEvent(dir, event)
 	}()
@@ -786,7 +749,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	// it outgrows the lane, so a wrong guess costs time, never a verdict.
 	lane, procs, memlimit, parallel := remoteLane(options)
 	command := remoteRunnerPrelude() + preflight + "cd " + shellQuote("./"+filepath.ToSlash(rel)) + " && " + remoteGoInvocation(lane, procs, memlimit, parallel, os.Getenv("GOFLAGS"), remoteBuildEnvironment(profile, remote), argv)
-	if output != "" && output != "/dev/null" {
+	if output != "" {
 		command += remoteBuildArtifactSeal(remote, output)
 	}
 	// The canonical runner retains source inputs before durable submission.
@@ -806,7 +769,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		}
 		return true, 1, err
 	}
-	if output != "" && output != "/dev/null" {
+	if output != "" {
 		// Keep the artifact on a fetch failure so the same finished job can be
 		// recovered. Publish locally only after checking its retained manifest.
 		cleanupSafe = false
@@ -840,7 +803,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 			cleanupSafe = true
 			return true, 0, nil
 		}
-		if err = os.Chmod(f.Name(), 0755); err != nil {
+		if err = os.Chmod(f.Name(), build.mode); err != nil {
 			return true, 1, err
 		}
 		if err = os.Rename(f.Name(), output); err != nil {
@@ -918,6 +881,18 @@ func failRemoteReplaceTarget(dir, operation string, err *remoteReplaceTargetErro
 		"missing_target": err.targetDir,
 		"local_blocked":  true,
 	})
+	return true, 1, err
+}
+
+// failRemoteBuildOutput fails, before upload, a build that Go itself fails
+// on because of its output path: a plain command failure (exit 1), as for a
+// missing replace target, because the cause is the checkout, not the host.
+func failRemoteBuildOutput(dir, operation string, err *goBuildOutputFailure, attrs map[string]any) (bool, int, error) {
+	event := map[string]any{"event": "remote_work_failed", "operation": operation, "reason": err.Error(), "local_blocked": true}
+	for key, value := range attrs {
+		event[key] = value
+	}
+	recordControlEvent(dir, event)
 	return true, 1, err
 }
 

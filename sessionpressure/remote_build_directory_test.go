@@ -108,9 +108,9 @@ func TestRemoteBuildDirectoryArgv(t *testing.T) {
 		for _, flag := range [][]string{{"-o", output}, {"-o=" + output}} {
 			argv := append([]string{"go", "build"}, flag...)
 			argv = append(argv, "./cmd/one", "./cmd/two")
-			normalized, destination, err := normalizeRemoteBuildArgv(argv)
-			if err != nil || destination != output || !strings.Contains(strings.Join(normalized, " "), "/srv/build/candidates/OUTPUT/") {
-				t.Fatalf("%v => %v, %q, %v", argv, normalized, destination, err)
+			plan, err := planRemoteBuild(t.TempDir(), argv)
+			if err != nil || plan.output != output || plan.kind != "directory" || !strings.Contains(strings.Join(plan.argv, " "), remoteBuildCandidate+"/") {
+				t.Fatalf("%v => %+v, %v", argv, plan, err)
 			}
 		}
 	}

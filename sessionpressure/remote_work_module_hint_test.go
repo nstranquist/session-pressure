@@ -101,11 +101,19 @@ func TestRemoteModuleHintNamesTheOwningModule(t *testing.T) {
 		argv: []string{"go", "build", "./native/app"},
 		hint: "the named packages are in native/go.mod, so run the command from that module: (cd native && go build ./app)",
 	}, {
-		// The remote route runs every pattern build as a check and returns no
-		// binary, so the suggested command adds no -o.
-		name: "a pattern build stays a check",
+		// Go writes the binary of a pattern that matches one main package.
+		name: "a pattern of one main package keeps its binary where Go wrote it",
 		argv: []string{"go", "build", "./scripts/..."},
-		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go build ./...)",
+		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go build -o ../tool ./...)",
+	}, {
+		// go list reads the build mode and the deprecated tag list as Go does.
+		name: "a plugin keeps its .so name",
+		argv: []string{"go", "build", "-buildmode=plugin", "./scripts/tool"},
+		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go build -o ../tool.so -buildmode=plugin ./tool)",
+	}, {
+		name: "a space-separated tag list",
+		argv: []string{"go", "build", "-tags", "a b", "./scripts/tool"},
+		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go build -o ../tool -tags 'a b' ./tool)",
 	}, {
 
 		name: "coverage and per-package patterns move, keywords and import paths stay",
@@ -182,11 +190,9 @@ func TestRemoteModuleHintKeepsTheGenericRefusal(t *testing.T) {
 		{"go", "test", "-coverprofile", "c.out", "./scripts/tool"},
 		{"go", "test", "-c", "./scripts/tool"},
 		{"go", "test", "-o", "tool.test", "./scripts/tool"},
-		{"go", "build", "-buildmode=plugin", "./scripts/tool"},  // another default name
 		{"go", "build", "-o", "a", "-o", "b", "./scripts/tool"}, // Go keeps the last -o
 		{"go", "build", "-o=", "./scripts/tool"},                // an empty -o is no -o
 		{"go", "build", "-race=maybe", "./scripts/tool"},        // Go rejects the boolean
-		{"go", "build", "-tags", "a b", "./scripts/tool"},       // the deprecated tag list
 	} {
 		if hint, modules := remoteModuleHint(root, root, argv); hint != "" || modules != nil {
 			t.Errorf("%q: hint %q, modules %q; want the generic refusal", argv, hint, modules)

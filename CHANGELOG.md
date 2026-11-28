@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Remote Go builds: a build without `-o` returns the binary Go writes.**
+  Without `-o`, `go build` writes a binary into the working directory when
+  its arguments are exactly one main package, also through a pattern such as
+  `./cmd/tool/...`. The remote route ran every pattern build as a check and
+  dropped that binary, and it refused a package build without `-o`. It now
+  asks `go list` which binary the build writes (a walk of the pattern
+  directories answers first when it finds two packages), names it with `-o`
+  on the runner and returns it to the same path, with mode 0644 for
+  `-buildmode=plugin`. Builds of several packages or of libraries still
+  return nothing. Before upload, a build now fails as Go does when its
+  output is an existing directory or a file that is not an object file, an
+  `-o` that names an existing directory is refused with local-placement
+  advice, and a `-n` build is no longer rewritten. The module hint names
+  the same binary. The local-input flags (`-modfile`, `-overlay`, `-exec`
+  and the others) are now refused in their double-dash spellings too.
+  Control events record `build_output`, `build_output_probe` and the
+  `output_probe_ms` stage.
 - **Work events: concurrent appends no longer fail on the host identity
   lock.** Every work event append read the host identity under a file lock
   with a 1 s deadline. On a CPU-saturated host, concurrent appends queued on

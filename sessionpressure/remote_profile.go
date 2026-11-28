@@ -1,7 +1,5 @@
 package sessionpressure
 
-import "strings"
-
 // remoteProfileReason protects commands whose local execution profile cannot
 // be reproduced by the runner: native Linux tests and vet, and Darwin/arm64
 // builds with or without cgo (remoteBuildEnvironment). A local CC or CGO_*
@@ -17,8 +15,10 @@ func remoteProfileReason(argv []string, getenv func(string) string) string {
 		}
 	}
 	for _, arg := range argv[2:] {
+		// Go reads -flag, --flag, -flag=value and --flag=value alike.
+		name, _, _ := goFlagName(arg)
 		for _, flag := range []string{"-modfile", "-overlay", "-toolexec", "-exec", "-vettool", "-pgo"} {
-			if arg == flag || strings.HasPrefix(arg, flag+"=") {
+			if name == flag {
 				return flag + " needs local files or tools"
 			}
 		}
