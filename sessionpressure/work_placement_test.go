@@ -1,6 +1,9 @@
 package sessionpressure
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -51,17 +54,67 @@ func TestParseWorkRunPlacement(t *testing.T) {
 
 func TestRequiredRemotePlacementNeverEntersLocalAdmission(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		enabled bool
-		command []string
+		name      string
+		enabled   bool
+		node      bool
+		command   []string
+		wantSub   string
+		wantKind  string
+		wantBin   string
+		darwinSub string
 	}{
-		{"disabled routing", false, []string{"go", "build", "./..."}},
-		{"unsupported command", true, []string{"sh", "-c", "exit 99"}},
+		{
+			name:      "disabled routing",
+			enabled:   false,
+			command:   []string{"go", "build", "./..."},
+			wantSub:   "only supported on darwin hosts",
+			darwinSub: "requires enabled remote routing in remote-work.json",
+			wantKind:  "routing_disabled",
+			wantBin:   "go",
+		},
+		{
+			name:      "unsupported command",
+			enabled:   true,
+			command:   []string{"sh", "-c", "exit 99"},
+			wantSub:   "only supported on darwin hosts",
+			darwinSub: `does not support command "sh"`,
+			wantKind:  "unsupported_command",
+			wantBin:   "sh",
+		},
+		{
+			name:      "node routing disabled",
+			enabled:   true,
+			node:      false,
+			command:   []string{"npm", "test"},
+			wantSub:   "only supported on darwin hosts",
+			darwinSub: `for Node command "npm" requires node routing enabled`,
+			wantKind:  "node_routing_disabled",
+			wantBin:   "npm",
+		},
+		{
+			name:      "node command ineligible preserves node reason",
+			enabled:   true,
+			node:      true,
+			command:   []string{"npm", "test"},
+			wantSub:   "only supported on darwin hosts",
+			darwinSub: "cannot route Node command:",
+			wantKind:  "node_ineligible",
+			wantBin:   "npm",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := ConfigureRemoteWork(dir, tc.enabled, "runner-3", "builder"); err != nil {
+			if err := SaveRemoteWorkPolicy(dir, RemoteWorkPolicy{
+				Enabled: tc.enabled,
+				Node:    tc.node,
+				Host:    "runner-3",
+				User:    "builder",
+			}); err != nil {
 				t.Fatal(err)
+			}
+			if tc.node {
+				// Empty temp directory guarantees planRemoteNodeWork declines without touching any real repo.
+				t.Chdir(t.TempDir())
 			}
 			code, err := RunWorkCommand(&WorkCoordinator{Dir: dir}, WorkRunOptions{
 				Class: WorkClassBuild, Placement: WorkPlacementRemote, Command: tc.command,
@@ -69,8 +122,35 @@ func TestRequiredRemotePlacementNeverEntersLocalAdmission(t *testing.T) {
 				t.Fatal("required remote work reached local admission")
 				return Admission{}
 			}, time.Millisecond, WorkRunStreams{})
-			if code == 0 || err == nil || !strings.Contains(err.Error(), "local fallback is disabled") {
-				t.Fatalf("code=%d err=%v", code, err)
+			if code != workExitPolicyDenied || err == nil || !IsWorkRefusal(err) {
+				t.Fatalf("code=%d err=%v, want policy refusal", code, err)
+			}
+			text := err.Error()
+			if strings.Count(text, "local fallback is disabled") != 1 {
+				t.Fatalf("expected exactly one 'local fallback is disabled', got: %q", text)
+			}
+			if strings.Contains(text, remoteRunnerAdvice) {
+				t.Fatalf("explicit remote placement refusal should not emit compiler-profile advice: %q", text)
+			}
+			wantSub := tc.wantSub
+			wantKind := "unsupported_host"
+			if runtime.GOOS == "darwin" {
+				wantSub = tc.darwinSub
+				wantKind = tc.wantKind
+			}
+			if !strings.Contains(text, wantSub) {
+				t.Fatalf("err = %q, want substring %q", text, wantSub)
+			}
+			events, readErr := os.ReadFile(filepath.Join(dir, "work-control-events.jsonl"))
+			if readErr != nil {
+				t.Fatalf("read control events: %v", readErr)
+			}
+			lines := strings.Split(strings.TrimSpace(string(events)), "\n")
+			if len(lines) != 1 {
+				t.Fatalf("expected 1 remote_work_declined event, got %d: %s", len(lines), events)
+			}
+			if !strings.Contains(lines[0], `"placement_decline_kind":"`+wantKind+`"`) || !strings.Contains(lines[0], `"command_bin":"`+tc.wantBin+`"`) {
+				t.Fatalf("control event missing structured attrs (want kind=%s bin=%s): %s", wantKind, tc.wantBin, lines[0])
 			}
 		})
 	}

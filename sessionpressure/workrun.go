@@ -1133,8 +1133,7 @@ func RunWorkCommand(coordinator *WorkCoordinator, options WorkRunOptions, admiss
 	} else if handled, code, err := TryRemoteWork(coordinator.Dir, options, streams); handled {
 		return code, err
 	} else if options.Placement == WorkPlacementRemote {
-		_, code, err := rejectRemoteWork(coordinator.Dir, "work", "explicit remote placement requires enabled remote Go routing; local fallback is disabled")
-		return code, err
+		return rejectExplicitRemotePlacement(coordinator.Dir, options.Command)
 	}
 	if options.Progress == "" {
 		options.Progress = WorkProgressHuman

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Remote placement: explicit `--placement remote` refusals name the actual
+  cause.** When `--placement remote` cannot route a command, the refusal now
+  distinguishes non-darwin hosts, disabled remote routing, disabled Node
+  routing, ineligible Node checks (preserving the exact Node planner reason in
+  a single control event), and unsupported commands, removes the duplicated
+  `local fallback is disabled` suffix and unrelated compiler-profile advice,
+  and records `placement_decline_kind` and `command_bin` in
+  `remote_work_declined` events. Local fallback remains disabled. See
+  `corpus/explicit-remote-placement-refusal-2026-11-27.md`.
 - **Remote Go: missing `go.mod` `replace` targets fail as command errors with
   exact diagnostics.** When a local `replace` target directory or its `go.mod`
   is missing (direct or transitive), remote Go preparation now names the

@@ -807,6 +807,43 @@ func rejectRemoteWork(dir, operation, reason string) (bool, int, error) {
 	return refuseRemoteGo(dir, operation, reason, remoteRunnerAdvice, nil)
 }
 
+// rejectExplicitRemotePlacement refuses --placement remote when TryRemoteWork
+// could not route the command, naming the actual cause (non-darwin host,
+// disabled remote routing, disabled Node routing, or unsupported command)
+// without falling back to local admission or repeating "local fallback is
+// disabled".
+func rejectExplicitRemotePlacement(dir string, command []string) (int, error) {
+	cmd := ""
+	if len(command) > 0 {
+		cmd = filepath.Base(command[0])
+	}
+	policy, err := RemoteWorkConfig(dir)
+	var kind, reason, advice string
+	switch {
+	case runtime.GOOS != "darwin":
+		kind = "unsupported_host"
+		reason = fmt.Sprintf("explicit remote placement is only supported on darwin hosts (current host is %s)", runtime.GOOS)
+		advice = "use --placement auto or run directly on this host"
+	case err == nil && !policy.Enabled:
+		kind = "routing_disabled"
+		reason = "explicit remote placement requires enabled remote routing in remote-work.json"
+		advice = "enable remote routing or use --placement auto or --placement local --placement-reason <slug>"
+	case err == nil && WorkToolFamily(command) == ToolFamilyNode && !policy.Node:
+		kind = "node_routing_disabled"
+		reason = fmt.Sprintf("explicit remote placement for Node command %q requires node routing enabled in remote-work.json", cmd)
+		advice = "enable node in remote-work.json or use --placement auto or --placement local --placement-reason <slug>"
+	default:
+		kind = "unsupported_command"
+		reason = fmt.Sprintf("explicit remote placement does not support command %q (only direct go build/test/vet and enabled Node verification route remotely)", cmd)
+		advice = "run a supported Go or Node command directly or use --placement auto or --placement local --placement-reason <slug>"
+	}
+	_, code, refErr := refuseRemoteGo(dir, "work", reason, advice, map[string]any{
+		"placement_decline_kind": kind,
+		"command_bin":            cmd,
+	})
+	return code, refErr
+}
+
 // failRemoteReplaceTarget reports a missing local go.mod replace target as a
 // plain command failure (exit 1) rather than a coordinator refusal. Go itself
 // fails on a missing replace target, and tagging it with WorkRefusalMarker or

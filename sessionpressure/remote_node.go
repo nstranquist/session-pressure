@@ -516,6 +516,18 @@ func tryRemoteNodeWork(dir string, policy RemoteWorkPolicy, options WorkRunOptio
 	}
 	plan, reason := planRemoteNodeWork(cwd, options.Command)
 	if reason != "" {
+		if options.Placement == WorkPlacementRemote {
+			_, code, refErr := refuseRemoteGo(dir, "node",
+				"explicit remote placement cannot route Node command: "+reason,
+				"fix the Node check layout or pinned version, or use --placement auto or --placement local --placement-reason <slug>",
+				map[string]any{
+					"tool_family":            ToolFamilyNode,
+					"profile":                remoteNodeProfile,
+					"placement_decline_kind": "node_ineligible",
+					"command_bin":            filepath.Base(options.Command[0]),
+				})
+			return true, code, refErr
+		}
 		declineRemoteNode(dir, reason)
 		return false, 0, nil
 	}
