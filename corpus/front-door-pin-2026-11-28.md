@@ -35,7 +35,9 @@ moved during it twice in one evening:
   environment so the builds it starts do not inherit it, and archives the
   session-pressure replacement at that commit instead of `HEAD`. It refuses
   the pin for modes that are not a native host install, and fails when it
-  has no session-pressure replacement to pin.
+  has no session-pressure replacement to pin. Its build log marks the pin
+  `(requested revision)` and names the live `HEAD` when that is a different
+  commit, so a promotion log shows which commit the front door linked.
 
 Not changed: a promotion of a ref other than `HEAD` still reports
 `not-republished-ref-not-head` and leaves the front door alone. The front
@@ -67,4 +69,10 @@ session-pressure, and a front door whose rebuild predates the pin would link
   only the rebuild gets the pin.
 - The front door's tests pin a sibling replacement while the sibling's
   `HEAD` moves, reject a pin that is not an exact commit, reject a pin with
-  no replacement, and check that the pin is removed from the environment.
+  no replacement, check that the pin is removed from the environment, and
+  fix the build log line for each pin kind.
+- A real promotion of 6190808 on the primary Mac returned 0. The front-door
+  rebuild logged the session-pressure pin at 6190808, and `doctor` then
+  reported the CLI, the helper and the front door at 6190808 with the source
+  lag `current`. `HEAD` did not move during that run, so the moved-`HEAD`
+  path is covered by the tests above, not by a live run.
