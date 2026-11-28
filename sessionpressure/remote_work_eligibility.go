@@ -2,6 +2,7 @@ package sessionpressure
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -38,6 +39,111 @@ var goBoolFlags = map[string]bool{
 	"-modcacherw": true, "-trimpath": true, "-buildvcs": true, "-c": true,
 	"-failfast": true, "-fullpath": true, "-short": true, "-benchmem": true,
 	"-artifacts": true,
+}
+
+// goTestBinaryFlags are the go test flags that cmd/go also accepts as
+// -test.<name>, because it passes them on to the test binary (cmd/go
+// passFlagToTest). No other flag has a test. spelling.
+var goTestBinaryFlags = map[string]bool{
+	"artifacts": true, "bench": true, "benchmem": true, "benchtime": true,
+	"blockprofile": true, "blockprofilerate": true, "count": true, "coverprofile": true,
+	"cpu": true, "cpuprofile": true, "failfast": true, "fullpath": true, "fuzz": true,
+	"fuzzminimizetime": true, "fuzztime": true, "list": true, "memprofile": true,
+	"memprofilerate": true, "mutexprofile": true, "mutexprofilefraction": true,
+	"outputdir": true, "parallel": true, "run": true, "short": true, "shuffle": true,
+	"skip": true, "timeout": true, "trace": true, "v": true,
+}
+
+// goTestOutputFlags write files during a go test run: the test binary (-c,
+// -o), profiles and the trace, test artifacts, and new fuzz corpus entries
+// under testdata. A remote go test leaves them on the runner, because the
+// route returns only the output of a go build, so it refuses them instead of
+// dropping the files. The test binary is also a linux binary there.
+var goTestOutputFlags = map[string]bool{
+	"-c": true, "-o": true, "-coverprofile": true, "-cpuprofile": true, "-memprofile": true,
+	"-blockprofile": true, "-mutexprofile": true, "-trace": true, "-artifacts": true, "-fuzz": true,
+}
+
+// goTestOutputFlag reports whether a go test flag, as goFlagName reads it,
+// writes a file. An empty value, a false boolean and a boolean that Go
+// cannot parse (Go rejects it) write nothing.
+func goTestOutputFlag(name, value string, inline bool) bool {
+	if !goTestOutputFlags[name] {
+		return false
+	}
+	if goBoolFlags[name] {
+		on, err := strconv.ParseBool(value)
+		return !inline || (err == nil && on)
+	}
+	return value != ""
+}
+
+// goTestOutputReason names the first flag in args that makes go test write a
+// file, or "". After -args the arguments belong to the test binary, where
+// only the -test. spellings are the testing package's own output flags.
+func goTestOutputReason(source string, args []string) string {
+	binaryArgs := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "-args" || arg == "--args" {
+			binaryArgs = true
+			continue
+		}
+		name, value, inline := goFlagName(arg)
+		if name == "" {
+			continue
+		}
+		if !inline && goFlagsWithValue[name] && i+1 < len(args) {
+			i++
+			value = args[i]
+		}
+		if binaryArgs && !strings.HasPrefix(strings.TrimLeft(arg, "-"), "test.") {
+			continue
+		}
+		if goTestOutputFlag(name, value, inline) {
+			return source + " " + name + " makes go test write a file that the remote route does not return"
+		}
+	}
+	return ""
+}
+
+// goBuildModeReason refuses the build modes that write a second file: a
+// c-archive or c-shared build also writes a C header beside its output, and
+// the remote route returns only the output.
+func goBuildModeReason(source string, args []goArg) string {
+	mode := ""
+	for _, a := range args {
+		if a.flag == "-buildmode" {
+			mode = a.value
+		}
+	}
+	if mode == "c-archive" || mode == "c-shared" {
+		return source + " -buildmode=" + mode + " also writes a C header that the remote route does not return"
+	}
+	return ""
+}
+
+// remoteOutputReason returns why the remote route would lose a file that
+// argv writes, or "". The route returns only the -o output of a go build, so
+// the go test outputs and the C header of a c-archive or c-shared build would
+// stay on the runner. A local run keeps them, so the caller refuses these
+// with local-placement advice instead of the runner advice.
+func remoteOutputReason(argv []string, getenv func(string) string) string {
+	if len(argv) < 2 {
+		return ""
+	}
+	goflags := strings.Fields(getenv("GOFLAGS"))
+	switch argv[1] {
+	case "test":
+		if reason := goTestOutputReason("argument", argv[2:]); reason != "" {
+			return reason
+		}
+		return goTestOutputReason("GOFLAGS", goflags)
+	case "build":
+		// A command-line -buildmode overrides the one in GOFLAGS.
+		return goBuildModeReason("argument", append(splitGoArgs(goflags), splitGoArgs(argv[2:])...))
+	}
+	return ""
 }
 
 // goFlagsNamingLocalFiles always reference a file the runner does not have

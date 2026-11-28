@@ -151,27 +151,72 @@ func normalizeRemoteBuildArgv(argv []string) ([]string, string, error) {
 		return "/srv/build/candidates/OUTPUT"
 	}
 	// goFlagName reads -o in every spelling go build accepts (-o, --o,
-	// -o=, --o=). The value of another flag is never read as -o.
-	for i := 2; i < len(out) && out[i] != "--"; i++ {
-		name, value, inline := goFlagName(out[i])
+	// -o=, --o=). The value of another flag is never read as -o, Go keeps
+	// the last -o, and an empty -o is no -o. Only a package argument makes a
+	// pattern build; after "--" every argument is one.
+	at, output, inline, pattern := -1, "", false, false
+	for i := 2; i < len(out); i++ {
+		arg := out[i]
+		if arg == "--" {
+			for _, rest := range out[i+1:] {
+				pattern = pattern || strings.Contains(rest, "...")
+			}
+			break
+		}
+		name, value, isInline := goFlagName(arg)
 		switch {
-		case name == "-o" && inline:
-			out[i] = out[i][:strings.IndexByte(out[i], '=')+1] + remoteOutput(value)
-			return out, value, nil
+		case name == "-o" && isInline:
+			at, output, inline = i, value, true
 		case name == "-o" && i+1 < len(out):
-			output := out[i+1]
-			out[i+1] = remoteOutput(output)
-			return out, output, nil
-		case name != "" && !inline && goFlagsWithValue[name]:
 			i++
+			at, output, inline = i, out[i], false
+		case name != "" && !isInline && goFlagsWithValue[name]:
+			i++
+		case name == "":
+			pattern = pattern || strings.Contains(arg, "...")
 		}
 	}
-	for _, arg := range out[2:] {
-		if strings.Contains(arg, "...") {
-			return out, "", nil
-		}
+	switch {
+	case output == "/dev/null":
+		// Go builds and writes nothing; the runner's /dev/null does the same.
+		return out, output, nil
+	case output != "" && inline:
+		out[at] = out[at][:strings.IndexByte(out[at], '=')+1] + remoteOutput(output)
+		return out, output, nil
+	case output != "":
+		out[at] = remoteOutput(output)
+		return out, output, nil
+	case pattern:
+		return out, "", nil
 	}
 	return out, "", errors.New("remote go build requires -o <local-output> so its executable can be returned; use go build -o ./bin/<name> <package>, or go build ./... for validation")
+}
+
+// remoteWorkDirectory is the directory Go runs command from, and command
+// without the -C that moved it there. cmd/go handles a -C that is the first
+// flag after the subcommand before anything else: it changes to that
+// directory and drops the flag, and os.Getwd then reports the physical path.
+// The remote route does the same, so it looks for the module, runs the
+// command and places outputs from that directory. A -C that Go rejects, or
+// one whose directory does not exist, stays in the command, which then fails
+// on the runner as it would here.
+func remoteWorkDirectory(cwd string, command []string) (string, []string) {
+	if len(command) < 3 {
+		return cwd, command
+	}
+	chdir, rest, ok := leadingGoChdir(command[2:])
+	if !ok || chdir == "" {
+		return cwd, command
+	}
+	target := chdir
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(cwd, target)
+	}
+	physical, err := filepath.EvalSymlinks(target)
+	if err != nil || !isDir(physical) {
+		return cwd, command
+	}
+	return physical, append(append([]string(nil), command[:2]...), rest...)
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
@@ -576,25 +621,29 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if err != nil {
 		return true, 1, err
 	}
+	workdir, goArgv := remoteWorkDirectory(cwd, options.Command)
 	// Reject unsupported profiles before upload. Enabled remote routing must
 	// never turn an eligibility failure into heavy work on the Mac.
 	reject := func(reason string) (bool, int, error) {
-		return rejectRemoteWork(dir, options.Command[1], reason)
+		return rejectRemoteWork(dir, goArgv[1], reason)
 	}
-	if reason := remoteProfileReason(options.Command, os.Getenv); reason != "" {
+	if reason := remoteProfileReason(goArgv, os.Getenv); reason != "" {
 		return reject(reason)
 	}
-	if reason := remoteWorkIneligibleReason(options.Command, os.Getenv); reason != "" {
+	if reason := remoteWorkIneligibleReason(goArgv, os.Getenv); reason != "" {
 		return reject(reason)
+	}
+	if reason := remoteOutputReason(goArgv, os.Getenv); reason != "" {
+		return refuseRemoteGo(dir, goArgv[1], reason, remoteLocalOutputAdvice, nil)
 	}
 	started := time.Now()
 	timingMS := map[string]int64{}
 	stageStarted, stage := started, "preparation_ms"
 	finishStage := func() { timingMS[stage] += time.Since(stageStarted).Milliseconds() }
 	nextStage := func(name string) { finishStage(); stage, stageStarted = name, time.Now() }
-	modules, common, err := remoteModuleClosure(cwd)
+	modules, common, err := remoteModuleClosure(workdir)
 	if errors.Is(err, errRemoteNoModule) {
-		return rejectRemoteModule(dir, cwd, options.Command)
+		return rejectRemoteModule(dir, cwd, workdir, goArgv)
 	}
 	var replaceErr *remoteReplaceTargetError
 	if errors.As(err, &replaceErr) {
@@ -609,7 +658,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		return reject(err.Error())
 	}
 	// Explicit outputs can be returned without guessing package/main names.
-	argv := append([]string(nil), options.Command...)
+	argv := append([]string(nil), goArgv...)
 	argv[0] = "go"
 	argv, output, err := normalizeRemoteBuildArgv(argv)
 	if err != nil {
@@ -631,7 +680,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if policy.Fleet != "" {
 		lane, _, _, _ := remoteLane(options)
 		binding, bindErr := runnerfleet.Assign(context.Background(), policy.Fleet, runnerfleet.Request{
-			Key: "pressure-" + job, Identity: cwd + "\x00" + strings.Join(argv, "\x00"),
+			Key: "pressure-" + job, Identity: workdir + "\x00" + strings.Join(argv, "\x00"),
 			Repository: "session-pressure-work", Profile: profile, Lane: lane,
 		}, conn.probe())
 		if bindErr != nil {
@@ -731,7 +780,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		defer cancel()
 		_ = conn.command(cleanupCtx, "5", target, "rm -rf -- "+shellQuote(remote)+" "+shellQuote(remote+".request")).Run()
 	}()
-	rel, _ := filepath.Rel(common, cwd)
+	rel, _ := filepath.Rel(common, workdir)
 	// A focused package test asks for the runner's light lane (1 CPU, 1 GiB,
 	// 300 s) so it never queues behind a suite. The runner reruns it heavy if
 	// it outgrows the lane, so a wrong guess costs time, never a verdict.
@@ -764,7 +813,7 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 		nextStage("artifact_download_ms")
 		directoryOutput := remoteBuildDirectory(output)
 		if !filepath.IsAbs(output) {
-			output = filepath.Join(cwd, output)
+			output = filepath.Join(workdir, output)
 		}
 		if directoryOutput {
 			output = filepath.Clean(output) + "/"
@@ -804,6 +853,10 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 
 // remoteRunnerAdvice ends a remote refusal that a runner profile can fix.
 const remoteRunnerAdvice = "use the Hetzner gate-runner with an explicit compiler profile"
+
+// remoteLocalOutputAdvice ends a refusal of a file the remote route cannot
+// return: an explicit local placement skips the route and keeps the file.
+const remoteLocalOutputAdvice = "run it with --placement local --placement-reason <slug> to keep the file on this host"
 
 // rejectRemoteWork marks the command handled so callers cannot enter local
 // admission after a profile or source rejection.

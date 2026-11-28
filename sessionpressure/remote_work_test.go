@@ -106,6 +106,15 @@ func TestNormalizeRemoteBuildArgv(t *testing.T) {
 		{name: "multi-package check-only", argv: []string{"go", "build", "./..."}, wantArgv: []string{"go", "build", "./..."}, wantOutput: ""},
 		{name: "two packages without -o", argv: []string{"go", "build", "./a", "./b"}, wantArgv: []string{"go", "build", "./a", "./b"}, wantErr: true},
 		{name: "non-build untouched", argv: []string{"go", "test", "./..."}, wantArgv: []string{"go", "test", "./..."}, wantOutput: ""},
+		// Go keeps the last -o, and an empty -o is no -o.
+		{name: "last -o wins", argv: []string{"go", "build", "-o", "a", "-o=bin/app", "./cmd/x"}, wantArgv: []string{"go", "build", "-o", "a", "-o=/srv/build/candidates/OUTPUT", "./cmd/x"}, wantOutput: "bin/app"},
+		{name: "empty -o needs an output", argv: []string{"go", "build", "-o=", "./cmd/x"}, wantErr: true},
+		{name: "last -o empty", argv: []string{"go", "build", "-o", "bin/app", "-o", "", "./cmd/x"}, wantErr: true},
+		{name: "empty -o pattern check", argv: []string{"go", "build", "-o", "", "./..."}, wantArgv: []string{"go", "build", "-o", "", "./..."}, wantOutput: ""},
+		{name: "/dev/null stays", argv: []string{"go", "build", "-o", "/dev/null", "./cmd/x"}, wantArgv: []string{"go", "build", "-o", "/dev/null", "./cmd/x"}, wantOutput: "/dev/null"},
+		// Only a package argument makes a pattern build.
+		{name: "pattern in a flag value", argv: []string{"go", "build", "-gcflags=./...=-N", "./cmd/x"}, wantErr: true},
+		{name: "pattern after --", argv: []string{"go", "build", "--", "./..."}, wantArgv: []string{"go", "build", "--", "./..."}, wantOutput: ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

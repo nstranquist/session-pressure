@@ -41,6 +41,18 @@
   `remote Go work blocked:` prefix so delivery workers attribute the source
   error directly instead of holding it as a retryable environment fault. Local
   fallback remains disabled.
+- **Remote Go: the route follows `-C` and refuses outputs it cannot return.**
+  A leading `-C dir` is now followed the way `go` follows it: the module is
+  found, the command runs and a relative `-o` is placed from that directory.
+  `go test` flags that write files (`-c`, `-o`, the profiles, `-trace`,
+  `-artifacts`, `-fuzz`) and `go build -buildmode=c-archive` or `c-shared`,
+  which also write a C header, are refused before upload instead of leaving
+  their files on the runner; the refusal says to run them with `--placement
+  local`, which keeps the files. A remote `go build` uses the last `-o`,
+  treats an empty `-o` as missing, keeps `-o /dev/null` as written, and counts
+  `...` only in package arguments. The "requires a module" hint now decides
+  with `go/build` (build constraints, `-tags`, `_` files) whether `go build`
+  writes a binary, and quotes values that start with `=`.
 - **Remote Go: the "requires a module" refusal names the module to run
   from.** A direct `go build`, `go test` or `go vet` from a directory with no
   `go.mod` above it is still refused with the same exit code, marker and

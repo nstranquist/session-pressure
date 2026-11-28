@@ -51,10 +51,29 @@ func TestRemoteWorkIneligibleReason(t *testing.T) {
 		{"build cgo graph", cgo, []string{"go", "build", "-o", "x", "."}, nil, ""},
 		{"build cgo graph, local cgo off", cgo, []string{"go", "build", "-o", "x", "."}, map[string]string{"CGO_ENABLED": "0"}, ""},
 		{"test cgo graph runs natively", cgo, []string{"go", "test", "./..."}, nil, ""},
+		// go test outputs stay on the runner, so the route refuses them.
+		{"test coverprofile", pure, []string{"go", "test", "-coverprofile", "c.out", "./..."}, nil, "argument -coverprofile makes go test write a file"},
+		{"test binary", pure, []string{"go", "test", "-c", "./..."}, nil, "argument -c makes go test write a file"},
+		{"test binary off", pure, []string{"go", "test", "-c=false", "./..."}, nil, ""},
+		{"test binary output", pure, []string{"go", "test", "-o", "x.test", "./..."}, nil, "argument -o makes go test write a file"},
+		{"test. profile spelling", pure, []string{"go", "test", "-test.cpuprofile=cpu.out", "./..."}, nil, "argument -cpuprofile makes go test write a file"},
+		{"fuzzing writes corpus entries", pure, []string{"go", "test", "-fuzz", "FuzzX", "./..."}, nil, "argument -fuzz makes go test write a file"},
+		{"empty fuzz", pure, []string{"go", "test", "-fuzz=", "./..."}, nil, ""},
+		{"GOFLAGS profile", pure, []string{"go", "test", "./..."}, map[string]string{"GOFLAGS": "-count=1 -memprofile=m.out"}, "GOFLAGS -memprofile makes go test write a file"},
+		{"test binary argument named like a profile", pure, []string{"go", "test", "./...", "-args", "-cpuprofile", "x"}, nil, ""},
+		{"test binary profile after -args", pure, []string{"go", "test", "./...", "-args", "-test.trace=t.out"}, nil, "argument -trace makes go test write a file"},
+		{"vet ignores test flags", pure, []string{"go", "vet", "./..."}, map[string]string{"GOFLAGS": "-coverprofile=c.out"}, ""},
+		// A C archive or library comes with a header the route does not return.
+		{"c-archive", pure, []string{"go", "build", "-buildmode=c-archive", "-o", "x.a", "."}, nil, "argument -buildmode=c-archive also writes a C header"},
+		{"GOFLAGS c-shared", pure, []string{"go", "build", "-o", "x.so", "."}, map[string]string{"GOFLAGS": "-buildmode=c-shared"}, "-buildmode=c-shared also writes a C header"},
+		{"command line overrides GOFLAGS build mode", pure, []string{"go", "build", "-buildmode", "exe", "-o", "x", "."}, map[string]string{"GOFLAGS": "-buildmode=c-shared"}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := remoteWorkIneligibleReason(tc.argv, envMap(tc.env))
+			if got == "" {
+				got = remoteOutputReason(tc.argv, envMap(tc.env))
+			}
 			if tc.want == "" && got != "" {
 				t.Fatalf("want eligible, got %q", got)
 			}

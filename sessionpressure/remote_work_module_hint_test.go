@@ -42,6 +42,7 @@ func TestRemoteModuleHintNamesTheOwningModule(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		cwd     string
+		workdir string // the directory of a leading -C; cwd when empty
 		argv    []string
 		hint    string
 		modules []string
@@ -57,20 +58,19 @@ func TestRemoteModuleHintNamesTheOwningModule(t *testing.T) {
 		modules: []string{"scripts/go.mod"},
 	}, {
 		name: "pattern, test flags and test binary arguments",
-		argv: []string{"go", "test", "-count=1", "-run", "TestX", "-coverprofile", "tmp/c.out", "./scripts/...", "-args", "-update", "x/y"},
-		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go test -count=1 -run TestX -coverprofile ../tmp/c.out ./... -args -update x/y)",
-	}, {
-		name: "profiles stay relative to a moved output directory",
-		argv: []string{"go", "test", "-outputdir", "tmp/prof", "-cpuprofile", "cpu.out", "./scripts/tool"},
-		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go test -outputdir ../tmp/prof -cpuprofile cpu.out ./tool)",
+		argv: []string{"go", "test", "-count=1", "-run", "TestX", "-pkgdir", "tmp/pkg", "./scripts/...", "-args", "-update", "x/y"},
+		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go test -count=1 -run TestX -pkgdir ../tmp/pkg ./... -args -update x/y)",
 	}, {
 		name: "module root, an empty value and a quoted value",
 		argv: []string{"go", "test", "-run", "", "-ldflags", "-s -w", "./scripts"},
 		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go test -run '' -ldflags '-s -w' .)",
 	}, {
-		name:    "-C is named, not followed",
-		argv:    []string{"go", "build", "-C", "scripts", "-o", "../tmp/bin/lc", "./tool"},
-		hint:    "the remote route does not follow -C; scripts/go.mod owns scripts, so run the command from that directory: (cd scripts && go build -o ../tmp/bin/lc ./tool)",
+		// The route follows a leading -C, so argv no longer has it and paths
+		// are read from workdir; the command is spelled for the caller in cwd.
+		name:    "paths read from the -C directory",
+		workdir: "other",
+		argv:    []string{"go", "build", "-o", "bin/lc", "../scripts/tool/main.go"},
+		hint:    "the named files are in scripts/go.mod, so run the command from that module: (cd scripts && go build -o ../other/bin/lc tool/main.go)",
 		modules: []string{"scripts/go.mod"},
 	}, {
 		name:    "packages in two modules",
@@ -101,14 +101,13 @@ func TestRemoteModuleHintNamesTheOwningModule(t *testing.T) {
 		argv: []string{"go", "build", "./native/app"},
 		hint: "the named packages are in native/go.mod, so run the command from that module: (cd native && go build ./app)",
 	}, {
-		name: "a pattern only compiles",
+		// The remote route runs every pattern build as a check and returns no
+		// binary, so the suggested command adds no -o.
+		name: "a pattern build stays a check",
 		argv: []string{"go", "build", "./scripts/..."},
 		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go build ./...)",
 	}, {
-		name: "go test -c keeps the test binary where Go wrote it",
-		argv: []string{"go", "test", "-c", "./scripts/tool"},
-		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go test -o ../ -c ./tool)",
-	}, {
+
 		name: "coverage and per-package patterns move, keywords and import paths stay",
 		argv: []string{"go", "test", "-coverpkg=./scripts/...,fmt", "-gcflags=./scripts/tool=-N -l", "-ldflags=all=-s", "./scripts/..."},
 		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go test -coverpkg=./...,fmt '-gcflags=./tool=-N -l' -ldflags=all=-s ./...)",
@@ -121,31 +120,29 @@ func TestRemoteModuleHintNamesTheOwningModule(t *testing.T) {
 	}, {
 		// The value of an unknown flag stays; go test reads its own flags after it.
 		name: "go test flags after a test binary flag value still move",
-		argv: []string{"go", "test", "./scripts/tool", "-update", "golden", "-coverprofile", "c.out"},
-		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go test ./tool -update golden -coverprofile ../c.out)",
+		argv: []string{"go", "test", "./scripts/tool", "-update", "golden", "-pkgdir", "tmp/pkg"},
+		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go test ./tool -update golden -pkgdir ../tmp/pkg)",
 	}, {
-		name: "an empty -outputdir is the working directory",
-		argv: []string{"go", "test", "-outputdir", "", "-cpuprofile", "cpu.out", "./scripts/tool"},
-		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go test -outputdir .. -cpuprofile cpu.out ./tool)",
+		// Only the flags go test passes to the test binary take a test. prefix.
+		name: "test. and double-dash spellings",
+		argv: []string{"go", "test", "-test.run=TestX", "--pkgdir", "tmp/pkg", "./scripts/tool"},
+		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go test -test.run=TestX --pkgdir ../tmp/pkg ./tool)",
 	}, {
-		name: "test. and double-dash spellings move",
-		argv: []string{"go", "test", "-test.coverprofile=c.out", "--pkgdir", "tmp/pkg", "./scripts/tool"},
-		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go test -test.coverprofile=../c.out --pkgdir ../tmp/pkg ./tool)",
-	}, {
-		name: "an inline empty -outputdir is the working directory",
-		argv: []string{"go", "test", "--outputdir=", "-test.cpuprofile=cpu.out", "./scripts/tool"},
-		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go test --outputdir=.. -test.cpuprofile=cpu.out ./tool)",
-	}, {
-		name: "one profile cannot be split across two modules",
-		argv: []string{"go", "test", "-coverprofile", "c.out", "./scripts/...", "./native/app"},
-		hint: "the named packages are in 2 modules (scripts/go.mod, native/go.mod); run a separate command in each module directory",
+		// zsh expands a word that starts with "=" to a command path.
+		name: "a value that starts with = is quoted",
+		argv: []string{"go", "test", "-run", "=X", "./scripts"},
+		hint: "the named packages are in scripts/go.mod, so run the command from that module: (cd scripts && go test -run '=X' .)",
 	}, {
 		name: "a split build could write a binary the one build does not",
 		argv: []string{"go", "build", "./scripts/tool", "./native/app"},
 		hint: "the named packages are in 2 modules (scripts/go.mod, native/go.mod); run a separate command in each module directory",
 	}} {
 		t.Run(tc.name, func(t *testing.T) {
-			hint, modules := remoteModuleHint(filepath.Join(root, tc.cwd), tc.argv)
+			cwd, workdir := filepath.Join(root, tc.cwd), filepath.Join(root, tc.cwd)
+			if tc.workdir != "" {
+				workdir = filepath.Join(root, tc.workdir)
+			}
+			hint, modules := remoteModuleHint(cwd, workdir, tc.argv)
 			if hint != tc.hint {
 				t.Fatalf("hint\n got %q\nwant %q", hint, tc.hint)
 			}
@@ -168,8 +165,8 @@ func TestRemoteModuleHintKeepsTheGenericRefusal(t *testing.T) {
 		{"go", "build", "-o", "x", "./scripts/missing"},
 		{"go", "build", "-o", "x", "./scripts/tool", "./tools"},
 		{"go", "build", "-o", "x", "--", "./scripts/tool"},
+		// A -C reaches the planner only when the route could not follow it.
 		{"go", "build", "-o", "x", "./scripts/tool", "-C", "scripts"}, // Go rejects a later -C
-		{"go", "build", "-C", "tools", "-o", "x", "."},                // -C outside any module
 		{"go", "build", "-C", "missing", "-o", "x", "."},
 		{"go", "build", "-C="},
 		{"go", "build", "-o"},
@@ -180,8 +177,18 @@ func TestRemoteModuleHintKeepsTheGenericRefusal(t *testing.T) {
 		{"go", "test", "-update", "./scripts/tool"},                 // the value of a test binary flag
 		{"go", "test", "-coverpkg=./native/...", "./scripts/..."},   // a pattern outside the module
 		{"go", "test", "-gcflags=./native/...=-N", "./scripts/..."}, // the same in a per-package flag
+		// The remote route refuses the go test outputs before the module
+		// check, so the planner never spells them.
+		{"go", "test", "-coverprofile", "c.out", "./scripts/tool"},
+		{"go", "test", "-c", "./scripts/tool"},
+		{"go", "test", "-o", "tool.test", "./scripts/tool"},
+		{"go", "build", "-buildmode=plugin", "./scripts/tool"},  // another default name
+		{"go", "build", "-o", "a", "-o", "b", "./scripts/tool"}, // Go keeps the last -o
+		{"go", "build", "-o=", "./scripts/tool"},                // an empty -o is no -o
+		{"go", "build", "-race=maybe", "./scripts/tool"},        // Go rejects the boolean
+		{"go", "build", "-tags", "a b", "./scripts/tool"},       // the deprecated tag list
 	} {
-		if hint, modules := remoteModuleHint(root, argv); hint != "" || modules != nil {
+		if hint, modules := remoteModuleHint(root, root, argv); hint != "" || modules != nil {
 			t.Errorf("%q: hint %q, modules %q; want the generic refusal", argv, hint, modules)
 		}
 	}
@@ -190,7 +197,7 @@ func TestRemoteModuleHintKeepsTheGenericRefusal(t *testing.T) {
 func TestRemoteModuleRefusalKeepsTheRefusalContract(t *testing.T) {
 	root := moduleHintTree(t)
 	dir := t.TempDir()
-	handled, code, err := rejectRemoteModule(dir, root, []string{"go", "build", "-o", "tmp/bin/tool", "scripts/tool/main.go"})
+	handled, code, err := rejectRemoteModule(dir, root, root, []string{"go", "build", "-o", "tmp/bin/tool", "scripts/tool/main.go"})
 	if !handled || code != workExitPolicyDenied || !IsWorkRefusal(err) {
 		t.Fatalf("handled=%v code=%d err=%v", handled, code, err)
 	}
@@ -212,7 +219,7 @@ func TestRemoteModuleRefusalKeepsTheRefusalContract(t *testing.T) {
 		t.Fatalf("control event = %s (%v)", events, err)
 	}
 
-	_, code, err = rejectRemoteModule(t.TempDir(), root, []string{"go", "test", "./..."})
+	_, code, err = rejectRemoteModule(t.TempDir(), root, root, []string{"go", "test", "./..."})
 	if code != workExitPolicyDenied || err == nil || !strings.Contains(err.Error(), "remote Go work blocked: remote Go work requires a module; "+remoteRunnerAdvice+"; local fallback is disabled") {
 		t.Fatalf("generic refusal changed: code=%d err=%v", code, err)
 	}
@@ -232,10 +239,110 @@ func TestTryRemoteWorkNamesTheNestedModule(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	t.Chdir(root)
-	options := WorkRunOptions{Class: WorkClassBuild, Command: []string{"go", "build", "-o", "tmp/bin/tool", "scripts/tool/main.go"}}
-	handled, code, err := TryRemoteWork(dir, options, WorkRunStreams{Stderr: &strings.Builder{}})
-	if !handled || code != workExitPolicyDenied || err == nil || !strings.Contains(err.Error(), "(cd scripts && go build -o ../tmp/bin/tool tool/main.go)") {
-		t.Fatalf("handled=%v code=%d err=%v", handled, code, err)
+	for _, tc := range []struct {
+		argv []string
+		want string
+	}{
+		{[]string{"go", "build", "-o", "tmp/bin/tool", "scripts/tool/main.go"}, "(cd scripts && go build -o ../tmp/bin/tool tool/main.go)"},
+		// The route follows a leading -C into the module-less directory,
+		// as Go does, and names the module from there.
+		{[]string{"go", "build", "-C", "other", "-o", "bin/lc", "../scripts/tool/main.go"}, "(cd scripts && go build -o ../other/bin/lc tool/main.go)"},
+	} {
+		options := WorkRunOptions{Class: WorkClassBuild, Command: tc.argv}
+		handled, code, err := TryRemoteWork(dir, options, WorkRunStreams{Stderr: &strings.Builder{}})
+		if !handled || code != workExitPolicyDenied || err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%q: handled=%v code=%d err=%v", tc.argv, handled, code, err)
+		}
+	}
+}
+
+// A file the route cannot return is refused with local-placement advice,
+// not the runner advice, before any upload.
+func TestTryRemoteWorkRefusesOutputsWithLocalAdvice(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("remote Go routing runs only on darwin")
+	}
+	root := moduleHintTree(t)
+	dir := t.TempDir()
+	if err := ConfigureRemoteWork(dir, true, "runner.example.test", "builder"); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"GOFLAGS", "GOEXPERIMENT", "CC", "CXX", "CGO_CFLAGS", "CGO_CPPFLAGS", "CGO_CXXFLAGS", "CGO_LDFLAGS", "CGO_ENABLED", "GOOS", "GOARCH"} {
+		t.Setenv(key, "")
+	}
+	t.Chdir(filepath.Join(root, "scripts"))
+	for _, tc := range []struct {
+		class WorkClass
+		argv  []string
+		want  string
+	}{
+		{WorkClassTest, []string{"go", "test", "-coverprofile", "c.out", "./..."}, "argument -coverprofile makes go test write a file that the remote route does not return"},
+		{WorkClassBuild, []string{"go", "build", "-buildmode=c-shared", "-o", "lib.so", "./tool"}, "argument -buildmode=c-shared also writes a C header that the remote route does not return"},
+	} {
+		handled, code, err := TryRemoteWork(dir, WorkRunOptions{Class: tc.class, Command: tc.argv}, WorkRunStreams{Stderr: &strings.Builder{}})
+		if !handled || code != workExitPolicyDenied || !IsWorkRefusal(err) {
+			t.Fatalf("%q: handled=%v code=%d err=%v", tc.argv, handled, code, err)
+		}
+		if text := err.Error(); !strings.Contains(text, tc.want+"; "+remoteLocalOutputAdvice+"; local fallback is disabled") || strings.Contains(text, remoteRunnerAdvice) {
+			t.Fatalf("%q: refusal %q", tc.argv, text)
+		}
+	}
+}
+
+// A followed -C gives a physical directory; through a symlinked $PWD the
+// hint still shows a path below the caller's directory.
+func TestShownDirReadsThroughASymlinkedWorkingDirectory(t *testing.T) {
+	physical := tempDirOutsideRepository(t)
+	link := filepath.Join(tempDirOutsideRepository(t), "link")
+	if err := os.Symlink(physical, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ dir, want string }{
+		{filepath.Join(physical, "scripts"), "scripts"},
+		{physical, "."},
+		{filepath.Join(link, "scripts"), "scripts"},
+		// Above the physical directory, a shell's cd .. could go elsewhere.
+		{filepath.Join(filepath.Dir(physical), "other"), filepath.Join(filepath.Dir(physical), "other")},
+	} {
+		if got := shownDir(link, tc.dir); got != tc.want {
+			t.Errorf("shownDir(%s, %s) = %q, want %q", link, tc.dir, got, tc.want)
+		}
+	}
+}
+
+// remoteWorkDirectory follows a -C the way cmd/go does: only as the first
+// flag, to the physical directory, and with the flag taken out of argv.
+func TestRemoteWorkDirectoryFollowsALeadingChdir(t *testing.T) {
+	root := moduleHintTree(t)
+	if err := os.Symlink(filepath.Join(root, "scripts"), filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	scripts := filepath.Join(root, "scripts")
+	for _, tc := range []struct {
+		argv    []string
+		workdir string
+		rest    []string
+	}{
+		{[]string{"go", "build", "-C", "scripts", "-o", "x", "./tool"}, scripts, []string{"go", "build", "-o", "x", "./tool"}},
+		{[]string{"go", "build", "--C=scripts", "./tool"}, scripts, []string{"go", "build", "./tool"}},
+		{[]string{"go", "test", "-C", scripts, "./...", "-args", "-C", "x"}, scripts, []string{"go", "test", "./...", "-args", "-C", "x"}},
+		{[]string{"go", "vet", "-C", "link", "./..."}, scripts, []string{"go", "vet", "./..."}},
+		// Go rejects these or fails to change directory; argv stays.
+		{[]string{"go", "build", "-o", "x", "-C", "scripts", "."}, root, nil},
+		{[]string{"go", "build", "-C", "scripts", "-C", "native", "."}, root, nil},
+		{[]string{"go", "build", "-C="}, root, nil},
+		{[]string{"go", "build", "-C", "missing", "."}, root, nil},
+		{[]string{"go", "build", "-C", "other/README", "."}, root, nil},
+		{[]string{"go", "build"}, root, nil},
+	} {
+		workdir, rest := remoteWorkDirectory(root, tc.argv)
+		want := tc.rest
+		if want == nil {
+			want = tc.argv
+		}
+		if workdir != tc.workdir || !reflect.DeepEqual(rest, want) {
+			t.Errorf("%q: workdir %q argv %q, want %q %q", tc.argv, workdir, rest, tc.workdir, want)
+		}
 	}
 }
 
@@ -251,6 +358,18 @@ func TestRemoteModuleHintNamesTheDefaultBinary(t *testing.T) {
 		"mod/files/b_ignored.go": "//go:build ignore\n\npackage main\n",
 		"mod/files/c_plain.go":   "package main\n",
 		"mod/files/d_last.go":    "package main\n",
+		// go build leaves out a file its constraints exclude and a file whose
+		// name starts with "_", so this package is a library.
+		"mod/lib/lib.go":      "package lib\n",
+		"mod/lib/gen.go":      "//go:build ignore\n\npackage main\n",
+		"mod/lib/_old.go":     "package main\n",
+		"mod/tagged/main.go":  "//go:build special\n\npackage main\n",
+		"mod/named/_skip.go":  "package main\n",
+		"mod/named/a_test.go": "package main\n",
+		"mod/named/doc.go":    "package documentation\n",
+		"mod/named/real.go":   "package main\n",
+		"-mod/go.mod":         "module example.test/dash\ngo 1.26\n",
+		"-mod/app/app.go":     "package app\n",
 	} {
 		full := filepath.Join(root, filepath.FromSlash(path))
 		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
@@ -269,8 +388,15 @@ func TestRemoteModuleHintNamesTheDefaultBinary(t *testing.T) {
 		{[]string{"go", "build", "./mod/v3"}, "(cd mod && go build -o ../v2 ./v3)"},       // cmd/go skips v3 too
 		{[]string{"go", "build", "mod/files/a_cgo.go", "mod/files/b_ignored.go", "mod/files/c_plain.go", "mod/files/d_last.go"},
 			"(cd mod && go build -o ../b_ignored files/a_cgo.go files/b_ignored.go files/c_plain.go files/d_last.go)"},
+		{[]string{"go", "build", "./mod/lib"}, "(cd mod && go build ./lib)"},
+		{[]string{"go", "build", "-tags", "special", "./mod/tagged"}, "(cd mod && go build -o ../tagged -tags special ./tagged)"},
+		{[]string{"go", "build", "--tags=x,special", "./mod/tagged"}, "(cd mod && go build -o ../tagged --tags=x,special ./tagged)"},
+		// Named files skip the _, test and documentation files, as cmd/go does.
+		{[]string{"go", "build", "mod/named/_skip.go", "mod/named/a_test.go", "mod/named/doc.go", "mod/named/real.go"},
+			"(cd mod && go build -o ../real named/_skip.go named/a_test.go named/doc.go named/real.go)"},
+		{[]string{"go", "vet", "./-mod/..."}, "(cd ./-mod && go vet ./...)"},
 	} {
-		hint, _ := remoteModuleHint(root, tc.argv)
+		hint, _ := remoteModuleHint(root, root, tc.argv)
 		if !strings.HasSuffix(hint, tc.want) {
 			t.Errorf("%q: hint %q, want it to end with %q", tc.argv, hint, tc.want)
 		}
@@ -279,8 +405,20 @@ func TestRemoteModuleHintNamesTheDefaultBinary(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "tool"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if hint, _ := remoteModuleHint(root, []string{"go", "build", "./mod/tool"}); hint != "" {
+	if hint, _ := remoteModuleHint(root, root, []string{"go", "build", "./mod/tool"}); hint != "" {
 		t.Errorf("hint %q over an existing directory, want the generic refusal", hint)
+	}
+	// Without its tag the package has no files, and Go fails.
+	if hint, _ := remoteModuleHint(root, root, []string{"go", "build", "./mod/tagged"}); hint != "" {
+		t.Errorf("hint %q for a package with no selected files, want the generic refusal", hint)
+	}
+	// GOFLAGS selects files too; the command line overrides it.
+	t.Setenv("GOFLAGS", "-tags=special")
+	if hint, _ := remoteModuleHint(root, root, []string{"go", "build", "./mod/tagged"}); !strings.HasSuffix(hint, "(cd mod && go build -o ../tagged ./tagged)") {
+		t.Errorf("hint %q with GOFLAGS tags, want the tagged binary", hint)
+	}
+	if hint, _ := remoteModuleHint(root, root, []string{"go", "build", "-tags=", "./mod/tagged"}); hint != "" {
+		t.Errorf("hint %q with the GOFLAGS tags cleared, want the generic refusal", hint)
 	}
 }
 
@@ -307,13 +445,13 @@ func TestRemoteModuleHintKeepsTheGenericRefusalThroughASymlink(t *testing.T) {
 	for _, argv := range [][]string{
 		{"go", "build", "-o", "tmp/bin/tool", "./link/tool"},
 		{"go", "build", "./link/tool"},
-		{"go", "test", "-coverprofile", "c.out", "./link/tool"},
+		{"go", "test", "-pkgdir", "tmp/pkg", "./link/tool"},
 	} {
-		if hint, modules := remoteModuleHint(root, argv); hint != "" || modules != nil {
+		if hint, modules := remoteModuleHint(root, root, argv); hint != "" || modules != nil {
 			t.Errorf("%q: hint %q, modules %q; want the generic refusal", argv, hint, modules)
 		}
 	}
-	hint, _ := remoteModuleHint(root, []string{"go", "vet", "./link/..."})
+	hint, _ := remoteModuleHint(root, root, []string{"go", "vet", "./link/..."})
 	if want := "the named packages are in link/go.mod, so run the command from that module: (cd link && go vet ./...)"; hint != want {
 		t.Fatalf("hint\n got %q\nwant %q", hint, want)
 	}
