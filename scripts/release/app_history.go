@@ -302,13 +302,18 @@ func (h *appHistory) archiveRoot() (string, error) {
 	return root, err
 }
 
+func (h *appHistory) clearArchiveRoot() error {
+	_, err := h.db.Exec(`DELETE FROM settings WHERE key='archive_root'`)
+	return err
+}
+
 func checkArchiveRoot(root, local string) error {
 	if !filepath.IsAbs(root) {
 		return errors.New("archive root must be absolute")
 	}
 	info, err := os.Lstat(root)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("archive root unavailable; mount the configured archive disk first")
+		return fmt.Errorf("archive root unavailable: %s (check the path, or run app-maintain --clear-archive-root)", root)
 	}
 	// A disconnected /Volumes disk must never become a directory on the Mac.
 	if strings.HasPrefix(root, "/Volumes/") {
@@ -427,9 +432,6 @@ func (h *appHistory) maintain(configuredRoot string) error {
 		}
 	}
 	sort.Slice(backups, func(i, j int) bool { return filepath.Base(backups[i]) > filepath.Base(backups[j]) })
-	if len(backups) > 1 && root == "" {
-		return errors.New("older rollbacks retained: configure app-maintain --archive-root before archival")
-	}
 	var moves []backupMove
 	for i, source := range backups {
 		identity, e := readAppIdentity(source)
@@ -440,7 +442,7 @@ func (h *appHistory) maintain(configuredRoot string) error {
 			return errors.New("rollback disappeared")
 		}
 		target := filepath.Join(h.dir, "rollbacks", filepath.Base(source))
-		if i > 0 {
+		if i > 0 && root != "" {
 			target = filepath.Join(root, filepath.Base(h.dir), "rollbacks", filepath.Base(source))
 		}
 		if source != target {
@@ -548,7 +550,7 @@ func (h *appHistory) maintain(configuredRoot string) error {
 	return nil
 }
 
-func maintainApp(destination, root string) error {
+func maintainApp(destination, root string, clearRoot bool) error {
 	h, err := openAppHistory(destination)
 	if err != nil {
 		return err
@@ -559,6 +561,11 @@ func maintainApp(destination, root string) error {
 		return err
 	}
 	defer unlock()
+	if clearRoot {
+		if err = h.clearArchiveRoot(); err != nil {
+			return err
+		}
+	}
 	if err = h.maintain(root); err != nil {
 		return err
 	}

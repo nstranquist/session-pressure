@@ -59,12 +59,16 @@ func run(args []string) error {
 	app := f.String("app", "", "signed .app source")
 	destination := f.String("destination", "/Applications/NDev Pressure.app", "app destination")
 	digestOnly := f.Bool("digest-only", false, "print only the app authority digest (app-status)")
-	archiveRoot := f.String("archive-root", "", "existing archive directory; saved for future app installs (app-maintain)")
+	archiveRoot := f.String("archive-root", "", "optional existing archive directory for older rollbacks; saved for future app installs (app-maintain)")
+	clearArchiveRoot := f.Bool("clear-archive-root", false, "clear a saved archive directory and keep rollbacks in local history (app-maintain)")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
 	if f.NArg() != 0 {
 		return errors.New("unexpected arguments")
+	}
+	if *clearArchiveRoot && *archiveRoot != "" {
+		return errors.New("cannot combine --archive-root and --clear-archive-root")
 	}
 	switch args[0] {
 	case "build":
@@ -74,7 +78,7 @@ func run(args []string) error {
 	case "install-app":
 		return installApp(*app, *destination, *expected, *allowRollback)
 	case "app-maintain":
-		return maintainApp(*destination, *archiveRoot)
+		return maintainApp(*destination, *archiveRoot, *clearArchiveRoot)
 	case "app-status":
 		identity, err := readAppIdentity(*app)
 		if err != nil {
@@ -603,10 +607,10 @@ func installApp(source, destination, expected string, allowRollback bool) error 
 		}
 		return e
 	}
-	// Installation has committed. Archive failure must not undo a working app:
-	// retain every extra local copy and expose a retryable maintenance warning.
+	// Installation has committed. Maintenance failure must not undo a working app:
+	// retain every local copy and expose the exact retryable maintenance warning.
 	if e = history.maintain(""); e != nil {
-		fmt.Fprintln(os.Stderr, "Installed app; backup maintenance pending. Mount the archive disk and run session-pressure-release app-maintain.")
+		fmt.Fprintf(os.Stderr, "Installed app; backup maintenance pending: %v (run session-pressure-release app-maintain).\n", e)
 	}
 	fmt.Println("Installed", destination, "rollback", backup)
 	return nil

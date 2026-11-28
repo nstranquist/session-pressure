@@ -122,16 +122,24 @@ An intentional rollback needs the actual current digest and `--allow-rollback`.
 Both native install targets capture the authority before their build. A signed
 older app alone is not authority to overwrite the current installation.
 
-Configure an existing external archive directory once with
-`session-pressure-release app-maintain --archive-root "/Volumes/X10 Pro/NDev Pressure app history"`.
-This imports legacy receipts without changing their bytes, archives older
-rollbacks and retains the newest one locally. It verifies every copy and a
-consistent external SQLite snapshot before removing originals. Subsequent app
-installs reuse this setting. If the disk is unavailable or verification fails,
-installation retains extra local copies and reports maintenance pending;
-mount the disk and run `session-pressure-release app-maintain` to retry.
-It never deletes external history. A legacy empty `.install.lock` beside the
-app is intentionally retained for older-installer coordination. See the
+By default, `install-app` and `session-pressure-release app-maintain` import
+legacy receipts without changing their bytes, move any legacy rollback bundles
+into `~/.nicos-dev/session-pressure/app-installs/<destination-sha256>/rollbacks`,
+verify and index every retained rollback in `history.sqlite`, and run
+`PRAGMA integrity_check` so host offsite backups (such as Backblaze B2) carry
+the verified history automatically without requiring an external archive disk.
+
+Optionally, configure a separate archive directory once with
+`session-pressure-release app-maintain --archive-root "/path/to/app-history"`
+to move older rollbacks there while keeping the newest one locally and writing
+a verified SQLite snapshot. Subsequent app installs reuse that setting until
+cleared with `session-pressure-release app-maintain --clear-archive-root`. If
+a configured archive directory is unavailable or verification fails,
+installation retains all local copies and reports the exact maintenance error
+so you can fix the path or clear the setting and rerun
+`session-pressure-release app-maintain`. It never deletes history on failure. A
+legacy empty `.install.lock` beside the app is intentionally retained for
+older-installer coordination. See the
 [migration decisions and proof](../../corpus/app-install-history.md).
 
 Run installed integration checks with `PRESSURE_CONTRACT_BIN` set to the

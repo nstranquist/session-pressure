@@ -129,7 +129,7 @@ func TestAppHistoryMigrationPreservesBytesAndOneLocalRollback(t *testing.T) {
 }
 
 func TestAppHistoryFailureNeverDeletesOriginals(t *testing.T) {
-	for _, kind := range []string{"corrupt-copy", "invalid-receipt", "offline-archive", "signature-failure", "conflicting-archive", "no-archive-config"} {
+	for _, kind := range []string{"corrupt-copy", "invalid-receipt", "offline-archive", "signature-failure", "conflicting-archive"} {
 		t.Run(kind, func(t *testing.T) {
 			h, root, backups, receipt, _ := historyFixture(t)
 			switch kind {
@@ -157,8 +157,6 @@ func TestAppHistoryFailureNeverDeletesOriginals(t *testing.T) {
 				if err := os.Rename(fixtureApp(t, "1.1.0", "3"), target); err != nil {
 					t.Fatal(err)
 				}
-			case "no-archive-config":
-				root = ""
 			}
 			if err := h.maintain(root); err == nil {
 				t.Fatal("unsafe maintenance accepted")
@@ -169,6 +167,44 @@ func TestAppHistoryFailureNeverDeletesOriginals(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAppHistoryMaintainsLocalRollbacksWithoutArchiveRoot(t *testing.T) {
+	h, root, backups, receipt, raw := historyFixture(t)
+	if err := h.maintain(""); err != nil {
+		t.Fatalf("local-only maintain failed: %v", err)
+	}
+	for _, path := range append(backups, receipt) {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("legacy source remains: %s: %v", path, err)
+		}
+	}
+	locals, err := os.ReadDir(filepath.Join(h.dir, "rollbacks"))
+	if err != nil || len(locals) != len(backups) {
+		t.Fatalf("expected all %d rollbacks retained locally, got %v (%v)", len(backups), locals, err)
+	}
+	var saved []byte
+	if err := h.db.QueryRow(`SELECT original_json FROM receipts`).Scan(&saved); err != nil || !bytes.Equal(saved, raw) {
+		t.Fatalf("receipt bytes lost: %v", err)
+	}
+	var count int
+	if err := h.db.QueryRow(`SELECT count(*) FROM backups`).Scan(&count); err != nil || count != len(backups) {
+		t.Fatalf("backup index count = %d (%v), want %d", count, err, len(backups))
+	}
+	// Configuring and then clearing an archive root returns cleanly to local-only maintenance.
+	if err := h.maintain(root); err != nil {
+		t.Fatalf("archive maintain failed: %v", err)
+	}
+	if err := h.clearArchiveRoot(); err != nil {
+		t.Fatalf("clearArchiveRoot failed: %v", err)
+	}
+	savedRoot, err := h.archiveRoot()
+	if err != nil || savedRoot != "" {
+		t.Fatalf("archiveRoot after clear = %q (%v), want empty", savedRoot, err)
+	}
+	if err := h.maintain(""); err != nil {
+		t.Fatalf("maintain after clearArchiveRoot failed: %v", err)
 	}
 }
 
