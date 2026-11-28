@@ -188,6 +188,58 @@ func remoteRunnerPrelude() string {
 		"umask 0022 && "
 }
 
+type remoteReplaceEdge struct {
+	parentDir string
+	directive *modfile.Replace
+}
+
+// remoteReplaceTargetError reports a local go.mod replace directive whose
+// target directory or go.mod is missing on disk. Go itself cannot build this
+// module tree either, so callers treat it as a command failure rather than a
+// retryable host refusal.
+type remoteReplaceTargetError struct {
+	goMod     string
+	oldPath   string
+	oldVer    string
+	newPath   string
+	targetDir string
+	problem   string
+}
+
+func (e *remoteReplaceTargetError) directive() string {
+	if e.oldVer != "" {
+		return fmt.Sprintf("replace %s %s => %s", e.oldPath, e.oldVer, e.newPath)
+	}
+	return fmt.Sprintf("replace %s => %s", e.oldPath, e.newPath)
+}
+
+func (e *remoteReplaceTargetError) Error() string {
+	return fmt.Sprintf("%s: %s: replacement directory %s %s", e.goMod, e.directive(), e.targetDir, e.problem)
+}
+
+func missingReplaceTargetError(start, parentDir string, r *modfile.Replace, targetDir string, readErr error) *remoteReplaceTargetError {
+	info, statErr := os.Stat(targetDir)
+	var problem string
+	switch {
+	case errors.Is(statErr, os.ErrNotExist):
+		problem = "does not exist"
+	case statErr == nil && !info.IsDir():
+		problem = "is not a directory"
+	case statErr == nil && errors.Is(readErr, os.ErrNotExist):
+		problem = "has no go.mod"
+	default:
+		return nil
+	}
+	return &remoteReplaceTargetError{
+		goMod:     shownGoMod(start, parentDir),
+		oldPath:   r.Old.Path,
+		oldVer:    r.Old.Version,
+		newPath:   r.New.Path,
+		targetDir: targetDir,
+		problem:   problem,
+	}
+}
+
 // remoteModuleClosure preserves relative replacement layout without copying
 // unrelated projects, ignored build caches or credentials to the runner.
 func remoteModuleClosure(start string) ([]string, string, error) {
@@ -204,8 +256,8 @@ func remoteModuleClosure(start string) ([]string, string, error) {
 	}
 	seen := map[string]bool{}
 	var modules []string
-	var visit func(string) error
-	visit = func(dir string) error {
+	var visit func(string, *remoteReplaceEdge) error
+	visit = func(dir string, from *remoteReplaceEdge) error {
 		dir = filepath.Clean(dir)
 		if seen[dir] {
 			return nil
@@ -216,6 +268,11 @@ func remoteModuleClosure(start string) ([]string, string, error) {
 		}
 		body, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 		if err != nil {
+			if from != nil {
+				if replaceErr := missingReplaceTargetError(start, from.parentDir, from.directive, dir, err); replaceErr != nil {
+					return replaceErr
+				}
+			}
 			return err
 		}
 		mod, err := modfile.Parse("go.mod", body, nil)
@@ -231,13 +288,13 @@ func remoteModuleClosure(start string) ([]string, string, error) {
 			if !filepath.IsAbs(target) {
 				target = filepath.Join(dir, target)
 			}
-			if err := visit(target); err != nil {
+			if err := visit(target, &remoteReplaceEdge{parentDir: dir, directive: r}); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	if err := visit(root); err != nil {
+	if err := visit(root, nil); err != nil {
 		return nil, "", err
 	}
 	common := root
@@ -535,6 +592,10 @@ func TryRemoteWork(dir string, options WorkRunOptions, streams WorkRunStreams) (
 	if errors.Is(err, errRemoteNoModule) {
 		return rejectRemoteModule(dir, cwd, options.Command)
 	}
+	var replaceErr *remoteReplaceTargetError
+	if errors.As(err, &replaceErr) {
+		return failRemoteReplaceTarget(dir, options.Command[1], replaceErr)
+	}
 	if err != nil {
 		return reject(err.Error())
 	}
@@ -744,6 +805,26 @@ const remoteRunnerAdvice = "use the Hetzner gate-runner with an explicit compile
 // admission after a profile or source rejection.
 func rejectRemoteWork(dir, operation, reason string) (bool, int, error) {
 	return refuseRemoteGo(dir, operation, reason, remoteRunnerAdvice, nil)
+}
+
+// failRemoteReplaceTarget reports a missing local go.mod replace target as a
+// plain command failure (exit 1) rather than a coordinator refusal. Go itself
+// fails on a missing replace target, and tagging it with WorkRefusalMarker or
+// "remote Go work blocked:" causes commit-delivery workers to hold and retry
+// it as a host environment fault instead of attributing the broken source.
+// Returning handled=true keeps the command out of local Mac admission.
+func failRemoteReplaceTarget(dir, operation string, err *remoteReplaceTargetError) (bool, int, error) {
+	recordControlEvent(dir, map[string]any{
+		"event":          "remote_work_failed",
+		"operation":      operation,
+		"reason":         err.Error(),
+		"go_mod":         err.goMod,
+		"replace_old":    err.oldPath,
+		"replace_new":    err.newPath,
+		"missing_target": err.targetDir,
+		"local_blocked":  true,
+	})
+	return true, 1, err
 }
 
 // refuseRemoteGo records the decline and returns the refusal. Callers match

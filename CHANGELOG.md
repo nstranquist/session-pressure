@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Remote Go: missing `go.mod` `replace` targets fail as command errors with
+  exact diagnostics.** When a local `replace` target directory or its `go.mod`
+  is missing (direct or transitive), remote Go preparation now names the
+  owning `go.mod`, the `replace` directive and the missing directory path,
+  exits with code 1 and omits the coordinator refusal marker and
+  `remote Go work blocked:` prefix so delivery workers attribute the source
+  error directly instead of holding it as a retryable environment fault. Local
+  fallback remains disabled. See `corpus/remote-replace-target-2026-11-27.md`.
 - **Remote Go: the "requires a module" refusal names the module to run
   from.** A direct `go build`, `go test` or `go vet` from a directory with no
   `go.mod` above it is still refused with the same exit code, marker and
