@@ -29,6 +29,17 @@ var goFlagsWithValue = map[string]bool{
 	"-mutexprofilefraction": true, "-json": false, "-vettool": true,
 }
 
+// goBoolFlags are the boolean go build and go test flags. With
+// goFlagsWithValue they are every flag go test knows; go test ends its
+// package list at any other flag (cmd/go testflag.go).
+var goBoolFlags = map[string]bool{
+	"-a": true, "-n": true, "-x": true, "-v": true, "-work": true, "-race": true,
+	"-msan": true, "-asan": true, "-cover": true, "-json": true, "-linkshared": true,
+	"-modcacherw": true, "-trimpath": true, "-buildvcs": true, "-c": true,
+	"-failfast": true, "-fullpath": true, "-short": true, "-benchmem": true,
+	"-artifacts": true,
+}
+
 // goFlagsNamingLocalFiles always reference a file the runner does not have
 // (or a local program), whatever the spelling of their value.
 var goFlagsNamingLocalFiles = map[string]bool{

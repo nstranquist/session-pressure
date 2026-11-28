@@ -584,25 +584,7 @@ func expressDeclaredArtifactPaths(command []string, cwdOverride string) ([]strin
 	if !ok {
 		return nil, false, errors.New("resolve express artifact workdir")
 	}
-	output := ""
-	compileTest := false
-	for index := 0; index < len(rest); index++ {
-		arg := rest[index]
-		if arg == "--" {
-			break
-		}
-		if arg == "-c" {
-			compileTest = true
-		}
-		if strings.HasPrefix(arg, "-o=") {
-			output = strings.TrimPrefix(arg, "-o=")
-			continue
-		}
-		if arg == "-o" && index+1 < len(rest) {
-			index++
-			output = rest[index]
-		}
-	}
+	output, _, compileTest := goOutputArg(rest)
 	if output == "" {
 		if verb == "test" && compileTest {
 			// go test -c writes <pkg>.test into the working directory under a
@@ -637,13 +619,8 @@ func expressWritesUndeclaredBinary(command []string, cwdOverride string) bool {
 	if !ok || verb != "build" {
 		return false
 	}
-	for index := 0; index < len(rest); index++ {
-		if rest[index] == "--" {
-			break
-		}
-		if rest[index] == "-o" || strings.HasPrefix(rest[index], "-o=") {
-			return false
-		}
+	if _, set, _ := goOutputArg(rest); set {
+		return false
 	}
 	workdir, ok := expressEffectiveWorkDir(rest, cwdOverride)
 	if !ok {
@@ -680,6 +657,39 @@ func expressBuildWritesBinary(rest []string, workdir string) (writesBinary, dete
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(workdir, dir)
 	}
+	return goPackageDirIsMain(dir)
+}
+
+// goOutputArg is the -o value of go build, test or vet arguments, in any
+// spelling cmd/go accepts (-o, --o, -o=, --o=), whether -o is given at all,
+// and whether -c is set. Values of other flags are skipped. The scan stops at
+// "--". It reads on after -args, where an -o or -c belongs to the test
+// binary: that only declares more outputs, so it can only narrow reuse.
+func goOutputArg(args []string) (output string, set, compileTest bool) {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			break
+		}
+		name, value, inline := goFlagName(args[i])
+		switch {
+		case name == "-o" && inline:
+			output, set = value, true
+		case name == "-o" && i+1 < len(args):
+			i++
+			output, set = args[i], true
+		case name == "-c":
+			compileTest = !inline || value != "false"
+		case goFlagsWithValue[name] && !inline:
+			i++
+		}
+	}
+	return output, set, compileTest
+}
+
+// goPackageDirIsMain reports whether the Go package in dir is a main package,
+// and whether that could be determined: dir must be readable and hold at
+// least one non-test .go file.
+func goPackageDirIsMain(dir string) (isMain, determined bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false, false

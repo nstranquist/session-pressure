@@ -29,6 +29,15 @@
   help. The express lane reads the one Go flag table, so the value of a flag
   such as `-shuffle on` is no longer counted as a package. See
   `corpus/remote-module-refusal-2026-11-27.md`.
+- **Remote Go: the suggested module command does what the original does.**
+  A `go build` with no `-o` gets `-o ../<name>`, so the binary lands where
+  the original build writes it, and `go test -c` gets `-o ../`. Relative
+  patterns in `-coverpkg` and `-gcflags`-style flags are rewritten, test
+  binary arguments after the `go test` package list stay as written, and a
+  symlink that would move an output gives the earlier text. A remote build
+  now accepts `--o` and `--o=` like `-o`. The express lane reads `--o`,
+  `--C`, `-test.coverprofile` and the other spellings of a Go flag the way
+  `cmd/go` does. See `corpus/remote-module-refusal-2026-11-27.md`.
 - **File lock: zombie owners and one reclaim rule with nicos-tools
   (WORK-1374).** An owner that exits inside the lock and is not yet reaped
   is a zombie; it no longer counts as live. Stale reclaim now also holds the

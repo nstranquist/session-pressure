@@ -75,6 +75,63 @@ and the table adds `-vet`, `-blockprofilerate`, `-memprofilerate` and
 `-shuffle on`, `-buildmode pie`, `-list X` or `--tags x` as a package, and
 `-list -bench ./pkg` as a benchmark run.
 
+## Review fixes (2026-11-28)
+
+An independent review checked the rewrite against `cmd/go` and found
+commands whose suggested form would not do what the original does. Each case
+below now gives an exact command or the earlier text:
+
+- Implicit output. `go build` of one main package with no `-o` writes the
+  binary into the working directory, under the name `cmd/go` gives it: the
+  last import path element, or the one before a major version element such
+  as `v2`; for a file list, the first file without cgo. The rewrite adds
+  `-o ../<name>`, so the binary lands in the same place. It names a file and
+  not the directory, because the remote route needs `-o` for a build and
+  places a directory output only where nothing exists yet. `go test -c`
+  writes `<package>.test` files, and the rewrite adds `-o ../`, which Go
+  reads as the same directory. A library package, several packages or a
+  pattern only compile, so no `-o` is added. When the default name is an
+  existing directory, Go refuses the build, and the hint gives the earlier
+  text. The main-package check is the one the express lane uses
+  (`goPackageDirIsMain`).
+- One output across modules. A profile flag now counts as an output like
+  `-o`, and so does a build with no `-o` (a split build could write a binary
+  that the one build does not). With packages in several modules, these
+  refusals name the modules only.
+- Patterns in flags. `-coverpkg` and the `pattern=` part of `-gcflags`,
+  `-ldflags`, `-asmflags` and `-gccgoflags` are read from the working
+  directory, so relative patterns are rewritten. Keywords such as `all` and
+  import paths stay. A relative pattern outside the module gives the
+  earlier text.
+- The `go test` package list. `go test` passes the positional arguments
+  after its package list to the test binary, and it ends the list at a flag
+  it does not know. Those arguments now stay as written, and a flag after
+  them still moves. `go build` and `go vet` read every argument after the
+  first package as a package, so a later flag gives the earlier text.
+- Symlinks. `go build -o` is resolved from the physical directory, and
+  `go test -o`, `-outputdir` and the profiles from `$PWD`. When a symlink
+  between the working directory and the module makes these differ, a command
+  with a moved path gives the earlier text.
+- Spellings. `goFlagName` reads flags the way `cmd/go` does: one or two
+  dashes and the optional `test.` prefix of a test flag. An empty
+  `-outputdir` is the working directory, so it moves too.
+
+The shared flag table also exposed a regression in the express lane. Since
+`goPackageTargets` read `--o`, `--C` and `-test.coverprofile` as flags, a
+command with one of them could count as one package while the output scan,
+the directory scan and the full-weight check matched only the single-dash
+spelling. A library build with `--o out.a` could then be replayed with no
+declared artifact. `goOutputArg`, `expressEffectiveWorkDir`,
+`goTestRequiresFullWeight` and `goTestRunsBenchmark` now read flag names
+through `goFlagName`, and `goBoolFlags` lists the boolean flags that
+`go test` knows.
+
+The remote build had the same gap. `normalizeRemoteBuildArgv` matched `-o`
+and `-o=` only, so a build spelled `--o` was refused with "requires -o", and
+a `-o` that was the value of another flag (`-ldflags -o`) was taken as the
+output. It now reads flag names through `goFlagName`, skips the values of
+other flags and stops at `--`.
+
 ## Decisions
 
 - Keep the refusal. Following `-C` or the file paths automatically was
@@ -98,3 +155,20 @@ and the table adds `-vet`, `-blockprofilerate`, `-memprofilerate` and
   `go.mod`, refused `go build -o tmp/bin/x scripts/<tool>/main.go` with exit
   11 and the new text. The suggested `(cd scripts && go build ...)` built the
   binary.
+- After the release promotion, the installed command gave the same refusal,
+  wrote no binary and logged `module_hint`.
+- Review fixes: new cases in `TestRemoteModuleHintNamesTheOwningModule` and
+  `TestRemoteModuleHintKeepsTheGenericRefusal`, plus
+  `TestRemoteModuleHintNamesTheDefaultBinary`,
+  `TestRemoteModuleHintKeepsTheGenericRefusalThroughASymlink` and
+  `TestExpressReadsEveryGoFlagSpelling`. `go test ./...` passes.
+- The default names were checked with the Go 1.27 toolchain: a package in
+  module `example.test/cmd/v2` builds as `cmd`, its `v3` directory as `v2`,
+  and a file list whose first file imports `C` and whose second has
+  `//go:build ignore` builds as the second file's name.
+- A development helper refused `go build ./scripts/<tool>` from a checkout
+  with no root `go.mod` and gave `(cd scripts && go build -o ../<tool>
+  ./<tool>)`. That command ran on the remote route and returned a darwin
+  arm64 binary to the checkout root, where the original build writes it. A
+  first version that added `-o ../` was refused by the remote route, which is
+  why the rewrite names the file.

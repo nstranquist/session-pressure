@@ -3,10 +3,17 @@ package sessionpressure
 import (
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+
+	"golang.org/x/mod/modfile"
 )
 
 // errRemoteNoModule is the module check's refusal: no go.mod is at or above
@@ -28,10 +35,13 @@ func rejectRemoteModule(dir, cwd string, argv []string) (bool, int, error) {
 }
 
 // remoteModuleHint says which go.mod owns the files or packages that argv
-// names, and how to run argv from there. It returns "" when no nested module
-// owns every named argument: an import path, a pattern over the module-less
-// directory, a path that does not exist, "--", or a -C directory outside any
-// module. modules are the go.mod paths as shown, in argument order.
+// names, and how to run argv from there so that it builds, tests and writes
+// the same things. It returns "" when no nested module owns every named
+// argument or the rewrite cannot be exact: an import path, a pattern over the
+// module-less directory, a path that does not exist, "--", a -C directory
+// outside any module, an argument Go itself would reject, or a symlink that
+// makes Go read a moved path differently. modules are the go.mod paths as
+// shown, in argument order.
 //
 // It does not run the command. Following -C or the file paths automatically
 // was considered and rejected: the refusal stays, and its text names the
@@ -65,31 +75,33 @@ func remoteModuleHint(cwd string, argv []string) (string, []string) {
 			return fmt.Sprintf("the remote route does not follow -C; %s owns %s, so run the command from that directory: %s", shown, chdir, command), []string{shown}
 		}
 	}
-	plan, ok := planModuleRewrite(cwd, args)
+	plan, ok := planModuleRewrite(cwd, argv[1], args)
 	if !ok || len(plan.modules) == 0 {
 		return "", nil
 	}
 	shown := make([]string, len(plan.modules))
-	commands := make([]string, len(plan.modules))
 	for i, module := range plan.modules {
 		shown[i] = shownGoMod(cwd, module)
+	}
+	kind := "packages"
+	if plan.filesOnly {
+		kind = "files"
+	}
+	list := strings.Join(shown, ", ")
+	if len(plan.modules) > 1 && plan.writes {
+		// One output, profile or binary cannot be split across several runs.
+		return fmt.Sprintf("the named %s are in %d modules (%s); run a separate command in each module directory", kind, len(shown), list), shown
+	}
+	commands := make([]string, len(plan.modules))
+	for i, module := range plan.modules {
 		rewritten, ok := plan.argsFor(cwd, module)
 		if !ok {
 			return "", nil
 		}
 		commands[i] = shellCommandIn(cwd, module, append(append([]string(nil), head...), rewritten...))
 	}
-	kind := "packages"
-	if plan.filesOnly {
-		kind = "files"
-	}
 	if len(plan.modules) == 1 {
 		return fmt.Sprintf("the named %s are in %s, so run the command from that module: %s", kind, shown[0], commands[0]), shown
-	}
-	list := strings.Join(shown, ", ")
-	if plan.output {
-		// One output path cannot be split across several builds.
-		return fmt.Sprintf("the named %s are in %d modules (%s); run a separate command in each module directory", kind, len(shown), list), shown
 	}
 	return fmt.Sprintf("the named %s are in %d modules (%s); run one command in each: %s", kind, len(shown), list, strings.Join(commands, " and ")), shown
 }
@@ -120,13 +132,20 @@ func leadingGoChdir(args []string) (chdir string, rest []string, ok bool) {
 	return chdir, rest, true
 }
 
-// goFlagName is a flag argument's single-dash name and inline value. name is
-// "" for a positional argument.
+// goFlagName is a flag argument's single-dash name and inline value, the way
+// cmd/go reads it: one or two leading dashes, and a test flag's optional
+// "test." prefix. name is "" for a positional argument and for "--". A flag
+// with three dashes keeps its spelling, so no table knows it (Go rejects it).
 func goFlagName(arg string) (name, value string, inline bool) {
-	if !strings.HasPrefix(arg, "-") || arg == "-" {
+	if !strings.HasPrefix(arg, "-") || arg == "-" || arg == "--" {
 		return "", "", false
 	}
-	return strings.Cut("-"+strings.TrimLeft(arg, "-"), "=")
+	body := strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-")
+	if strings.HasPrefix(body, "-") {
+		return arg, "", false
+	}
+	name, value, inline = strings.Cut(strings.TrimPrefix(body, "test."), "=")
+	return "-" + name, value, inline
 }
 
 // moduleRewrite is a module-less Go command split by the module that owns
@@ -135,20 +154,35 @@ type moduleRewrite struct {
 	tokens    []moduleToken
 	modules   []string // owning module directories, in argument order
 	filesOnly bool
-	output    bool // the command names an -o output
+	// writes is true when the command writes a named output, a profile or an
+	// implicit binary, which one command per module cannot reproduce.
+	writes bool
+	// implicitOutput is what Go writes into the working directory without
+	// -o, relative to it: the binary of one main package, or "./" for the
+	// <package>.test files of go test -c. The rewrite names it with -o.
+	implicitOutput string
 }
+
+type goArgKind int
+
+const (
+	goArgPlain      goArgKind = iota
+	goArgPath                 // a path relative to the working directory
+	goArgPatterns             // -coverpkg: comma-separated package patterns
+	goArgPerPackage           // -gcflags and the like: [pattern=]arguments
+)
 
 type moduleToken struct {
 	raw string
 	// value is a flag's value. separate is true when it is the next
-	// argument, not -flag=value. rebase is true for a path relative to the
-	// working directory, which must move with the directory.
-	value            string
-	separate, rebase bool
-	// A positional argument, the module that owns it and its spelling there.
-	// -args and the test binary arguments after it have neither and stay
-	// as written.
-	module, positional string
+	// argument, not -flag=value. kind says how it moves with the directory.
+	value    string
+	separate bool
+	kind     goArgKind
+	// A positional argument and its spelling in its module. -args, the test
+	// binary arguments and the go test arguments after the package list have
+	// no module and stay as written.
+	positional goPositional
 }
 
 // goPathFlags take a path relative to the working directory. Profile outputs
@@ -160,11 +194,33 @@ var goProfileFlags = map[string]bool{
 	"-blockprofile": true, "-mutexprofile": true, "-trace": true,
 }
 
-func planModuleRewrite(cwd string, args []string) (moduleRewrite, bool) {
+// goPerPackageFlags take "[pattern=]arguments", where a relative pattern is
+// read from the working directory (go help build).
+var goPerPackageFlags = map[string]bool{"-gcflags": true, "-ldflags": true, "-asmflags": true, "-gccgoflags": true}
+
+func goFlagKind(name string) goArgKind {
+	switch {
+	case goPathFlags[name] || goProfileFlags[name]:
+		return goArgPath
+	case name == "-coverpkg":
+		return goArgPatterns
+	case goPerPackageFlags[name]:
+		return goArgPerPackage
+	}
+	return goArgPlain
+}
+
+// planModuleRewrite reads args the way go build, go test or go vet (op) does.
+// go build and go vet read every argument after the first package as a
+// package, so a later flag makes the command fail as written. go test reads
+// one package list and passes the positional arguments after it to the test
+// binary (cmd/go testflag.go).
+func planModuleRewrite(cwd, op string, args []string) (moduleRewrite, bool) {
 	plan := moduleRewrite{filesOnly: true}
-	outputDir := false
+	explicitOutput, outputDir, compileTest := false, false, false
+	inList, listClosed, afterUnknownFlag := false, false, false
 	seen := map[string]bool{}
-	positionals := 0
+	var positionals []goPositional
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "-args" || arg == "--args" {
@@ -177,7 +233,15 @@ func planModuleRewrite(cwd string, args []string) (moduleRewrite, bool) {
 			return plan, false
 		}
 		if name, value, inline := goFlagName(arg); name != "" {
-			token := moduleToken{raw: arg, value: value}
+			if len(positionals) > 0 && op != "test" {
+				return plan, false
+			}
+			known := goFlagsWithValue[name] || goBoolFlags[name]
+			if op == "test" && (inList || !known) {
+				inList, listClosed = false, true
+			}
+			afterUnknownFlag = !known && !inline
+			token := moduleToken{raw: arg, value: value, kind: goFlagKind(name)}
 			switch {
 			case inline:
 			case goFlagsWithValue[name] && i+1 < len(args):
@@ -186,59 +250,212 @@ func planModuleRewrite(cwd string, args []string) (moduleRewrite, bool) {
 			case goFlagsWithValue[name]:
 				return plan, false
 			}
-			token.rebase = goPathFlags[name] || goProfileFlags[name]
-			plan.output = plan.output || name == "-o"
+			if name == "-outputdir" && token.value == "" {
+				token.value = "." // the working directory, which moves
+			}
+			explicitOutput = explicitOutput || name == "-o"
 			outputDir = outputDir || name == "-outputdir"
+			plan.writes = plan.writes || name == "-o" || goProfileFlags[name]
+			compileTest = compileTest || (name == "-c" && (!inline || value != "false"))
 			plan.tokens = append(plan.tokens, token)
 			continue
 		}
-		module, rewritten, file, ok := modulePositional(cwd, arg)
+		if listClosed {
+			// A test binary argument: the value of the unknown flag before
+			// it, after which go test goes on reading its own flags, or the
+			// first of the arguments it passes on as written.
+			if afterUnknownFlag {
+				afterUnknownFlag = false
+				plan.tokens = append(plan.tokens, moduleToken{raw: arg})
+				continue
+			}
+			for _, rest := range args[i:] {
+				plan.tokens = append(plan.tokens, moduleToken{raw: rest})
+			}
+			break
+		}
+		inList = true
+		positional, ok := modulePositional(cwd, arg)
 		if !ok {
 			return plan, false
 		}
-		positionals++
-		plan.filesOnly = plan.filesOnly && file
-		if !seen[module] {
-			seen[module] = true
-			plan.modules = append(plan.modules, module)
+		positionals = append(positionals, positional)
+		plan.filesOnly = plan.filesOnly && positional.file
+		if !seen[positional.module] {
+			seen[positional.module] = true
+			plan.modules = append(plan.modules, positional.module)
 		}
-		plan.tokens = append(plan.tokens, moduleToken{raw: arg, module: module, positional: rewritten})
+		plan.tokens = append(plan.tokens, moduleToken{raw: arg, positional: positional})
 	}
-	if positionals == 0 {
+	if len(positionals) == 0 {
 		return plan, false
 	}
 	if outputDir {
 		// Profile outputs are then relative to -outputdir, which moves.
 		for i := range plan.tokens {
 			if name, _, _ := goFlagName(plan.tokens[i].raw); goProfileFlags[name] {
-				plan.tokens[i].rebase = false
+				plan.tokens[i].kind = goArgPlain
 			}
 		}
+	}
+	switch {
+	case explicitOutput:
+	case op == "test" && compileTest:
+		// go test -c writes <package>.test files into the working directory;
+		// -o with a directory writes the same names there.
+		plan.implicitOutput, plan.writes = "./", true
+	case op == "build" && len(plan.modules) > 1:
+		// A module with a single main package would write a binary that
+		// the one build of every package does not.
+		plan.writes = true
+	case op == "build":
+		name, determined := buildExecutable(positionals, plan.filesOnly)
+		if !determined || (name != "" && isDir(filepath.Join(cwd, name))) {
+			// Go refuses a default output that is an existing directory.
+			return plan, false
+		}
+		// A file, not the directory: the remote route places a directory
+		// output only where nothing exists yet.
+		plan.implicitOutput, plan.writes = name, name != ""
 	}
 	return plan, true
 }
 
-// argsFor rebuilds the arguments for a run from module: its own positionals
-// rebased, path flags rebased, other flags and the test tail as written.
-func (plan moduleRewrite) argsFor(cwd, module string) ([]string, bool) {
-	var out []string
-	for _, token := range plan.tokens {
-		if token.module != "" {
-			if token.module == module {
-				out = append(out, token.positional)
+// buildExecutable is the binary go build writes into the working directory
+// with no -o, or "" when it writes none: it writes one for one main package,
+// named as files or as one directory. Several packages or a pattern only
+// compile, and a remote build with no -o returns no binary either, so a
+// pattern stays a check.
+func buildExecutable(positionals []goPositional, filesOnly bool) (name string, determined bool) {
+	if filesOnly {
+		clause, ok := readGoPackageClause(positionals[0].path)
+		if !ok {
+			return "", false
+		}
+		if clause != "main" {
+			return "", true
+		}
+		name := goFilesExecutableName(positionals)
+		return name, name != ""
+	}
+	if len(positionals) != 1 || positionals[0].pattern {
+		return "", true
+	}
+	main, ok := goPackageDirIsMain(positionals[0].path)
+	if !ok {
+		return "", false
+	}
+	if !main {
+		return "", true
+	}
+	name = goPackageExecutableName(positionals[0])
+	return name, name != ""
+}
+
+// goFilesExecutableName is cmd/go's name for the binary of a file list: the
+// first file without cgo, else the first file. Named files are built whatever
+// their build constraints say, so the constraints do not change the name.
+func goFilesExecutableName(files []goPositional) string {
+	cgo := ""
+	for _, file := range files {
+		base := filepath.Base(file.path)
+		parsed, err := parser.ParseFile(token.NewFileSet(), file.path, nil, parser.ImportsOnly)
+		if err != nil {
+			return ""
+		}
+		if goFileImportsC(parsed.Imports) {
+			if cgo == "" {
+				cgo = base
 			}
 			continue
 		}
-		value := token.value
-		if token.rebase && value != "" && value != "-" && !filepath.IsAbs(value) {
-			moved, err := filepath.Rel(module, filepath.Join(cwd, value))
-			if err != nil {
-				return nil, false
+		return strings.TrimSuffix(base, ".go")
+	}
+	return strings.TrimSuffix(cgo, ".go")
+}
+
+func goFileImportsC(imports []*ast.ImportSpec) bool {
+	for _, spec := range imports {
+		if value, err := strconv.Unquote(spec.Path.Value); err == nil && value == "C" {
+			return true
+		}
+	}
+	return false
+}
+
+// goPackageExecutableName is cmd/go's name for the binary of a package: the
+// last element of its import path, or the one before a major version
+// element such as v2.
+func goPackageExecutableName(positional goPositional) string {
+	data, err := os.ReadFile(filepath.Join(positional.module, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	importPath := modfile.ModulePath(data)
+	rel, err := filepath.Rel(positional.module, positional.path)
+	if importPath == "" || err != nil {
+		return ""
+	}
+	if rel != "." {
+		importPath += "/" + filepath.ToSlash(rel)
+	}
+	elem := pathpkg.Base(importPath)
+	if elem != importPath && isGoVersionElement(elem) {
+		elem = pathpkg.Base(pathpkg.Dir(importPath))
+	}
+	return elem
+}
+
+// isGoVersionElement is cmd/go's test for a major version path element.
+func isGoVersionElement(s string) bool {
+	if len(s) < 2 || s[0] != 'v' || s[1] == '0' || s[1] == '1' && len(s) == 2 {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i] < '0' || '9' < s[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// argsFor rebuilds the arguments for a run from module: its own positionals
+// rebased, path flags and relative patterns rebased, other flags and the
+// test binary arguments as written.
+func (plan moduleRewrite) argsFor(cwd, module string) ([]string, bool) {
+	// go build resolves -o from the physical working directory, go test
+	// resolves its paths from $PWD. With a symlink between cwd and the module
+	// the two disagree, so no single rewrite is exact.
+	moves := plan.implicitOutput != ""
+	var out []string
+	if moves {
+		output, ok := rebaseGoPath(cwd, module, plan.implicitOutput)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, "-o", output)
+	}
+	for _, token := range plan.tokens {
+		if token.positional.module != "" {
+			if token.positional.module == module {
+				out = append(out, token.positional.rewritten)
 			}
-			value = filepath.ToSlash(moved)
-			if strings.HasSuffix(token.value, "/") {
-				value += "/"
+			continue
+		}
+		value, ok := token.value, true
+		switch token.kind {
+		case goArgPath:
+			if value != "" && value != "-" && !filepath.IsAbs(value) {
+				value, ok = rebaseGoPath(cwd, module, value)
+				moves = true
 			}
+		case goArgPatterns:
+			value, ok = rebaseGoPatternList(cwd, module, value)
+		case goArgPerPackage:
+			value, ok = rebaseGoPerPackageFlag(cwd, module, value)
+		}
+		if !ok {
+			return nil, false
 		}
 		switch {
 		case token.separate:
@@ -249,74 +466,181 @@ func (plan moduleRewrite) argsFor(cwd, module string) ([]string, bool) {
 			out = append(out, token.raw)
 		}
 	}
+	if moves && !sameRelativePath(cwd, module) {
+		return nil, false
+	}
 	return out, true
+}
+
+// rebaseGoPath is value, relative to cwd, spelled relative to module. A
+// trailing slash (an output directory) stays.
+func rebaseGoPath(cwd, module, value string) (string, bool) {
+	moved, err := filepath.Rel(module, filepath.Join(cwd, value))
+	if err != nil {
+		return "", false
+	}
+	moved = filepath.ToSlash(moved)
+	if strings.HasSuffix(value, "/") {
+		moved += "/"
+	}
+	return moved, true
+}
+
+// rebaseGoPatternList rebases each relative pattern of a comma-separated list.
+func rebaseGoPatternList(cwd, module, value string) (string, bool) {
+	patterns := strings.Split(value, ",")
+	for i, pattern := range patterns {
+		moved, ok := rebaseGoPattern(cwd, module, pattern)
+		if !ok {
+			return "", false
+		}
+		patterns[i] = moved
+	}
+	return strings.Join(patterns, ","), true
+}
+
+// rebaseGoPerPackageFlag rebases the pattern of "[pattern=]arguments". As in
+// cmd/go, a value that starts with "-" has no pattern.
+func rebaseGoPerPackageFlag(cwd, module, value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || trimmed[0] == '-' {
+		return value, true
+	}
+	pattern, arguments, found := strings.Cut(trimmed, "=")
+	if !found {
+		return value, true // Go rejects it as written
+	}
+	moved, ok := rebaseGoPattern(cwd, module, pattern)
+	if !ok {
+		return "", false
+	}
+	if moved == pattern {
+		return value, true
+	}
+	return moved + "=" + arguments, true
+}
+
+// rebaseGoPattern spells a relative package pattern from module. Import
+// paths and keywords (all, std) stay. A relative pattern outside module, or
+// with "..." anywhere but at its end, has no exact rewrite.
+func rebaseGoPattern(cwd, module, pattern string) (string, bool) {
+	dir, suffix := pattern, ""
+	if strings.HasSuffix(dir, "/...") {
+		dir, suffix = strings.TrimSuffix(dir, "/..."), "/..."
+	}
+	if !isRelativeGoPath(dir) {
+		return pattern, true
+	}
+	if strings.Contains(dir, "...") {
+		return "", false
+	}
+	rel, err := filepath.Rel(module, filepath.Join(cwd, dir))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", false
+	}
+	moved := "."
+	if rel != "." {
+		moved = "./" + filepath.ToSlash(rel)
+	}
+	return moved + suffix, true // "." becomes "./..."
+}
+
+func isRelativeGoPath(path string) bool {
+	return path == "." || path == ".." || strings.HasPrefix(path, "./") || strings.HasPrefix(path, "../")
+}
+
+// sameRelativePath is true when module is reached from cwd by the same
+// relative path with and without symlinks resolved.
+func sameRelativePath(cwd, module string) bool {
+	lexical, err := filepath.Rel(cwd, module)
+	if err != nil {
+		return false
+	}
+	physicalCwd, errCwd := filepath.EvalSymlinks(cwd)
+	physicalModule, errModule := filepath.EvalSymlinks(module)
+	if errCwd != nil || errModule != nil {
+		return false
+	}
+	physical, err := filepath.Rel(physicalCwd, physicalModule)
+	return err == nil && physical == lexical
+}
+
+// goPositional is a .go file or a relative package path resolved to the
+// module that owns it.
+type goPositional struct {
+	module    string // the module directory
+	rewritten string // the argument spelled from module
+	path      string // the file or package directory
+	file      bool
+	pattern   bool // a /... pattern
 }
 
 // modulePositional resolves a .go file or a relative package path (with an
 // optional /... pattern) to its owning module and its spelling from there.
 // Import paths and missing paths have no owner.
-func modulePositional(cwd, arg string) (module, rewritten string, file, ok bool) {
+func modulePositional(cwd, arg string) (goPositional, bool) {
 	if strings.HasSuffix(arg, ".go") {
 		path := arg
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(cwd, path)
 		}
 		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
-			return "", "", false, false
+			return goPositional{}, false
 		}
-		module = enclosingGoModule(filepath.Dir(path))
+		module := enclosingGoModule(filepath.Dir(path))
 		if module == "" {
-			return "", "", false, false
+			return goPositional{}, false
 		}
-		if filepath.IsAbs(arg) {
-			return module, arg, true, true
+		rewritten := arg
+		if !filepath.IsAbs(arg) {
+			rel, err := filepath.Rel(module, path)
+			if err != nil {
+				return goPositional{}, false
+			}
+			rewritten = filepath.ToSlash(rel)
 		}
-		rel, err := filepath.Rel(module, path)
-		if err != nil {
-			return "", "", false, false
-		}
-		return module, filepath.ToSlash(rel), true, true
+		return goPositional{module: module, rewritten: rewritten, path: path, file: true}, true
 	}
 	dir, pattern := arg, false
 	if strings.Contains(dir, "...") {
 		if !strings.HasSuffix(dir, "/...") {
-			return "", "", false, false
+			return goPositional{}, false
 		}
 		dir, pattern = strings.TrimSuffix(dir, "/..."), true
 		if strings.Contains(dir, "...") {
-			return "", "", false, false
+			return goPositional{}, false
 		}
 	}
-	relative := dir == "." || dir == ".." || strings.HasPrefix(dir, "./") || strings.HasPrefix(dir, "../")
-	if !relative && !filepath.IsAbs(dir) {
-		return "", "", false, false // an import path names no directory here
+	if !isRelativeGoPath(dir) && !filepath.IsAbs(dir) {
+		return goPositional{}, false // an import path names no directory here
 	}
 	path := dir
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(cwd, path)
 	}
 	if !isDir(path) {
-		return "", "", false, false
+		return goPositional{}, false
 	}
-	module = enclosingGoModule(path)
+	module := enclosingGoModule(path)
 	if module == "" {
-		return "", "", false, false
+		return goPositional{}, false
 	}
+	positional := goPositional{module: module, rewritten: arg, path: path, pattern: pattern}
 	if filepath.IsAbs(dir) {
-		return module, arg, false, true
+		return positional, true
 	}
 	rel, err := filepath.Rel(module, path)
 	if err != nil {
-		return "", "", false, false
+		return goPositional{}, false
 	}
-	rewritten = "."
+	positional.rewritten = "."
 	if rel != "." {
-		rewritten = "./" + filepath.ToSlash(rel)
+		positional.rewritten = "./" + filepath.ToSlash(rel)
 	}
 	if pattern {
-		rewritten += "/..." // "." becomes "./..."
+		positional.rewritten += "/..." // "." becomes "./..."
 	}
-	return module, rewritten, false, true
+	return positional, true
 }
 
 // enclosingGoModule is the nearest directory at or above dir with a go.mod.

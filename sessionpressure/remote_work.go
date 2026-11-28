@@ -144,22 +144,26 @@ func normalizeRemoteBuildArgv(argv []string) ([]string, string, error) {
 	if len(out) < 2 || out[1] != "build" {
 		return out, "", nil
 	}
-	for i := 2; i < len(out); i++ {
-		if out[i] == "-o" && i+1 < len(out) {
-			output := out[i+1]
-			out[i+1] = "/srv/build/candidates/OUTPUT"
-			if remoteBuildDirectory(output) {
-				out[i+1] += "/"
-			}
-			return out, output, nil
+	remoteOutput := func(output string) string {
+		if remoteBuildDirectory(output) {
+			return "/srv/build/candidates/OUTPUT/"
 		}
-		if strings.HasPrefix(out[i], "-o=") {
-			output := strings.TrimPrefix(out[i], "-o=")
-			out[i] = "-o=/srv/build/candidates/OUTPUT"
-			if remoteBuildDirectory(output) {
-				out[i] += "/"
-			}
+		return "/srv/build/candidates/OUTPUT"
+	}
+	// goFlagName reads -o in every spelling go build accepts (-o, --o,
+	// -o=, --o=). The value of another flag is never read as -o.
+	for i := 2; i < len(out) && out[i] != "--"; i++ {
+		name, value, inline := goFlagName(out[i])
+		switch {
+		case name == "-o" && inline:
+			out[i] = out[i][:strings.IndexByte(out[i], '=')+1] + remoteOutput(value)
+			return out, value, nil
+		case name == "-o" && i+1 < len(out):
+			output := out[i+1]
+			out[i+1] = remoteOutput(output)
 			return out, output, nil
+		case name != "" && !inline && goFlagsWithValue[name]:
+			i++
 		}
 	}
 	for _, arg := range out[2:] {

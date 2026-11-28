@@ -463,16 +463,13 @@ func goTestRunsBenchmark(args []string) bool {
 		if arg == "-args" || arg == "--" {
 			break
 		}
-		if arg == "-bench" {
+		name, value, inline := goFlagName(arg)
+		switch {
+		case name == "-bench" && inline:
+			return value != ""
+		case name == "-bench":
 			return i+1 < len(args) && args[i+1] != ""
-		}
-		if strings.HasPrefix(arg, "-bench=") {
-			return strings.TrimPrefix(arg, "-bench=") != ""
-		}
-		if strings.Contains(arg, "=") {
-			continue
-		}
-		if name, _, _ := goFlagName(arg); goFlagsWithValue[name] {
+		case goFlagsWithValue[name] && !inline:
 			i++
 		}
 	}
@@ -528,8 +525,9 @@ func goTestRequiresFullWeight(args []string) bool {
 		"-mutexprofile": {}, "-trace": {},
 	}
 	for _, arg := range args {
-		flag := strings.SplitN(arg, "=", 2)[0]
-		if _, expensive := fullWeightFlags[flag]; expensive {
+		// Every spelling cmd/go reads: -flag, --flag, -test.flag, =value.
+		name, _, _ := goFlagName(arg)
+		if _, expensive := fullWeightFlags[name]; expensive {
 			return true
 		}
 	}
@@ -1322,16 +1320,17 @@ func expressEffectiveWorkDir(args []string, cwdOverride string) (string, bool) {
 		if arg == "--" {
 			break
 		}
-		if arg == "-C" {
-			if i+1 < len(args) {
-				chdir = args[i+1]
-				i++
-			}
-			continue
-		}
-		if strings.HasPrefix(arg, "-C=") {
-			chdir = strings.TrimPrefix(arg, "-C=")
-			continue
+		// -C, --C, -C= and --C= all set the directory (goPackageTargets reads
+		// the same spellings, so a target is never scoped to the wrong root).
+		name, value, inline := goFlagName(arg)
+		switch {
+		case name == "-C" && inline:
+			chdir = value
+		case name == "-C" && i+1 < len(args):
+			chdir = args[i+1]
+			i++
+		case goFlagsWithValue[name] && !inline:
+			i++
 		}
 	}
 	base := strings.TrimSpace(cwdOverride)
