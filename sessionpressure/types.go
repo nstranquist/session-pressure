@@ -422,11 +422,19 @@ func AdmissionForSnapshot(snapshot Snapshot, policy Policy, source string) Admis
 		Allowed: allowed, Level: snapshot.Level, Source: source, Dimension: dimension,
 		Reasons: snapshot.Reasons, Snapshot: &snapshot, Controller: &controller,
 	}
-	if policy.EnforceAdmission && controller.BlockWork && !admission.Level.AtLeast(policy.BlockNewAt) {
-		admission.Allowed = false
-		admission.Level = maxLevel(admission.Level, LevelRed)
-		admission.Dimension = controller.Dimension
-		admission.Reasons = append(admission.Reasons, controller.Reasons...)
+	if policy.EnforceAdmission && controller.BlockWork {
+		if !admission.Level.AtLeast(policy.BlockNewAt) {
+			admission.Allowed = false
+			admission.Level = maxLevel(admission.Level, LevelRed)
+			admission.Dimension = controller.Dimension
+			admission.Reasons = append(admission.Reasons, controller.Reasons...)
+		} else if controller.Dimension != "" && admission.Dimension == "cpu" && controller.Dimension != "cpu" {
+			// A survival block (for example thermal serious/critical) must never
+			// be masked under "cpu" when host CPU is also saturated.
+			admission.Allowed = false
+			admission.Dimension = controller.Dimension
+			admission.Reasons = append(admission.Reasons, controller.Reasons...)
+		}
 	}
 	if !snapshot.HostCPUAvailable && strings.TrimSpace(snapshot.HostCPUError) != "" {
 		// Memory and swap evidence remain enforceable, but a partial CPU probe
@@ -450,8 +458,9 @@ func swapOnlyWarning(snapshot Snapshot, policy Policy) bool {
 	return snapshot.SwapThrashLatched || (warning > 0 && snapshot.SwapOutMBPerSecond >= warning)
 }
 
-// AdmissionForWorkSnapshot keeps transient CPU-red evidence advisory for
-// heavy work. Memory and thermal safety floors still fail closed immediately.
+// AdmissionForWorkSnapshot keeps CPU-only red evidence non-blocking for
+// heavy work (soft-throttled via Controller.ThrottleWork). Memory and thermal
+// safety floors still fail closed immediately via Controller.BlockWork.
 func AdmissionForWorkSnapshot(snapshot Snapshot, policy Policy, source string) Admission {
 	admission := AdmissionForSnapshot(snapshot, policy, source)
 	if !policy.EnforceAdmission || admission.Allowed || admission.Snapshot == nil || !admission.Level.AtLeast(policy.BlockNewAt) || admission.Dimension != "cpu" {

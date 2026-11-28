@@ -16,12 +16,19 @@ const (
 )
 
 type ControllerDecision struct {
-	Mode             ControllerMode `json:"mode"`
-	CPUStress        bool           `json:"cpu_stress"`
-	ThermalState     ThermalState   `json:"thermal_state"`
-	LowPowerMode     bool           `json:"low_power_mode"`
-	BlockWork        bool           `json:"block_work"`
-	BlockAgentLaunch bool           `json:"block_agent_launch"`
+	Mode         ControllerMode `json:"mode"`
+	CPUStress    bool           `json:"cpu_stress"`
+	ThermalState ThermalState   `json:"thermal_state"`
+	LowPowerMode bool           `json:"low_power_mode"`
+	// BlockWork is true ONLY for hard freeze/OOM/kernel-failure survival risks
+	// (memory red/critical or thermal serious/critical). Pure CPU saturation
+	// never sets BlockWork.
+	BlockWork bool `json:"block_work"`
+	// ThrottleWork is the non-blocking soft-throttle signal for callers to cap
+	// parallel local concurrency or apply background QoS under sustained CPU
+	// saturation or non-external swap thrash without aborting or blocking work.
+	ThrottleWork     bool `json:"throttle_work,omitempty"`
+	BlockAgentLaunch bool `json:"block_agent_launch"`
 	// SwapThrash mirrors the resident latch. It never sets BlockWork or
 	// BlockAgentLaunch; the work gate derates heavy-work concurrency instead.
 	SwapThrash bool `json:"swap_thrash,omitempty"`
@@ -33,10 +40,11 @@ type ControllerDecision struct {
 }
 
 // ClassifyController applies the safety floors without changing the legacy
-// pressure ladder. In particular, a busy CPU warning is not a block. CPU
-// stress requires current red evidence plus either resident rolling red
-// evidence or a sustained monitor confirmation; this filters one-sample spikes
-// and stale/unavailable attribution.
+// pressure ladder. Hard work blocking (BlockWork) is reserved exclusively for
+// real survival risks (memory red/critical or thermal serious/critical).
+// Corroborated CPU saturation sets CPUStress and ThrottleWork (non-blocking)
+// with Mode=ControllerModeStressed for clear telemetry/UI visibility without
+// setting BlockWork=true when memory and thermal are healthy.
 func ClassifyController(snapshot Snapshot, policy Policy) ControllerDecision {
 	// Accept both a raw fixture and an already evaluated resident snapshot. The
 	// evaluation is pure and makes the controller useful as a public seam while
@@ -55,12 +63,15 @@ func ClassifyController(snapshot Snapshot, policy Policy) ControllerDecision {
 		thermal = ThermalStateUnknown
 	}
 	memory := EvaluateMemoryPressure(snapshot, policy)
+	swapThrash := snapshot.SwapIOAvailable && snapshot.SwapThrashLatched
+	nonExternalSwapThrash := swapThrash && snapshot.SwapThrashCause != SwapThrashCauseExternal
 	decision := ControllerDecision{
 		Mode:         ControllerModeNormal,
 		CPUStress:    cpuStress,
 		ThermalState: thermal,
 		LowPowerMode: snapshot.LowPowerMode,
-		SwapThrash:   snapshot.SwapIOAvailable && snapshot.SwapThrashLatched,
+		ThrottleWork: cpuStress || nonExternalSwapThrash,
+		SwapThrash:   swapThrash,
 	}
 	if decision.SwapThrash {
 		decision.SwapThrashCause = snapshot.SwapThrashCause
@@ -87,16 +98,17 @@ func ClassifyController(snapshot Snapshot, policy Policy) ControllerDecision {
 		decision.Reasons = append(decision.Reasons, memory.Reasons...)
 		return decision
 	}
-	if cpuStress || thermal == ThermalStateSerious {
+	if thermal == ThermalStateSerious {
 		decision.Mode = ControllerModeStressed
 		decision.BlockWork = true
-		if cpuStress {
-			decision.Dimension = "cpu"
-			decision.Reasons = append(decision.Reasons, fmt.Sprintf("host CPU remains at or above red with corroborated evidence (%.1f%%)", snapshot.HostCPUPercent))
-		} else {
-			decision.Dimension = "thermal"
-			decision.Reasons = append(decision.Reasons, "system thermal state is serious")
-		}
+		decision.Dimension = "thermal"
+		decision.Reasons = append(decision.Reasons, "system thermal state is serious")
+		return decision
+	}
+	if cpuStress {
+		decision.Mode = ControllerModeStressed
+		decision.Dimension = "cpu"
+		decision.Reasons = append(decision.Reasons, fmt.Sprintf("host CPU remains at or above red with corroborated evidence (%.1f%%); soft-throttling without hard work block", snapshot.HostCPUPercent))
 		return decision
 	}
 	if snapshot.Level.AtLeast(LevelWarning) || snapshot.LowPowerMode {

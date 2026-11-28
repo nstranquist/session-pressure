@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
 	_ "modernc.org/sqlite"
 )
 
@@ -46,6 +47,7 @@ import (
 const (
 	indexDBFile       = "index.sqlite"
 	legacyJournalFile = "index.jsonl"
+	evictLockFile     = "evict.lock"
 	indexSchemaVer    = 1
 	// evictionBudget bounds the candidates one pass examines.
 	evictionBudget = 256
@@ -219,8 +221,21 @@ func writeMeta(tx *sql.Tx, name, value string) error {
 // identity and an incomplete final row are skipped: none of them can name a
 // file, and the journal is not this reader's to repair.
 func (c *Cache) importJournalLocked() error {
-	f, err := os.Open(filepath.Join(c.dir, legacyJournalFile))
+	path := filepath.Join(c.dir, legacyJournalFile)
+	statInfo, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
+		c.journalSynced = false
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if c.journalSynced && statInfo.Size() == c.journalSize && statInfo.ModTime().Equal(c.journalModTime) {
+		return nil
+	}
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		c.journalSynced = false
 		return nil
 	}
 	if err != nil {
@@ -253,6 +268,9 @@ func (c *Cache) importJournalLocked() error {
 		offset = 0
 	}
 	if offset == info.Size() {
+		c.journalSynced = true
+		c.journalSize = info.Size()
+		c.journalModTime = info.ModTime()
 		return nil
 	}
 	if _, err = f.Seek(offset, io.SeekStart); err != nil {
@@ -302,7 +320,17 @@ func (c *Cache) importJournalLocked() error {
 	if err = writeMeta(tx, "journal_offset", strconv.FormatInt(offset, 10)); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if offset == info.Size() {
+		c.journalSynced = true
+		c.journalSize = info.Size()
+		c.journalModTime = info.ModTime()
+	} else {
+		c.journalSynced = false
+	}
+	return nil
 }
 
 // applyJournalRows writes the net effect of journal rows. A full import (a
@@ -478,8 +506,93 @@ type candidate struct {
 	kind int
 }
 
-func (c *Cache) oldest(kind, limit int) ([]candidate, error) {
-	rows, err := c.db.Query("SELECT key, size, access FROM entries WHERE kind = ? ORDER BY access LIMIT ?", kind, limit)
+func (c *Cache) needsEvictLocked() bool {
+	total, count, err := c.indexTotals()
+	return err == nil && (total > c.maxBytes || count > c.maxEntries())
+}
+
+func (c *Cache) readEvictStamp() int64 {
+	if c.evictLock == nil {
+		return 0
+	}
+	var buf [64]byte
+	n, err := c.evictLock.ReadAt(buf[:], 0)
+	if n == 0 || (err != nil && !errors.Is(err, io.EOF)) {
+		return 0
+	}
+	v, parseErr := strconv.ParseInt(strings.TrimSpace(string(buf[:n])), 10, 64)
+	if parseErr != nil || v <= 0 {
+		return 0
+	}
+	return v
+}
+
+func (c *Cache) writeEvictStamp(ns int64) {
+	if c.evictLock == nil {
+		return
+	}
+	raw := []byte(strconv.FormatInt(ns, 10) + "\n")
+	_ = c.evictLock.Truncate(0)
+	_, _ = c.evictLock.WriteAt(raw, 0)
+}
+
+func (c *Cache) evictInCooldown(now int64) bool {
+	if defaultPutEvictCooldown <= 0 || c.putsSinceEvict >= defaultPutEvictBytes {
+		return false
+	}
+	last := c.readEvictStamp()
+	return last > 0 && now-last < int64(defaultPutEvictCooldown)
+}
+
+// tryEvict acquires the non-blocking singleton evict.lock before taking the
+// authority lock so at most one gocache-lru process trims the cache at a time.
+// Concurrent processes skip trimming cleanly instead of competing over locks
+// and SQLite writes. When force is false (mid-build puts), a short shared
+// cooldown also suppresses back-to-back eviction storms when remaining objects
+// are pinned or inside the grace window.
+func (c *Cache) tryEvict(force bool) error {
+	now := time.Now().UnixNano()
+	if !force && c.evictInCooldown(now) {
+		c.evictSkippedCooldown++
+		return nil
+	}
+	if c.evictLock != nil {
+		if err := unix.Flock(int(c.evictLock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+			if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
+				c.evictSkippedBusy++
+				return nil
+			}
+			return err
+		}
+		defer unix.Flock(int(c.evictLock.Fd()), unix.LOCK_UN)
+		if !force && c.evictInCooldown(time.Now().UnixNano()) {
+			c.evictSkippedCooldown++
+			return nil
+		}
+	}
+	err := c.withLock(func() error {
+		if err := c.openIndexLocked(); err != nil {
+			return err
+		}
+		return c.evictLocked()
+	})
+	if err == nil {
+		c.putsSinceEvict = 0
+		c.writeEvictStamp(time.Now().UnixNano())
+	}
+	return err
+}
+
+func (c *Cache) oldest(kind, limit int, maxAccess int64) ([]candidate, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if maxAccess > 0 {
+		rows, err = c.db.Query("SELECT key, size, access FROM entries WHERE kind = ? AND access <= ? ORDER BY access LIMIT ?", kind, maxAccess, limit)
+	} else {
+		rows, err = c.db.Query("SELECT key, size, access FROM entries WHERE kind = ? ORDER BY access LIMIT ?", kind, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -511,9 +624,9 @@ func (c *Cache) maxEntries() int64 {
 // action records are candidates only while the entry cap is exceeded. A
 // pass examines at most evictionBudget candidates. Pinned objects (another
 // client holds a link) and objects inside the grace window stay; a pinned
-// object is demoted for a second so later candidates are
-// reached. A busy client may keep the cache over its soft target until a
-// later request or its close. The caller holds the authority lock.
+// object is demoted for a second so later candidates are reached. Deletes and
+// durable eviction counters commit in one SQLite transaction instead of one
+// fsync per removed key. The caller holds the authority lock.
 func (c *Cache) evictLocked() error {
 	total, count, err := c.indexTotals()
 	if err != nil {
@@ -530,12 +643,16 @@ func (c *Cache) evictLocked() error {
 		}
 	}
 	limit := evictionBudget + len(c.retry)
-	candidates, err := c.oldest(kindObject, limit)
+	objMaxAccess := int64(0)
+	if c.graceWindow > 0 && now > int64(c.graceWindow) {
+		objMaxAccess = now - int64(c.graceWindow)
+	}
+	candidates, err := c.oldest(kindObject, limit, objMaxAccess)
 	if err != nil {
 		return err
 	}
 	if count > c.maxEntries() {
-		actions, err := c.oldest(kindAction, limit)
+		actions, err := c.oldest(kindAction, limit, 0)
 		if err != nil {
 			return err
 		}
@@ -552,6 +669,8 @@ func (c *Cache) evictLocked() error {
 	}
 	sort.SliceStable(candidates, func(i, j int) bool { return priority(candidates[i]) < priority(candidates[j]) })
 	scanned := 0
+	var forgotten []string
+	var reclaimedBytes int64
 	for _, row := range candidates {
 		if !over() || scanned >= evictionBudget {
 			break
@@ -560,9 +679,7 @@ func (c *Cache) evictLocked() error {
 		kind, valid := entryKind(row.Key)
 		if !valid || kind != row.kind {
 			// A corrupt row never names a file: forget it.
-			if err := c.forget(row.Key); err != nil {
-				return err
-			}
+			forgotten = append(forgotten, row.Key)
 			count--
 			if row.kind == kindObject {
 				total -= row.Size
@@ -588,18 +705,71 @@ func (c *Cache) evictLocked() error {
 		} else if !os.IsNotExist(err) {
 			return err
 		}
-		if err := c.forget(row.Key); err != nil {
-			return err
-		}
+		forgotten = append(forgotten, row.Key)
 		count--
 		if kind == kindObject {
 			total -= row.Size
+			reclaimedBytes += row.Size
 		}
 	}
-	return nil
+	if len(forgotten) == 0 && c.evictSkippedBusy == 0 && c.evictSkippedCooldown == 0 {
+		return nil
+	}
+	return c.commitEvictionLocked(forgotten, reclaimedBytes, now)
 }
 
-func (c *Cache) forget(key string) error {
-	_, err := c.db.Exec("DELETE FROM entries WHERE key = ?", key)
-	return err
+func addMetaCounter(tx *sql.Tx, name string, delta int64) error {
+	if delta == 0 {
+		return nil
+	}
+	raw, err := readMeta(tx, name)
+	if err != nil {
+		return err
+	}
+	current, _ := strconv.ParseInt(raw, 10, 64)
+	return writeMeta(tx, name, strconv.FormatInt(current+delta, 10))
+}
+
+func (c *Cache) commitEvictionLocked(keys []string, reclaimedBytes, now int64) error {
+	tx, err := c.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if len(keys) > 0 {
+		stmt, err := tx.Prepare("DELETE FROM entries WHERE key = ?")
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+		for _, key := range keys {
+			if _, err := stmt.Exec(key); err != nil {
+				return err
+			}
+		}
+	}
+	if err := writeMeta(tx, "last_evict_at", strconv.FormatInt(now, 10)); err != nil {
+		return err
+	}
+	if err := addMetaCounter(tx, "evict_runs_total", 1); err != nil {
+		return err
+	}
+	if err := addMetaCounter(tx, "evict_removed_total", int64(len(keys))); err != nil {
+		return err
+	}
+	if err := addMetaCounter(tx, "evict_reclaimed_bytes_total", reclaimedBytes); err != nil {
+		return err
+	}
+	if err := addMetaCounter(tx, "evict_skipped_busy_total", c.evictSkippedBusy); err != nil {
+		return err
+	}
+	if err := addMetaCounter(tx, "evict_skipped_cooldown_total", c.evictSkippedCooldown); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	c.evictSkippedBusy = 0
+	c.evictSkippedCooldown = 0
+	return nil
 }

@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // The SQLite index (WORK-1601). A put no longer replays a journal, a get
@@ -558,5 +561,183 @@ func TestGetPutFailSoftUnderLockContention(t *testing.T) {
 	// Once the lock frees, the cache works normally again.
 	if got := victim.get(Request{ID: 4, ActionID: []byte("seeded")}); got.Miss || got.Size != 3 {
 		t.Fatalf("get after contention: %+v", got)
+	}
+}
+
+func readTestMeta(t *testing.T, dir, name string) string {
+	t.Helper()
+	db := openTestIndex(t, dir)
+	var value string
+	if err := db.QueryRow("SELECT value FROM meta WHERE name = ?", name).Scan(&value); err != nil {
+		t.Fatalf("read meta %q: %v", name, err)
+	}
+	return value
+}
+
+// When another gocache-lru process already holds the singleton evict.lock,
+// concurrent clients skip trimming cleanly on put and Close without blocking,
+// and flush durable eviction/skip telemetry to SQLite meta on the next trim.
+func TestEvictionSkipsCleanlyWhenEvictLockHeld(t *testing.T) {
+	prevGrace := defaultEvictGraceWindow
+	prevCooldown := defaultPutEvictCooldown
+	defaultEvictGraceWindow = 0
+	defaultPutEvictCooldown = 0
+	t.Cleanup(func() {
+		defaultEvictGraceWindow = prevGrace
+		defaultPutEvictCooldown = prevCooldown
+	})
+
+	dir := t.TempDir()
+	seed, err := New(dir, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldPut := putOne(t, seed, 1, "old", string(bytes.Repeat([]byte("a"), 40)))
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hold evict.lock from a second open file descriptor, simulating a peer
+	// gocache-lru process actively trimming the cache.
+	holder, err := os.OpenFile(filepath.Join(dir, evictLockFile), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	if err := unix.Flock(int(holder.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatalf("acquire peer evict.lock: %v", err)
+	}
+
+	client, err := New(dir, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	putOne(t, client, 2, "new", string(bytes.Repeat([]byte("b"), 40)))
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("put blocked %v while peer held evict.lock", elapsed)
+	}
+	if client.evictSkippedBusy == 0 {
+		t.Fatal("expected put to record evictSkippedBusy when peer held evict.lock")
+	}
+	if _, err := os.Stat(oldPut.DiskPath); err != nil {
+		t.Fatalf("peer-locked eviction still removed old object: %v", err)
+	}
+
+	// Release peer evict.lock; Close runs eviction once and flushes durable meta.
+	if err := unix.Flock(int(holder.Fd()), unix.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close after peer release: %v", err)
+	}
+	if _, err := os.Stat(oldPut.DiskPath); !os.IsNotExist(err) {
+		t.Fatalf("uncontended Close did not evict oldest object: %v", err)
+	}
+	if got, _ := strconv.ParseInt(readTestMeta(t, dir, "evict_skipped_busy_total"), 10, 64); got < 1 {
+		t.Fatalf("evict_skipped_busy_total = %d, want >= 1", got)
+	}
+	if got, _ := strconv.ParseInt(readTestMeta(t, dir, "evict_removed_total"), 10, 64); got < 1 {
+		t.Fatalf("evict_removed_total = %d, want >= 1", got)
+	}
+	if got, _ := strconv.ParseInt(readTestMeta(t, dir, "evict_reclaimed_bytes_total"), 10, 64); got < 40 {
+		t.Fatalf("evict_reclaimed_bytes_total = %d, want >= 40", got)
+	}
+	if got, _ := strconv.ParseInt(readTestMeta(t, dir, "evict_runs_total"), 10, 64); got < 1 {
+		t.Fatalf("evict_runs_total = %d, want >= 1", got)
+	}
+	if got, _ := strconv.ParseInt(readTestMeta(t, dir, "last_evict_at"), 10, 64); got <= 0 {
+		t.Fatalf("last_evict_at = %d, want > 0", got)
+	}
+}
+
+// Batch eviction removes multiple expired objects in a single SQLite
+// transaction while leaving objects inside graceWindow untouched in SQL.
+func TestEvictionBatchesDeletesAndRespectsGraceWindowInSQL(t *testing.T) {
+	dir := t.TempDir()
+	c, err := New(dir, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old1 := putOne(t, c, 1, "old-1", string(bytes.Repeat([]byte("1"), 30)))
+	old2 := putOne(t, c, 2, "old-2", string(bytes.Repeat([]byte("2"), 30)))
+	fresh := putOne(t, c, 3, "fresh", string(bytes.Repeat([]byte("3"), 30)))
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Age old-1 and old-2 past the 5-minute grace window; keep fresh inside it.
+	db := openTestIndex(t, dir)
+	oldTime := time.Now().Add(-10 * time.Minute).UnixNano()
+	for _, p := range []string{old1.DiskPath, old2.DiskPath} {
+		if _, err := db.Exec("UPDATE entries SET access = ? WHERE key = ?", oldTime, filepath.Base(p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	trimmer, err := New(dir, 35)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := trimmer.withLock(func() error {
+		if err := trimmer.openIndexLocked(); err != nil {
+			return err
+		}
+		return trimmer.evictLocked()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := trimmer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, p := range []string{old1.DiskPath, old2.DiskPath} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("expired object %s was not evicted: %v", filepath.Base(p), err)
+		}
+	}
+	if _, err := os.Stat(fresh.DiskPath); err != nil {
+		t.Fatalf("in-grace object was evicted: %v", err)
+	}
+	_ = indexRows(t, dir) // verifies trigger totals still match rows exactly
+	if got, _ := strconv.ParseInt(readTestMeta(t, dir, "evict_removed_total"), 10, 64); got != 2 {
+		t.Fatalf("evict_removed_total = %d, want 2", got)
+	}
+	if got, _ := strconv.ParseInt(readTestMeta(t, dir, "evict_reclaimed_bytes_total"), 10, 64); got != 60 {
+		t.Fatalf("evict_reclaimed_bytes_total = %d, want 60", got)
+	}
+}
+
+// Repeated puts on one client skip re-reading an unchanged legacy index.jsonl,
+// while still importing new rows if an older client appends to it.
+func TestJournalImportCachesUnchangedStatAndPicksUpAppends(t *testing.T) {
+	dir := t.TempDir()
+	for _, part := range []string{"objects", "actions", "clients"} {
+		if err := os.MkdirAll(filepath.Join(dir, part), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendJournal(t, dir, journalRow(t, indexEntry{Key: objectKey(1), Size: 10, Access: 100}))
+	c, err := New(dir, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	putOne(t, c, 1, "first", "abc")
+	if !c.journalSynced {
+		t.Fatal("expected journalSynced=true after first put")
+	}
+	putOne(t, c, 2, "second", "def")
+	if !c.journalSynced {
+		t.Fatal("expected journalSynced to stay true when index.jsonl is unchanged")
+	}
+
+	// Simulate an older binary appending a new row while this client is alive.
+	appendJournal(t, dir, journalRow(t, indexEntry{Key: objectKey(2), Size: 20, Access: 200}))
+	putOne(t, c, 3, "third", "ghi")
+	rows := indexRows(t, dir)
+	if got, ok := rows[objectKey(2)]; !ok || got.Size != 20 {
+		t.Fatalf("appended legacy journal row was not imported: %+v ok=%v", got, ok)
 	}
 }

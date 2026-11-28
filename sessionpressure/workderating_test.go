@@ -97,19 +97,27 @@ func TestAdmissionKeepsUncorroboratedCPURedAdvisory(t *testing.T) {
 	}
 }
 
-func TestAdmissionBlocksCorroboratedCPURed(t *testing.T) {
+func TestAdmissionSoftThrottlesCorroboratedCPURedWithoutHardBlock(t *testing.T) {
 	policy := DefaultPolicy(16 * 1024)
 	policy.EnforceAdmission = true
-	admission := AdmissionForSnapshot(Snapshot{
+	snapshot := Snapshot{
 		FreePercent: 60, HostCPUAvailable: true, HostCPUPercent: 99,
 		HostCPURollingAvailable: true, HostCPURollingPercent: 97,
 		ThermalState: ThermalStateNominal,
-	}, policy, "test")
-	if admission.Allowed || admission.Level != LevelRed || admission.Dimension != "cpu" {
+	}
+	admission := AdmissionForSnapshot(snapshot, policy, "test")
+	if admission.Level != LevelRed || admission.Dimension != "cpu" {
 		t.Fatalf("corroborated CPU red admission=%+v", admission)
 	}
-	if admission.Controller == nil || !admission.Controller.CPUStress || !admission.Controller.BlockWork {
-		t.Fatalf("corroborated CPU red controller=%+v", admission.Controller)
+	if admission.Controller == nil || !admission.Controller.CPUStress || !admission.Controller.ThrottleWork || admission.Controller.BlockWork {
+		t.Fatalf("corroborated CPU red controller should soft-throttle without BlockWork=%+v", admission.Controller)
+	}
+	work := AdmissionForWorkSnapshot(snapshot, policy, "test")
+	if !work.Allowed || work.Level != LevelRed || work.Dimension != "cpu" {
+		t.Fatalf("corroborated CPU red work admission should not hard-block=%+v", work)
+	}
+	if work.Controller == nil || !work.Controller.CPUStress || !work.Controller.ThrottleWork || work.Controller.BlockWork {
+		t.Fatalf("corroborated CPU red work controller=%+v", work.Controller)
 	}
 }
 

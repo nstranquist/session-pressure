@@ -55,6 +55,7 @@ type Cache struct {
 	graceWindow time.Duration
 	mu          sync.Mutex
 	lock        *os.File
+	evictLock   *os.File
 	clientLock  *os.File
 	pins        string
 	closed      bool
@@ -70,6 +71,17 @@ type Cache struct {
 	// retry holds pinned eviction candidates this client demotes until the
 	// given UnixNano time. It is process-local and never persisted.
 	retry map[string]int64
+	// journalSynced caches the last legacy index.jsonl stat whose tail was
+	// completely imported by this process so repeated puts skip re-opening it.
+	journalSynced  bool
+	journalSize    int64
+	journalModTime time.Time
+	// putsSinceEvict accumulates bytes written since this client last ran
+	// an eviction pass; combined with defaultPutEvictCooldown it prevents
+	// per-put eviction storms across concurrent Go builds.
+	putsSinceEvict       int64
+	evictSkippedBusy     int64
+	evictSkippedCooldown int64
 }
 
 // Lock patience is a var so tests can shrink it. Startup gets the long
@@ -81,6 +93,12 @@ var authorityStartupLockTimeout = 60 * time.Second
 // defaultEvictGraceWindow shields recently accessed objects across client Close
 // boundaries so short-lived subprocesses (e.g. go/packages) still find DiskPath.
 var defaultEvictGraceWindow = 5 * time.Minute
+
+// defaultPutEvictCooldown and defaultPutEvictBytes rate-limit mid-build
+// eviction passes across concurrent gocache-lru clients. Close always attempts
+// a non-blocking eviction pass so short builds trim promptly when uncontended.
+var defaultPutEvictCooldown = 2 * time.Second
+var defaultPutEvictBytes int64 = 16 << 20
 
 func New(dir string, maxBytes int64) (*Cache, error) {
 	if maxBytes <= 0 {
@@ -99,7 +117,12 @@ func New(dir string, maxBytes int64) (*Cache, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Cache{dir: dir, maxBytes: maxBytes, graceWindow: defaultEvictGraceWindow, lock: lock, retry: map[string]int64{}}
+	evictLock, err := os.OpenFile(filepath.Join(dir, evictLockFile), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		lock.Close()
+		return nil, err
+	}
+	c := &Cache{dir: dir, maxBytes: maxBytes, graceWindow: defaultEvictGraceWindow, lock: lock, evictLock: evictLock, retry: map[string]int64{}}
 	// Startup does not open the index. Every go command starts a helper,
 	// and a get needs no index; a client opens it on its first put.
 	err = c.withLockWithin(authorityStartupLockTimeout, func() error {
@@ -141,6 +164,7 @@ func New(dir string, maxBytes int64) (*Cache, error) {
 		if c.clientLock != nil {
 			c.clientLock.Close()
 		}
+		evictLock.Close()
 		lock.Close()
 		return nil, err
 	}
@@ -151,6 +175,8 @@ func (c *Cache) withLock(fn func() error) error {
 }
 func (c *Cache) withLockWithin(limit time.Duration, fn func() error) error {
 	deadline := time.Now().Add(limit)
+	sleep := 5 * time.Millisecond
+	const maxSleep = 50 * time.Millisecond
 	for {
 		err := unix.Flock(int(c.lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 		if err == nil {
@@ -162,7 +188,10 @@ func (c *Cache) withLockWithin(limit time.Duration, fn func() error) error {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("cache authority lock timed out")
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(sleep)
+		if sleep < maxSleep {
+			sleep = min(maxSleep, sleep*2)
+		}
 	}
 	defer unix.Flock(int(c.lock.Fd()), unix.LOCK_UN)
 	return fn()
@@ -296,6 +325,7 @@ func (c *Cache) putReader(req Request, body io.Reader) Response {
 	if c.closed {
 		return fail(fmt.Errorf("cache is closed"))
 	}
+	needsEvict := false
 	err = c.withLock(func() error {
 		if err := c.openIndexLocked(); err != nil {
 			return err
@@ -321,9 +351,7 @@ func (c *Cache) putReader(req Request, body io.Reader) Response {
 		if err = atomicWrite(c.actionPath(req.ActionID), raw); err != nil {
 			return err
 		}
-		if err = c.evictLocked(); err != nil {
-			return err
-		}
+		needsEvict = c.needsEvictLocked()
 		resp = Response{ID: req.ID, DiskPath: c.objectPath(key), Size: n, OutputID: req.OutputID, Time: &meta.PutAt}
 		return nil
 	})
@@ -336,6 +364,13 @@ func (c *Cache) putReader(req Request, body io.Reader) Response {
 		// removed at Close, which bounds the unindexed file's life.
 		keepTemp = true
 		return Response{ID: req.ID, DiskPath: f.Name(), Size: n, OutputID: req.OutputID, Time: &meta.PutAt}
+	}
+	c.putsSinceEvict += n
+	if needsEvict {
+		// Run eviction outside the put's authority lock and behind the
+		// non-blocking singleton evict.lock so concurrent Go processes never
+		// stall puts or fight over trimming.
+		_ = c.tryEvict(false)
 	}
 	return resp
 }
@@ -353,6 +388,9 @@ func (c *Cache) Close() error {
 		if c.clientLock != nil {
 			c.clientLock.Close()
 		}
+		if c.evictLock != nil {
+			c.evictLock.Close()
+		}
 		c.lock.Close()
 	}()
 	if !c.indexed {
@@ -362,7 +400,8 @@ func (c *Cache) Close() error {
 		c.flushHintsUnlocked()
 		return os.RemoveAll(c.pins)
 	}
-	return c.withLock(func() error {
+	needsEvict := false
+	err := c.withLock(func() error {
 		if err := c.openIndexLocked(); err != nil {
 			return err
 		}
@@ -372,8 +411,19 @@ func (c *Cache) Close() error {
 		if err := os.RemoveAll(c.pins); err != nil {
 			return err
 		}
-		return c.evictLocked()
+		// This client just dropped its own pins, so objects it previously
+		// deferred can return to their true access order immediately.
+		clear(c.retry)
+		needsEvict = c.needsEvictLocked()
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if needsEvict {
+		return c.tryEvict(true)
+	}
+	return nil
 }
 func Serve(in io.Reader, out io.Writer, dir string, maxBytes int64) (serveErr error) {
 	c, err := New(dir, maxBytes)

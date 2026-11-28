@@ -95,6 +95,9 @@ func BenchmarkStartupLargeJournal(b *testing.B) {
 		b.StopTimer()
 		c.closed = true // skip Close's compaction pass: it is not startup cost
 		c.clientLock.Close()
+		if c.evictLock != nil {
+			c.evictLock.Close()
+		}
 		c.lock.Close()
 		os.RemoveAll(c.pins)
 		b.StartTimer()
@@ -132,6 +135,9 @@ func BenchmarkStartupEightConcurrent(b *testing.B) {
 		for _, c := range caches {
 			c.closed = true
 			c.clientLock.Close()
+			if c.evictLock != nil {
+				c.evictLock.Close()
+			}
 			c.lock.Close()
 			os.RemoveAll(c.pins)
 		}
@@ -161,6 +167,9 @@ func BenchmarkGetEightClients(b *testing.B) {
 		for _, c := range caches {
 			c.closed = true
 			c.clientLock.Close()
+			if c.evictLock != nil {
+				c.evictLock.Close()
+			}
 			c.lock.Close()
 			os.RemoveAll(c.pins)
 		}
